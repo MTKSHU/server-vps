@@ -166,16 +166,6 @@ docker cp extract-agent:/cluster-node-agent ./cluster-node-agent
 docker cp extract-agent:/cluster-agent-updater ./cluster-agent-updater
 docker rm extract-agent
 ```
-
-## Star History
-<a href="https://www.star-history.com/?repos=server-vps%2Fserver-vps&type=date&legend=bottom-right">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=server-vps/server-vps&type=date&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=server-vps/server-vps&type=date&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=server-vps/server-vps&type=date&legend=bottom-right" />
- </picture>
-</a>
-
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/chart?repos=MTKSHU/server-vps&type=date&legend=top-left)](https://www.star-history.com/?repos=MTKSHU%2Fserver-vps&type=date&legend=top-left)
