@@ -1,0 +1,156 @@
+import os
+from typing import Any
+
+
+GROUP_NAMES = ("platform_admin", "admin", "member", "guest")
+SSO_PROVIDER_TYPES = ("oidc", "cas")
+
+
+def bool_to_setting(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def setting_to_bool(value: Any) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+PLATFORM_SETTING_DEFAULTS = {
+    "local_login_enabled": "1",
+    "platform_registration_enabled": "0",
+    "platform_registration_auto_enable": "0",
+    "platform_registration_default_group": "member",
+    "sso_registration_enabled": "1",
+    "sso_auto_create_users": "1",
+    "sso_auto_enable_new_users": "0",
+    "sso_default_group": "member",
+    "platform_timezone": "Asia/Shanghai",
+    "transfer_bandwidth_limit_mbps": "0",
+    "sso_provider_enabled": "0",
+    "sso_provider_type": "oidc",
+    "sso_provider_name": "casdoor",
+    "sso_provider_display_name": "统一认证",
+    "sso_callback_base_url": "",
+    "sso_cas_server_url": "",
+    "sso_cas_version": "3",
+    "sso_oidc_issuer": "",
+    "sso_oidc_authorization_endpoint": "",
+    "sso_oidc_token_endpoint": "",
+    "sso_oidc_userinfo_endpoint": "",
+    "sso_oidc_client_id": "",
+    "sso_oidc_client_secret": "",
+    "sso_oidc_scopes": "openid profile email",
+    "sso_casdoor_admin_owner": "built-in",
+}
+
+
+def _legacy_sso_defaults() -> dict[str, str]:
+    raw_providers = os.environ.get("SSO_PROVIDERS", "").strip()
+    provider_id = next((item.strip() for item in raw_providers.split(",") if item.strip()), "")
+    if ":" in provider_id:
+        provider_type, provider_name = provider_id.split(":", 1)
+    else:
+        provider_type, provider_name = "oidc", "casdoor"
+    provider_type = provider_type if provider_type in SSO_PROVIDER_TYPES else "oidc"
+    provider_name = provider_name or "casdoor"
+    prefix = f"SSO_{provider_type.upper()}_{provider_name.upper()}_"
+    values = {
+        "sso_provider_enabled": "1" if provider_id else "0",
+        "sso_provider_type": provider_type,
+        "sso_provider_name": provider_name,
+        "sso_provider_display_name": os.environ.get(f"{prefix}DISPLAY_NAME", "统一认证"),
+        "sso_callback_base_url": os.environ.get("SSO_CALLBACK_BASE_URL", ""),
+        "sso_casdoor_admin_owner": os.environ.get("CASDOOR_ADMIN_OWNER", "built-in"),
+    }
+    if provider_type == "cas":
+        values.update(
+            {
+                "sso_cas_server_url": os.environ.get(f"{prefix}SERVER_URL", ""),
+                "sso_cas_version": os.environ.get(f"{prefix}VERSION", "3"),
+            }
+        )
+    else:
+        values.update(
+            {
+                "sso_oidc_issuer": os.environ.get(f"{prefix}ISSUER", ""),
+                "sso_oidc_authorization_endpoint": os.environ.get(f"{prefix}AUTHORIZATION_ENDPOINT", ""),
+                "sso_oidc_token_endpoint": os.environ.get(f"{prefix}TOKEN_ENDPOINT", ""),
+                "sso_oidc_userinfo_endpoint": os.environ.get(f"{prefix}USERINFO_ENDPOINT", ""),
+                "sso_oidc_client_id": os.environ.get(f"{prefix}CLIENT_ID", ""),
+                "sso_oidc_client_secret": os.environ.get(f"{prefix}CLIENT_SECRET", ""),
+                "sso_oidc_scopes": os.environ.get(f"{prefix}SCOPES", "openid profile email"),
+            }
+        )
+    return values
+
+
+def get_platform_settings(conn) -> dict[str, Any]:
+    rows = conn.execute(
+        "SELECT key, value FROM system_settings WHERE key = ANY(%s)",
+        (list(PLATFORM_SETTING_DEFAULTS.keys()),),
+    ).fetchall()
+    raw = {**PLATFORM_SETTING_DEFAULTS, **_legacy_sso_defaults()}
+    for row in rows:
+        raw[row["key"]] = row["value"]
+    platform_group = raw["platform_registration_default_group"]
+    sso_group = raw["sso_default_group"]
+    return {
+        "local_login_enabled": setting_to_bool(raw["local_login_enabled"]),
+        "platform_registration_enabled": setting_to_bool(raw["platform_registration_enabled"]),
+        "platform_registration_auto_enable": setting_to_bool(raw["platform_registration_auto_enable"]),
+        "platform_registration_default_group": platform_group if platform_group in GROUP_NAMES else "member",
+        "sso_registration_enabled": setting_to_bool(raw["sso_registration_enabled"]),
+        "sso_auto_create_users": setting_to_bool(raw["sso_auto_create_users"]),
+        "sso_auto_enable_new_users": setting_to_bool(raw["sso_auto_enable_new_users"]),
+        "sso_default_group": sso_group if sso_group in GROUP_NAMES else "member",
+        "platform_timezone": raw["platform_timezone"] or "Asia/Shanghai",
+        "transfer_bandwidth_limit_mbps": max(0, int(raw["transfer_bandwidth_limit_mbps"] or "0")),
+        "sso_provider_enabled": setting_to_bool(raw["sso_provider_enabled"]),
+        "sso_provider_type": raw["sso_provider_type"] if raw["sso_provider_type"] in SSO_PROVIDER_TYPES else "oidc",
+        "sso_provider_name": raw["sso_provider_name"] or "casdoor",
+        "sso_provider_display_name": raw["sso_provider_display_name"],
+        "sso_callback_base_url": raw["sso_callback_base_url"],
+        "sso_cas_server_url": raw["sso_cas_server_url"],
+        "sso_cas_version": int(raw["sso_cas_version"] or "3"),
+        "sso_oidc_issuer": raw["sso_oidc_issuer"],
+        "sso_oidc_authorization_endpoint": raw["sso_oidc_authorization_endpoint"],
+        "sso_oidc_token_endpoint": raw["sso_oidc_token_endpoint"],
+        "sso_oidc_userinfo_endpoint": raw["sso_oidc_userinfo_endpoint"],
+        "sso_oidc_client_id": raw["sso_oidc_client_id"],
+        "sso_oidc_client_secret": raw["sso_oidc_client_secret"],
+        "sso_oidc_scopes": raw["sso_oidc_scopes"] or "openid profile email",
+        "sso_casdoor_admin_owner": raw["sso_casdoor_admin_owner"] or "built-in",
+    }
+
+
+def platform_settings_to_rows(settings: dict[str, Any]) -> dict[str, str]:
+    return {
+        "local_login_enabled": bool_to_setting(bool(settings["local_login_enabled"])),
+        "platform_registration_enabled": bool_to_setting(bool(settings["platform_registration_enabled"])),
+        "platform_registration_auto_enable": bool_to_setting(bool(settings["platform_registration_auto_enable"])),
+        "platform_registration_default_group": (
+            settings["platform_registration_default_group"]
+            if settings["platform_registration_default_group"] in GROUP_NAMES
+            else "member"
+        ),
+        "sso_registration_enabled": bool_to_setting(bool(settings["sso_registration_enabled"])),
+        "sso_auto_create_users": bool_to_setting(bool(settings["sso_auto_create_users"])),
+        "sso_auto_enable_new_users": bool_to_setting(bool(settings["sso_auto_enable_new_users"])),
+        "sso_default_group": settings["sso_default_group"] if settings["sso_default_group"] in GROUP_NAMES else "member",
+        "platform_timezone": settings["platform_timezone"].strip() or "Asia/Shanghai",
+        "transfer_bandwidth_limit_mbps": str(max(0, int(settings["transfer_bandwidth_limit_mbps"] or 0))),
+        "sso_provider_enabled": bool_to_setting(bool(settings["sso_provider_enabled"])),
+        "sso_provider_type": settings["sso_provider_type"] if settings["sso_provider_type"] in SSO_PROVIDER_TYPES else "oidc",
+        "sso_provider_name": settings["sso_provider_name"].strip() or "casdoor",
+        "sso_provider_display_name": settings["sso_provider_display_name"].strip() or "统一认证",
+        "sso_callback_base_url": settings["sso_callback_base_url"].strip().rstrip("/"),
+        "sso_cas_server_url": settings["sso_cas_server_url"].strip().rstrip("/"),
+        "sso_cas_version": str(settings["sso_cas_version"] or 3),
+        "sso_oidc_issuer": settings["sso_oidc_issuer"].strip().rstrip("/"),
+        "sso_oidc_authorization_endpoint": settings["sso_oidc_authorization_endpoint"].strip(),
+        "sso_oidc_token_endpoint": settings["sso_oidc_token_endpoint"].strip(),
+        "sso_oidc_userinfo_endpoint": settings["sso_oidc_userinfo_endpoint"].strip(),
+        "sso_oidc_client_id": settings["sso_oidc_client_id"].strip(),
+        "sso_oidc_client_secret": settings["sso_oidc_client_secret"].strip(),
+        "sso_oidc_scopes": settings["sso_oidc_scopes"].strip() or "openid profile email",
+        "sso_casdoor_admin_owner": settings["sso_casdoor_admin_owner"].strip() or "built-in",
+    }

@@ -1,0 +1,14 @@
+[Unit]
+Description=GPU cluster node agent updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/cluster-node-agent.env
+ExecStart=/usr/local/bin/cluster-agent-updater
+User=root
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
