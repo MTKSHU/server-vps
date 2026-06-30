@@ -176,8 +176,11 @@ docker rm extract-agent
  </picture>
 </a>
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=MTKSHU/server-vps&type=date&legend=top-left)](https://www.star-history.com/?repos=MTKSHU%2Fserver-vps&type=date&legend=top-left)
+
 ## 许可与贡献
 
 本项目使用 `AGPL-3.0-or-later` 许可发布，详见 [LICENSE](LICENSE)。
 
-贡献指南也仍是占位状态。当前建议先通过 issue 或讨论对齐需求，再提交小范围、可验证的 Pull Request。

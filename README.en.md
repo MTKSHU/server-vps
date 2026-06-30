@@ -167,8 +167,10 @@ docker cp extract-agent:/cluster-agent-updater ./cluster-agent-updater
 docker rm extract-agent
 ```
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=MTKSHU/server-vps&type=date&legend=top-left)](https://www.star-history.com/?repos=MTKSHU%2Fserver-vps&type=date&legend=top-left)
+
 ## License and Contributing
 
 This project is licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).
-
-The contribution guide is also a placeholder for now. Please align on requirements through issues or discussions first, then send small, reviewable pull requests with clear validation notes.
