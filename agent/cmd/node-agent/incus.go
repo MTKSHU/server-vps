@@ -87,10 +87,6 @@ func cloudInitUserData(username string, sshKeys ...string) string {
 	return builder.String()
 }
 
-func initializeContainerSSH(container string, username string, sshKeys ...string) error {
-	return initializeContainerSSHWithMounts(container, username, nil, sshKeys...)
-}
-
 func initializeContainerSSHWithMounts(container string, username string, mounts []string, sshKeys ...string) error {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -552,7 +548,7 @@ func executeRemoveUserWorkspaceVolume(payload UserWorkspaceVolumeRemovePayload, 
 		storagePool = detectIncusStoragePool()
 	}
 	if storagePool == "" {
-		return "", fmt.Errorf("Incus storage pool 未配置，且无法自动探测")
+		return "", fmt.Errorf("incus storage pool 未配置，且无法自动探测")
 	}
 	if !incusStorageVolumeExists(storagePool, volumeName) {
 		return fmt.Sprintf("workspace volume %s does not exist, skipped", volumeName), nil
