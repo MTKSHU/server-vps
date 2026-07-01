@@ -111,18 +111,6 @@ onMounted(load);
     </el-card>
 
     <el-card shadow="never">
-      <template #header><strong>{{ t("settings.platformPolicy") }}</strong></template>
-      <el-form :model="form" label-position="top" class="settings-grid">
-        <el-form-item :label="t('settings.platformTimezone')">
-          <el-input v-model="form.platform_timezone" placeholder="Asia/Shanghai" />
-        </el-form-item>
-        <el-form-item :label="t('settings.transferBandwidthLimit')">
-          <el-input-number v-model="form.transfer_bandwidth_limit_mbps" :min="0" :max="100000" :step="10" />
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <el-card shadow="never">
       <template #header><strong>{{ t("settings.ssoProviderConfig") }}</strong></template>
       <el-form :model="form" label-position="top" class="settings-grid">
         <el-form-item :label="t('settings.enableSsoLogin')">
@@ -175,6 +163,18 @@ onMounted(load);
         </el-form-item>
         <el-form-item :label="t('settings.casVersion')">
           <el-input-number v-model="form.sso_cas_version" :min="2" :max="3" />
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header><strong>{{ t("settings.platformPolicy") }}</strong></template>
+      <el-form :model="form" label-position="top" class="settings-grid">
+        <el-form-item :label="t('settings.platformTimezone')">
+          <el-input v-model="form.platform_timezone" placeholder="Asia/Shanghai" />
+        </el-form-item>
+        <el-form-item :label="t('settings.transferBandwidthLimit')">
+          <el-input-number v-model="form.transfer_bandwidth_limit_mbps" :min="0" :max="100000" :step="10" />
         </el-form-item>
       </el-form>
     </el-card>

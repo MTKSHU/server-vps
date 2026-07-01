@@ -13,9 +13,6 @@ CORS_ALLOW_ORIGINS = os.environ.get("CORS_ALLOW_ORIGINS", "*").split(",")
 SYNC_SSH_USER = os.environ.get("SYNC_SSH_USER", "root")
 SYNC_SSH_PORT = int(os.environ.get("SYNC_SSH_PORT", "22"))
 SYNC_SSH_IDENTITY_FILE = os.environ.get("SYNC_SSH_IDENTITY_FILE", "")
-# 跳板机：当节点间无法直接 SSH 时，通过管理节点中转。格式：user@host:port（port 可省略默认 22）
-# 示例：SYNC_SSH_JUMP_HOST=root@api.example.com 或 root@api.example.com:2222
-SYNC_SSH_JUMP_HOST = os.environ.get("SYNC_SSH_JUMP_HOST", "")
 ADMIN_INITIAL_PASSWORD = os.environ.get("ADMIN_INITIAL_PASSWORD", "change-me-now")
 SESSION_TTL_HOURS = int(os.environ.get("SESSION_TTL_HOURS", "168"))
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "2048"))

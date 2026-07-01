@@ -174,16 +174,6 @@ func executeTask(task *AgentTask, args cliArgs) TaskResultRequest {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
 		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
-	case "data_sync":
-		var payload DataSyncPayload
-		if err := json.Unmarshal(task.Payload, &payload); err != nil {
-			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
-		}
-		output, err := executeDataSync(payload, args.dataPath)
-		if err != nil {
-			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
-		}
-		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
 	case "container_data_sync":
 		var payload DataSyncPayload
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -301,6 +291,37 @@ func installSshPubkey(pubkey string) error {
 	return err
 }
 
+// slowTaskSem 限制并发慢任务数量（最多 1 个），避免同时跑多个耗时 I/O 操作打满节点资源。
+var slowTaskSem = make(chan struct{}, 1)
+
+// slowTaskTypes 是执行时间可能超过数十秒的任务类型集合。
+// 这些任务将在独立 goroutine 中运行，让任务轮询循环可立即继续处理其他任务。
+var slowTaskTypes = map[string]bool{
+	"container_data_sync":     true, // rsync 跨节点数据同步，通常 1–10+ 分钟
+	"incus_image_pull":        true, // 从远端拉取镜像，可能数十分钟
+	"incus_image_export":      true, // 将镜像导出到磁盘，分钟级
+	"incus_image_import":      true, // 从磁盘导入镜像，分钟级
+	"incus_publish_container": true, // 将容器压缩为镜像（+ 可选导出），分钟级
+	"scan_user_directory":     true, // du/find 扫描用户目录，大数据集时分钟级
+	"scan_shared_resource":    true, // 共享资源扫描，分钟级
+	"verify_shared_resource":  true, // 共享资源校验，分钟级
+	"incus_exec_command":      true, // 任意容器内命令，最长 10 分钟超时
+}
+
+func runTask(server string, args cliArgs, hostname string, task *AgentTask) {
+	fmt.Printf("%s claimed task %d type=%s attempt=%d\n", time.Now().Format(time.RFC3339), task.ID, task.Type, task.Attempts)
+	result := executeTask(task, args)
+	if err := reportTask(server, args, hostname, task.ID, result); err != nil {
+		fmt.Fprintf(os.Stderr, "%s report task %d failed: %v\n", time.Now().Format(time.RFC3339), task.ID, err)
+		return
+	}
+	if result.OK {
+		fmt.Printf("%s completed task %d status=%s ip=%s\n", time.Now().Format(time.RFC3339), task.ID, result.Status, result.IP)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s failed task %d: %s\n", time.Now().Format(time.RFC3339), task.ID, result.Error)
+	}
+}
+
 func processTasks(server string, args cliArgs, hostname string) {
 	for {
 		task, err := claimTask(server, args, hostname)
@@ -311,16 +332,21 @@ func processTasks(server string, args cliArgs, hostname string) {
 		if task == nil {
 			return
 		}
-		fmt.Printf("%s claimed task %d type=%s attempt=%d\n", time.Now().Format(time.RFC3339), task.ID, task.Type, task.Attempts)
-		result := executeTask(task, args)
-		if err := reportTask(server, args, hostname, task.ID, result); err != nil {
-			fmt.Fprintf(os.Stderr, "%s report task %d failed: %v\n", time.Now().Format(time.RFC3339), task.ID, err)
-			return
-		}
-		if result.OK {
-			fmt.Printf("%s completed task %d status=%s ip=%s\n", time.Now().Format(time.RFC3339), task.ID, result.Status, result.IP)
+		if slowTaskTypes[task.Type] {
+			select {
+			case slowTaskSem <- struct{}{}:
+				// 获取慢任务槽位，在独立 goroutine 中执行，让循环立即继续轮询下一个任务
+				go func(t *AgentTask) {
+					defer func() { <-slowTaskSem }()
+					runTask(server, args, hostname, t)
+				}(task)
+			default:
+				// 慢任务槽位已满（已有慢任务正在运行），同步执行（任务已 claim，不可退还）
+				runTask(server, args, hostname, task)
+			}
 		} else {
-			fmt.Fprintf(os.Stderr, "%s failed task %d: %s\n", time.Now().Format(time.RFC3339), task.ID, result.Error)
+			// 快速任务（秒级），同步执行
+			runTask(server, args, hostname, task)
 		}
 	}
 }
