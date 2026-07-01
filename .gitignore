@@ -25,6 +25,8 @@ coverage/
 # Go / agent build outputs
 cluster-node-agent
 cluster-node-agent-check
+agent/cluster-node-agent
+agent/cluster-agent-updater
 *.test
 *.out
 

@@ -1,6 +1,29 @@
 import { authToken } from "../auth";
 import { patchJson, postJson, request } from "./client";
 import { translateApiError } from "./errors";
+import type { components } from "./schema";
+
+// ── Auto-generated request body types (from openapi.json via openapi-typescript)
+// Run `npm run gen-api` to regenerate after backend changes.
+// NOTE: Response types (Container, Node, User, …) are NOT auto-generated because
+// the backend returns plain dicts without Pydantic response_model annotations.
+export type NodeConfigInput     = components["schemas"]["NodeConfigInput"];
+// Fields with server-side defaults (@default in OpenAPI) are made optional so
+// callers don't have to supply them when the default is acceptable.
+export type ContainerCreateInput = Omit<
+  components["schemas"]["ContainerCreate"],
+  "gpu_model" | "ssh_username" | "ssh_key"
+> & {
+  gpu_model?: string;
+  ssh_username?: string;
+  ssh_key?: string;
+};
+export type ContainerSyncRuleInput = components["schemas"]["ContainerSyncRuleInput"];
+export type ContainerSyncInput  = components["schemas"]["ContainerSyncInput"];
+export type ImageCreateInput    = components["schemas"]["ImageInput"];
+export type UserCreateInput     = components["schemas"]["UserUpsertInput"];
+export type SshKeyCreateInput   = components["schemas"]["SshKeyInput"];
+export type PasswordChangeInput = components["schemas"]["PasswordChangeInput"];
 
 // ── SSO 统一认证 ──────────────────────────────────────────────────────────────
 export interface SSOProvider {
@@ -590,31 +613,7 @@ export function triggerAgentUpdate(id: number) {
   return postJson<{ id: number }>(`/api/nodes/${id}/trigger-agent-update`, {});
 }
 
-export type NodeConfigPayload = Pick<
-  Node,
-  | "node_type"
-  | "schedulable"
-  | "maintenance"
-  | "max_containers"
-  | "max_running_containers"
-  | "max_gpu_shared_containers"
-  | "allow_gpu_sharing"
-  | "max_cpu_per_container"
-  | "max_memory_gb_per_container"
-  | "max_disk_gb_per_container"
-  | "reserved_memory_gb"
-  | "reserved_disk_gb"
-  | "allow_port_mapping"
-  | "max_ports_per_container"
-  | "scheduler_weight"
-  | "labels"
-  | "wol_mac"
-  | "wol_broadcast"
-  | "ssh_user"
-  | "ssh_port"
-  | "sync_ip"
-  | "sync_ssh_port"
->;
+export type NodeConfigPayload = NodeConfigInput;
 
 export function updateNodeConfig(id: number, payload: NodeConfigPayload) {
   return request<Node>(`/api/nodes/${id}/config`, {
@@ -665,10 +664,6 @@ export interface UbuntuRemoteImage {
 
 export function getUbuntuRemoteImages() {
   return request<UbuntuRemoteImage[]>("/api/image-catalog/ubuntu-remotes");
-}
-
-export function pullImageToNodes(incus_ref: string) {
-  return postJson<{ task_ids: number[]; node_count: number }>("/api/image-catalog/pull-to-nodes", { incus_ref });
 }
 
 export function pullImageToNode(incus_ref: string, node_id: number) {
@@ -798,10 +793,6 @@ export function uploadUserFiles(userId: number, relativePath: string, files: Fil
   }
   return request<UserUploadResult>(`/api/storage/users/${userId}/upload`, { method: "POST", body: form });
 }
-export function getUserDownloadInfo(userId: number, relativePath = "") {
-  return request<{ node:string; host:string; path:string; command:string }>(`/api/storage/users/${userId}/download-info?relative_path=${encodeURIComponent(relativePath)}`);
-}
-
 export function previewUserFile(userId: number, relativePath = "") {
   return request<SharedResourcePreview>(`/api/storage/users/${userId}/preview?relative_path=${encodeURIComponent(relativePath)}`);
 }
@@ -899,20 +890,6 @@ export function updateStorageSettings(payload: StorageSettings) {
   });
 }
 
-export function saveSharedResource(payload: Partial<SharedResource> & Pick<SharedResource, "resource_type" | "name" | "source_path" | "mount_path">, id?: number) {
-  return request<SharedResource>(id ? `/api/data/shared-resources/${id}` : "/api/data/shared-resources", {
-    method: id ? "PUT" : "POST",
-    body: JSON.stringify(payload)
-  });
-}
-
-export function updateSharedResourceTags(id: number, tags: string[]) {
-  return request<SharedResource>(`/api/data/shared-resources/${id}/tags`, {
-    method: "PUT",
-    body: JSON.stringify({ tags }),
-  });
-}
-
 export function updateSharedResourceInfo(id: number, payload: { name: string; version: string; tags: string[] }) {
   return patchJson<SharedResource>(`/api/data/shared-resources/${id}/info`, payload);
 }
@@ -937,10 +914,6 @@ export function scanSharedResource(id: number, relative_path = "") {
   return request<ContainerTask>(`/api/data/shared-resources/${id}/files/scan?relative_path=${encodeURIComponent(relative_path)}`, { method: "POST" });
 }
 
-export function getSharedResourceDownloadInfo(id: number) {
-  return request<{ node: string; host: string; path: string; command: string }>(`/api/data/shared-resources/${id}/download-info`);
-}
-
 export function previewSharedResourceFile(id: number, relative_path = "") {
   return request<SharedResourcePreview>(`/api/data/shared-resources/${id}/preview?relative_path=${encodeURIComponent(relative_path)}`);
 }
@@ -951,10 +924,6 @@ export function getStorageVolumes() {
 
 export function getStorageImages() {
   return request<StorageImageCatalog>("/api/storage/images");
-}
-
-export function exportStorageImage(payload: { source_node_id: number; image_ref: string; alias?: string }) {
-  return postJson<{ image: StorageImageFile; task: ContainerTask }>("/api/storage/images/export", payload);
 }
 
 export function distributeStorageImage(id: number, target_node_ids: number[] = []) {
@@ -993,7 +962,7 @@ export function createJoinToken(payload: {
   return postJson<JoinTokenResult>("/api/node-join-tokens", payload);
 }
 
-export function createContainer(payload: Record<string, unknown>) {
+export function createContainer(payload: ContainerCreateInput) {
   return postJson<Container>("/api/containers", payload);
 }
 
@@ -1021,15 +990,8 @@ export function deleteContainer(id: number, name: string, force = false) {
   });
 }
 
-export function execContainerCommand(containerId: number, command: string) {
-  return postJson<ContainerTask>(`/api/containers/${containerId}/exec`, { command });
-}
 export function publishContainerImage(containerId: number, payload: { alias: string; display_name?: string; register_platform?: boolean; export_to_storage?: boolean }) {
   return postJson<ContainerTask>(`/api/containers/${containerId}/publish-image`, payload);
-}
-
-export function getContainerCommand(containerId: number, taskId: number) {
-  return request<ContainerTask>(`/api/containers/${containerId}/exec/${taskId}`);
 }
 
 export function createContainerPort(containerId: number, payload: { name: string; protocol: string; container_port: number }) {
@@ -1070,16 +1032,7 @@ export function getContainerSyncRules(containerId: number) {
   return request<ContainerSyncRule[]>(`/api/containers/${containerId}/sync-rules`);
 }
 
-export function saveContainerSyncRule(containerId: number, payload: {
-  name: string;
-  container_path: string;
-  storage_relative_path: string;
-  schedule_kind: "daily" | "weekly" | "monthly";
-  schedule_time_seconds: number;
-  interval_minutes: number;
-  enabled: boolean;
-  conflict_policy: "overwrite" | "skip";
-}, ruleId?: number) {
+export function saveContainerSyncRule(containerId: number, payload: ContainerSyncRuleInput, ruleId?: number) {
   return request<ContainerSyncRule>(
     ruleId ? `/api/containers/${containerId}/sync-rules/${ruleId}` : `/api/containers/${containerId}/sync-rules`,
     { method: ruleId ? "PUT" : "POST", body: JSON.stringify(payload) }

@@ -1,5 +1,3 @@
-import asyncio
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +16,6 @@ from .containers.services import (
     build_data_mounts,
     incus_create_payload,
     incus_lifecycle_payload,
-    is_deprecated_home_cache_mount,
     list_containers,
     usage_for_user,
 )
@@ -227,7 +224,6 @@ def create_app() -> FastAPI:
             "add_container_port": add_container_port,
             "select_node_and_gpus": select_node_and_gpus,
             "build_data_mounts": build_data_mounts,
-            "is_deprecated_home_cache_mount": is_deprecated_home_cache_mount,
             "enqueue_incus_image_import_task": lambda conn, node, container_id, image_ref: enqueue_incus_image_import_task(
                 conn,
                 node,

@@ -1,0 +1,5991 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GPU Cluster Platform",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me": {
+      "get": {
+        "summary": "Me",
+        "operationId": "me_api_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Profile",
+        "operationId": "update_profile_api_me_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/ssh-keys": {
+      "get": {
+        "summary": "List Ssh Keys",
+        "operationId": "list_ssh_keys_api_me_ssh_keys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add Ssh Key",
+        "operationId": "add_ssh_key_api_me_ssh_keys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshKeyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/ssh-keys/{key_id}": {
+      "delete": {
+        "summary": "Delete Ssh Key",
+        "operationId": "delete_ssh_key_api_me_ssh_keys__key_id__delete",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Key Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/ssh-keys/sync-to-containers": {
+      "post": {
+        "summary": "Sync Ssh Keys To Containers",
+        "operationId": "sync_ssh_keys_to_containers_api_me_ssh_keys_sync_to_containers_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/preferences/{key}": {
+      "get": {
+        "summary": "Get User Preference",
+        "operationId": "get_user_preference_api_me_preferences__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update User Preference",
+        "operationId": "update_user_preference_api_me_preferences__key__put",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPreferenceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users": {
+      "get": {
+        "summary": "Users",
+        "operationId": "users_api_users_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create User",
+        "operationId": "create_user_api_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpsertInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quota-profiles": {
+      "get": {
+        "summary": "Quota Profiles",
+        "operationId": "quota_profiles_api_quota_profiles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quota-profiles/{group_name}": {
+      "put": {
+        "summary": "Update Quota Profile",
+        "operationId": "update_quota_profile_api_quota_profiles__group_name__put",
+        "parameters": [
+          {
+            "name": "group_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Group Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuotaProfileInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{user_id}": {
+      "put": {
+        "summary": "Update User",
+        "operationId": "update_user_api_users__user_id__put",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpsertInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove User",
+        "operationId": "remove_user_api_users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/approve-sso": {
+      "post": {
+        "summary": "Approve Sso User",
+        "description": "预批准一个已在 Casdoor 注册但从未登录过平台的用户。\n直接创建平台账号（enabled=True）并写入 user_identities 关联，\n之后该用户 SSO 登录时可直接进入平台。",
+        "operationId": "approve_sso_user_api_users_approve_sso_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveSsoInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/config": {
+      "get": {
+        "summary": "Config",
+        "operationId": "config_api_auth_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "Login",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "summary": "Register",
+        "operationId": "register_api_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "Logout",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/password": {
+      "put": {
+        "summary": "Change Password",
+        "operationId": "change_password_api_me_password_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform/settings": {
+      "get": {
+        "summary": "Platform Settings Get",
+        "operationId": "platform_settings_get_api_platform_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Platform Settings Put",
+        "operationId": "platform_settings_put_api_platform_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlatformSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/sso/providers": {
+      "get": {
+        "summary": "List Sso Providers",
+        "description": "返回已配置的 SSO Provider 列表（前端用于渲染登录按钮）。",
+        "operationId": "list_sso_providers_api_auth_sso_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/sso/start/{provider_id}": {
+      "get": {
+        "summary": "Start Sso",
+        "description": "发起 SSO 认证：生成防 CSRF state，302 重定向至 IdP 登录页。",
+        "operationId": "start_sso_api_auth_sso_start__provider_id__get",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/sso/callback": {
+      "post": {
+        "summary": "Sso Callback",
+        "description": "处理 IdP 回调：验证 state、换取身份、查找/创建用户、返回 session token。",
+        "operationId": "sso_callback_api_auth_sso_callback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSOCallbackInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes": {
+      "get": {
+        "summary": "Nodes",
+        "operationId": "nodes_api_nodes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/ssh-pubkey": {
+      "get": {
+        "summary": "Node Ssh Pubkey",
+        "operationId": "node_ssh_pubkey_api_nodes_ssh_pubkey_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/install-ssh-pubkey": {
+      "post": {
+        "summary": "Install Node Ssh Pubkey",
+        "operationId": "install_node_ssh_pubkey_api_nodes__node_id__install_ssh_pubkey_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/config": {
+      "put": {
+        "summary": "Update Node Config",
+        "operationId": "update_node_config_api_nodes__node_id__config_put",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeConfigInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}": {
+      "delete": {
+        "summary": "Delete Node",
+        "operationId": "delete_node_api_nodes__node_id__delete",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/shutdown": {
+      "post": {
+        "summary": "Shutdown Node",
+        "operationId": "shutdown_node_api_nodes__node_id__shutdown_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/reboot": {
+      "post": {
+        "summary": "Reboot Node",
+        "operationId": "reboot_node_api_nodes__node_id__reboot_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/trigger-agent-update": {
+      "post": {
+        "summary": "Trigger Agent Update",
+        "operationId": "trigger_agent_update_api_nodes__node_id__trigger_agent_update_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/wake": {
+      "post": {
+        "summary": "Wake Node",
+        "operationId": "wake_node_api_nodes__node_id__wake_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/gpus": {
+      "get": {
+        "summary": "Gpus",
+        "operationId": "gpus_api_gpus_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/node-join-tokens": {
+      "get": {
+        "summary": "Node Join Tokens",
+        "operationId": "node_join_tokens_api_node_join_tokens_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Node Join Token",
+        "operationId": "create_node_join_token_api_node_join_tokens_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinTokenCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/node-join-tokens/{token_id}": {
+      "delete": {
+        "summary": "Delete Node Join Token",
+        "operationId": "delete_node_join_token_api_node_join_tokens__token_id__delete",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Token Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-releases": {
+      "get": {
+        "summary": "List Releases",
+        "operationId": "list_releases_api_agent_releases_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-releases/{version}/build": {
+      "post": {
+        "summary": "Build Release",
+        "description": "通过宿主机 Docker daemon 启动 Go 编译容器，将编译产物写入 agent-releases 卷。",
+        "operationId": "build_release_api_agent_releases__version__build_post",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          },
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "stable",
+              "title": "Channel"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-releases/{version}": {
+      "delete": {
+        "summary": "Delete Release",
+        "operationId": "delete_release_api_agent_releases__version__delete",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          },
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-releases/latest/download": {
+      "get": {
+        "summary": "Download Latest Agent Release",
+        "operationId": "download_latest_agent_release_api_agent_releases_latest_download_get",
+        "parameters": [
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-releases/latest/download-updater": {
+      "get": {
+        "summary": "Download Latest Agent Updater",
+        "operationId": "download_latest_agent_updater_api_agent_releases_latest_download_updater_get",
+        "parameters": [
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-releases/{version}/download": {
+      "get": {
+        "summary": "Admin Download Release",
+        "operationId": "admin_download_release_api_agent_releases__version__download_get",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          },
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/agent-update": {
+      "put": {
+        "summary": "Configure Node Update",
+        "operationId": "configure_node_update_api_nodes__node_id__agent_update_put",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-updates/manifest": {
+      "get": {
+        "summary": "Update Manifest",
+        "operationId": "update_manifest_api_agent_updates_manifest_get",
+        "parameters": [
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-updates/download/{version}": {
+      "get": {
+        "summary": "Download Release",
+        "operationId": "download_release_api_agent_updates_download__version__get",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          },
+          {
+            "name": "architecture",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "amd64",
+              "title": "Architecture"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-updates/report": {
+      "post": {
+        "summary": "Report Update",
+        "operationId": "report_update_api_agent_updates_report_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/images": {
+      "get": {
+        "summary": "Images",
+        "operationId": "images_api_images_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Image",
+        "operationId": "create_image_api_images_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/image-catalog": {
+      "get": {
+        "summary": "Image Catalog",
+        "operationId": "image_catalog_api_image_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/images/{image_id}": {
+      "put": {
+        "summary": "Update Image",
+        "operationId": "update_image_api_images__image_id__put",
+        "parameters": [
+          {
+            "name": "image_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Image Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Image",
+        "operationId": "delete_image_api_images__image_id__delete",
+        "parameters": [
+          {
+            "name": "image_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Image Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/image-catalog/ubuntu-remotes": {
+      "get": {
+        "summary": "Ubuntu Remote Images",
+        "operationId": "ubuntu_remote_images_api_image_catalog_ubuntu_remotes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/image-catalog/pull-to-nodes": {
+      "post": {
+        "summary": "Pull Image To Nodes",
+        "operationId": "pull_image_to_nodes_api_image_catalog_pull_to_nodes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/resource-tag-options": {
+      "get": {
+        "summary": "Resource Tag Options Get",
+        "operationId": "resource_tag_options_get_api_data_resource_tag_options_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/storage-settings": {
+      "get": {
+        "summary": "Storage Settings Get",
+        "operationId": "storage_settings_get_api_data_storage_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Storage Settings Put",
+        "operationId": "storage_settings_put_api_data_storage_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/user-policies": {
+      "get": {
+        "summary": "User Data Policies",
+        "description": "返回所有用户数据策略列表（含 ZFS 挂载点信息），管理员看全部，普通用户只看自己",
+        "operationId": "user_data_policies_api_data_user_policies_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/files": {
+      "get": {
+        "summary": "User Directory Files",
+        "operationId": "user_directory_files_api_storage_users__user_id__files_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/files/live": {
+      "get": {
+        "summary": "User Directory Live",
+        "description": "即时 SSH 到存储节点执行 ls -la，毫秒级返回文件列表，无需预扫描",
+        "operationId": "user_directory_live_api_storage_users__user_id__files_live_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/files/scan": {
+      "post": {
+        "summary": "Scan User Directory",
+        "operationId": "scan_user_directory_api_storage_users__user_id__files_scan_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserDirectoryScanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/upload": {
+      "post": {
+        "summary": "User Directory Upload",
+        "operationId": "user_directory_upload_api_storage_users__user_id__upload_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_user_directory_upload_api_storage_users__user_id__upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/download-info": {
+      "get": {
+        "summary": "User Directory Download Info",
+        "operationId": "user_directory_download_info_api_storage_users__user_id__download_info_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/download": {
+      "get": {
+        "summary": "User Directory Download",
+        "operationId": "user_directory_download_api_storage_users__user_id__download_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/preview": {
+      "get": {
+        "summary": "User Directory Preview",
+        "operationId": "user_directory_preview_api_storage_users__user_id__preview_get",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/users/{user_id}/file": {
+      "delete": {
+        "summary": "User Directory Delete",
+        "operationId": "user_directory_delete_api_storage_users__user_id__file_delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources": {
+      "get": {
+        "summary": "Shared Resources",
+        "operationId": "shared_resources_api_data_shared_resources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Shared Resource",
+        "operationId": "create_shared_resource_api_data_shared_resources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedResourceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}": {
+      "put": {
+        "summary": "Update Shared Resource",
+        "operationId": "update_shared_resource_api_data_shared_resources__resource_id__put",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedResourceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Shared Resource",
+        "operationId": "delete_shared_resource_api_data_shared_resources__resource_id__delete",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/info": {
+      "patch": {
+        "summary": "Update Shared Resource Info",
+        "operationId": "update_shared_resource_info_api_data_shared_resources__resource_id__info_patch",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedResourceInfoInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/tags": {
+      "put": {
+        "summary": "Update Shared Resource Tags",
+        "operationId": "update_shared_resource_tags_api_data_shared_resources__resource_id__tags_put",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedResourceTagsInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/verify": {
+      "post": {
+        "summary": "Verify Shared Resource",
+        "operationId": "verify_shared_resource_api_data_shared_resources__resource_id__verify_post",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/resource-requests": {
+      "post": {
+        "summary": "Request Shared Resource",
+        "operationId": "request_shared_resource_api_data_resource_requests_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedResourceRequestInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/files": {
+      "get": {
+        "summary": "Shared Resource Files",
+        "operationId": "shared_resource_files_api_data_shared_resources__resource_id__files_get",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/files/scan": {
+      "post": {
+        "summary": "Scan Shared Resource",
+        "operationId": "scan_shared_resource_api_data_shared_resources__resource_id__files_scan_post",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/download-info": {
+      "get": {
+        "summary": "Shared Resource Download Info",
+        "operationId": "shared_resource_download_info_api_data_shared_resources__resource_id__download_info_get",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/preview": {
+      "get": {
+        "summary": "Shared Resource Preview",
+        "operationId": "shared_resource_preview_api_data_shared_resources__resource_id__preview_get",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "relative_path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Relative Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/volumes": {
+      "get": {
+        "summary": "Storage Volumes",
+        "operationId": "storage_volumes_api_storage_volumes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/images": {
+      "get": {
+        "summary": "Storage Images",
+        "operationId": "storage_images_api_storage_images_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/user-datasets": {
+      "get": {
+        "summary": "User Storage Datasets",
+        "operationId": "user_storage_datasets_api_storage_user_datasets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/user-datasets/{user_id}/ensure": {
+      "post": {
+        "summary": "Ensure User Storage Dataset",
+        "operationId": "ensure_user_storage_dataset_api_storage_user_datasets__user_id__ensure_post",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/user-datasets/ensure-all": {
+      "post": {
+        "summary": "Ensure All User Storage Datasets",
+        "operationId": "ensure_all_user_storage_datasets_api_storage_user_datasets_ensure_all_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/user-datasets/{user_id}": {
+      "delete": {
+        "summary": "Remove User Storage Dataset",
+        "operationId": "remove_user_storage_dataset_api_storage_user_datasets__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/workspace-volumes": {
+      "get": {
+        "summary": "Workspace Volumes",
+        "operationId": "workspace_volumes_api_storage_workspace_volumes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/workspace-volumes/{node_id}/{user_id}/remove": {
+      "post": {
+        "summary": "Remove Workspace Volume",
+        "operationId": "remove_workspace_volume_api_storage_workspace_volumes__node_id___user_id__remove_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveWorkspaceVolumeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/images/export": {
+      "post": {
+        "summary": "Export Storage Image",
+        "operationId": "export_storage_image_api_storage_images_export_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageImageExportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/images/{image_file_id}": {
+      "delete": {
+        "summary": "Remove Storage Image",
+        "operationId": "remove_storage_image_api_storage_images__image_file_id__delete",
+        "parameters": [
+          {
+            "name": "image_file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Image File Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/images/{image_file_id}/distribute": {
+      "post": {
+        "summary": "Distribute Storage Image",
+        "operationId": "distribute_storage_image_api_storage_images__image_file_id__distribute_post",
+        "parameters": [
+          {
+            "name": "image_file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Image File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageImageDistributeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers": {
+      "get": {
+        "summary": "Containers",
+        "operationId": "containers_api_containers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Container",
+        "operationId": "create_container_api_containers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/start": {
+      "post": {
+        "summary": "Start Container",
+        "operationId": "start_container_api_containers__container_id__start_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/stop": {
+      "post": {
+        "summary": "Stop Container",
+        "operationId": "stop_container_api_containers__container_id__stop_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/restart": {
+      "post": {
+        "summary": "Restart Container",
+        "operationId": "restart_container_api_containers__container_id__restart_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/retry": {
+      "post": {
+        "summary": "Retry Container",
+        "operationId": "retry_container_api_containers__container_id__retry_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/ssh-access/retry": {
+      "post": {
+        "summary": "Retry Container Ssh Access",
+        "operationId": "retry_container_ssh_access_api_containers__container_id__ssh_access_retry_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/resources": {
+      "patch": {
+        "summary": "Update Container Resources",
+        "operationId": "update_container_resources_api_containers__container_id__resources_patch",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerResourceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/exec": {
+      "post": {
+        "summary": "Create Container Exec",
+        "operationId": "create_container_exec_api_containers__container_id__exec_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerExecCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/publish-image": {
+      "post": {
+        "summary": "Publish Container Image",
+        "operationId": "publish_container_image_api_containers__container_id__publish_image_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerPublishImageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/exec/{task_id}": {
+      "get": {
+        "summary": "Get Container Exec",
+        "operationId": "get_container_exec_api_containers__container_id__exec__task_id__get",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync-tasks": {
+      "get": {
+        "summary": "Container Sync Tasks",
+        "operationId": "container_sync_tasks_api_containers__container_id__sync_tasks_get",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync": {
+      "post": {
+        "summary": "Create Container Sync",
+        "operationId": "create_container_sync_api_containers__container_id__sync_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerSyncInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync-rules": {
+      "get": {
+        "summary": "Container Sync Rules",
+        "operationId": "container_sync_rules_api_containers__container_id__sync_rules_get",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Container Sync Rule",
+        "operationId": "create_container_sync_rule_api_containers__container_id__sync_rules_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerSyncRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync-rules/{rule_id}": {
+      "put": {
+        "summary": "Update Container Sync Rule",
+        "operationId": "update_container_sync_rule_api_containers__container_id__sync_rules__rule_id__put",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerSyncRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Container Sync Rule",
+        "operationId": "delete_container_sync_rule_api_containers__container_id__sync_rules__rule_id__delete",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync-rules/{rule_id}/run": {
+      "post": {
+        "summary": "Run Container Sync Rule",
+        "operationId": "run_container_sync_rule_api_containers__container_id__sync_rules__rule_id__run_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/ports": {
+      "post": {
+        "summary": "Create Container Port",
+        "operationId": "create_container_port_api_containers__container_id__ports_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerPortInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/ports/{port_id}": {
+      "put": {
+        "summary": "Update Container Port",
+        "operationId": "update_container_port_api_containers__container_id__ports__port_id__put",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "port_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Port Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerPortInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Container Port",
+        "operationId": "delete_container_port_api_containers__container_id__ports__port_id__delete",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "port_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Port Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}": {
+      "delete": {
+        "summary": "Delete Container",
+        "operationId": "delete_container_api_containers__container_id__delete",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/cluster": {
+      "get": {
+        "summary": "Summary",
+        "operationId": "summary_api_metrics_cluster_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/summary": {
+      "get": {
+        "summary": "Summary",
+        "operationId": "summary_api_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/node-hardware": {
+      "get": {
+        "summary": "Node Hardware",
+        "operationId": "node_hardware_api_metrics_node_hardware_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/metrics/nodes/{node_id}": {
+      "get": {
+        "summary": "Node Metrics",
+        "operationId": "node_metrics_api_metrics_nodes__node_id__get",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/internal/port-routes": {
+      "get": {
+        "summary": "Internal Port Routes",
+        "operationId": "internal_port_routes_api_internal_port_routes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/register": {
+      "post": {
+        "summary": "Register Node",
+        "operationId": "register_node_api_nodes_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeRegistration"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/heartbeat": {
+      "post": {
+        "summary": "Heartbeat",
+        "operationId": "heartbeat_api_nodes__node_id__heartbeat_post",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeRegistration"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/tasks/claim": {
+      "post": {
+        "summary": "Claim Node Task",
+        "operationId": "claim_node_task_api_nodes_tasks_claim_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTaskClaim"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/tasks/{task_id}/result": {
+      "post": {
+        "summary": "Complete Node Task",
+        "operationId": "complete_node_task_api_nodes_tasks__task_id__result_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTaskResult"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentTaskClaim": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "hostname"
+        ],
+        "title": "AgentTaskClaim"
+      },
+      "AgentTaskResult": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip",
+            "default": ""
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "default": ""
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "hostname",
+          "ok"
+        ],
+        "title": "AgentTaskResult"
+      },
+      "ApproveSsoInput": {
+        "properties": {
+          "casdoor_id": {
+            "type": "string",
+            "title": "Casdoor Id"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "default": ""
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name",
+            "default": "member"
+          }
+        },
+        "type": "object",
+        "required": [
+          "casdoor_id",
+          "username",
+          "display_name"
+        ],
+        "title": "ApproveSsoInput"
+      },
+      "Body_user_directory_upload_api_storage_users__user_id__upload_post": {
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "title": "Relative Path",
+            "default": ""
+          },
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files",
+          "paths"
+        ],
+        "title": "Body_user_directory_upload_api_storage_users__user_id__upload_post"
+      },
+      "ContainerCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "image_id": {
+            "type": "string",
+            "title": "Image Id"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "title": "Cpu Cores"
+          },
+          "memory_gb": {
+            "type": "integer",
+            "title": "Memory Gb"
+          },
+          "disk_gb": {
+            "type": "integer",
+            "title": "Disk Gb"
+          },
+          "gpu_count": {
+            "type": "integer",
+            "title": "Gpu Count"
+          },
+          "gpu_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Gpu Ids"
+          },
+          "gpu_model": {
+            "type": "string",
+            "title": "Gpu Model",
+            "default": ""
+          },
+          "ssh_username": {
+            "type": "string",
+            "title": "Ssh Username",
+            "default": "ubuntu"
+          },
+          "ssh_key": {
+            "type": "string",
+            "title": "Ssh Key",
+            "default": ""
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ContainerResourceInput"
+            },
+            "type": "array",
+            "title": "Resources"
+          },
+          "mounts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mounts"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/ContainerPortInput"
+            },
+            "type": "array",
+            "title": "Ports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "image_id",
+          "cpu_cores",
+          "memory_gb",
+          "disk_gb",
+          "gpu_count"
+        ],
+        "title": "ContainerCreate"
+      },
+      "ContainerDeleteRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ContainerDeleteRequest"
+      },
+      "ContainerExecCreate": {
+        "properties": {
+          "command": {
+            "type": "string",
+            "title": "Command"
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "ContainerExecCreate"
+      },
+      "ContainerPortInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "protocol": {
+            "type": "string",
+            "title": "Protocol",
+            "default": "tcp"
+          },
+          "container_port": {
+            "type": "integer",
+            "title": "Container Port"
+          }
+        },
+        "type": "object",
+        "required": [
+          "container_port"
+        ],
+        "title": "ContainerPortInput"
+      },
+      "ContainerPublishImageInput": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": ""
+          },
+          "register_platform": {
+            "type": "boolean",
+            "title": "Register Platform",
+            "default": true
+          },
+          "export_to_storage": {
+            "type": "boolean",
+            "title": "Export To Storage",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias"
+        ],
+        "title": "ContainerPublishImageInput"
+      },
+      "ContainerResourceInput": {
+        "properties": {
+          "resource_id": {
+            "type": "integer",
+            "title": "Resource Id"
+          },
+          "mount_path": {
+            "type": "string",
+            "title": "Mount Path",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_id"
+        ],
+        "title": "ContainerResourceInput"
+      },
+      "ContainerResourceUpdate": {
+        "properties": {
+          "cpu_cores": {
+            "type": "integer",
+            "title": "Cpu Cores"
+          },
+          "memory_gb": {
+            "type": "integer",
+            "title": "Memory Gb"
+          },
+          "gpu_count": {
+            "type": "integer",
+            "title": "Gpu Count"
+          },
+          "gpu_model": {
+            "type": "string",
+            "title": "Gpu Model",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "cpu_cores",
+          "memory_gb",
+          "gpu_count"
+        ],
+        "title": "ContainerResourceUpdate"
+      },
+      "ContainerStateReport": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": ""
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ContainerStateReport"
+      },
+      "ContainerSyncInput": {
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "storage_to_container",
+              "container_to_storage"
+            ],
+            "title": "Direction"
+          },
+          "storage_type": {
+            "type": "string",
+            "enum": [
+              "dataset",
+              "model",
+              "user_file"
+            ],
+            "title": "Storage Type",
+            "default": "user_file"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "storage_relative_path": {
+            "type": "string",
+            "title": "Storage Relative Path",
+            "default": ""
+          },
+          "container_path": {
+            "type": "string",
+            "title": "Container Path"
+          },
+          "conflict_policy": {
+            "type": "string",
+            "enum": [
+              "overwrite",
+              "skip"
+            ],
+            "title": "Conflict Policy",
+            "default": "overwrite"
+          }
+        },
+        "type": "object",
+        "required": [
+          "direction",
+          "container_path"
+        ],
+        "title": "ContainerSyncInput"
+      },
+      "ContainerSyncRuleInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "container_path": {
+            "type": "string",
+            "title": "Container Path"
+          },
+          "storage_relative_path": {
+            "type": "string",
+            "title": "Storage Relative Path",
+            "default": ""
+          },
+          "schedule_kind": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "title": "Schedule Kind",
+            "default": "daily"
+          },
+          "schedule_time_seconds": {
+            "type": "integer",
+            "title": "Schedule Time Seconds",
+            "default": 0
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes",
+            "default": 1440
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "conflict_policy": {
+            "type": "string",
+            "enum": [
+              "overwrite",
+              "skip"
+            ],
+            "title": "Conflict Policy",
+            "default": "overwrite"
+          }
+        },
+        "type": "object",
+        "required": [
+          "container_path"
+        ],
+        "title": "ContainerSyncRuleInput"
+      },
+      "GPUReport": {
+        "properties": {
+          "slot": {
+            "type": "integer",
+            "title": "Slot",
+            "default": 0
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "pci_address": {
+            "type": "string",
+            "title": "Pci Address",
+            "default": ""
+          },
+          "vram_gb": {
+            "type": "integer",
+            "title": "Vram Gb",
+            "default": 0
+          },
+          "vram_used_mb": {
+            "type": "integer",
+            "title": "Vram Used Mb",
+            "default": 0
+          },
+          "temperature_c": {
+            "type": "integer",
+            "title": "Temperature C",
+            "default": 35
+          },
+          "power_w": {
+            "type": "integer",
+            "title": "Power W",
+            "default": 40
+          },
+          "utilization": {
+            "type": "integer",
+            "title": "Utilization",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "model"
+        ],
+        "title": "GPUReport"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImageInput": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "incus_ref": {
+            "type": "string",
+            "title": "Incus Ref"
+          },
+          "cuda_major": {
+            "type": "integer",
+            "title": "Cuda Major",
+            "default": 0
+          },
+          "compatible_pools": {
+            "type": "string",
+            "title": "Compatible Pools",
+            "default": "legacy-pascal,modern-geforce,workstation,unknown"
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "default": "admin"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "preferred": {
+            "type": "boolean",
+            "title": "Preferred",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "incus_ref"
+        ],
+        "title": "ImageInput"
+      },
+      "IncusImageReport": {
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "aliases": {
+            "type": "string",
+            "title": "Aliases",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "architecture": {
+            "type": "string",
+            "title": "Architecture",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "fingerprint"
+        ],
+        "title": "IncusImageReport"
+      },
+      "JoinTokenCreate": {
+        "properties": {
+          "expected_hostname": {
+            "type": "string",
+            "title": "Expected Hostname",
+            "default": ""
+          },
+          "node_group": {
+            "type": "string",
+            "title": "Node Group",
+            "default": "unassigned"
+          },
+          "server_url": {
+            "type": "string",
+            "title": "Server Url",
+            "default": ""
+          },
+          "expires_in_hours": {
+            "type": "integer",
+            "title": "Expires In Hours",
+            "default": 24
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "JoinTokenCreate"
+      },
+      "LoginInput": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginInput"
+      },
+      "NodeConfigInput": {
+        "properties": {
+          "node_type": {
+            "type": "string",
+            "enum": [
+              "compute",
+              "storage",
+              "app",
+              "mixed"
+            ],
+            "title": "Node Type",
+            "default": "compute"
+          },
+          "schedulable": {
+            "type": "boolean",
+            "title": "Schedulable",
+            "default": true
+          },
+          "maintenance": {
+            "type": "boolean",
+            "title": "Maintenance",
+            "default": false
+          },
+          "max_containers": {
+            "type": "integer",
+            "title": "Max Containers",
+            "default": 8
+          },
+          "max_running_containers": {
+            "type": "integer",
+            "title": "Max Running Containers",
+            "default": 8
+          },
+          "max_gpu_shared_containers": {
+            "type": "integer",
+            "title": "Max Gpu Shared Containers",
+            "default": 4
+          },
+          "allow_gpu_sharing": {
+            "type": "boolean",
+            "title": "Allow Gpu Sharing",
+            "default": true
+          },
+          "max_cpu_per_container": {
+            "type": "integer",
+            "title": "Max Cpu Per Container",
+            "default": 0
+          },
+          "max_memory_gb_per_container": {
+            "type": "integer",
+            "title": "Max Memory Gb Per Container",
+            "default": 0
+          },
+          "max_disk_gb_per_container": {
+            "type": "integer",
+            "title": "Max Disk Gb Per Container",
+            "default": 0
+          },
+          "reserved_memory_gb": {
+            "type": "integer",
+            "title": "Reserved Memory Gb",
+            "default": 0
+          },
+          "reserved_disk_gb": {
+            "type": "integer",
+            "title": "Reserved Disk Gb",
+            "default": 0
+          },
+          "allow_port_mapping": {
+            "type": "boolean",
+            "title": "Allow Port Mapping",
+            "default": true
+          },
+          "max_ports_per_container": {
+            "type": "integer",
+            "title": "Max Ports Per Container",
+            "default": 8
+          },
+          "scheduler_weight": {
+            "type": "integer",
+            "title": "Scheduler Weight",
+            "default": 0
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Labels"
+          },
+          "wol_mac": {
+            "type": "string",
+            "title": "Wol Mac",
+            "default": ""
+          },
+          "wol_broadcast": {
+            "type": "string",
+            "title": "Wol Broadcast",
+            "default": "255.255.255.255"
+          },
+          "ssh_user": {
+            "type": "string",
+            "title": "Ssh User",
+            "default": "root"
+          },
+          "ssh_port": {
+            "type": "integer",
+            "title": "Ssh Port",
+            "default": 22
+          },
+          "sync_ip": {
+            "type": "string",
+            "title": "Sync Ip",
+            "default": ""
+          },
+          "sync_ssh_port": {
+            "type": "integer",
+            "title": "Sync Ssh Port",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "NodeConfigInput"
+      },
+      "NodeRegistration": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname",
+            "default": ""
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip",
+            "default": "unknown"
+          },
+          "node_group": {
+            "type": "string",
+            "title": "Node Group",
+            "default": "unassigned"
+          },
+          "driver_pool": {
+            "type": "string",
+            "title": "Driver Pool",
+            "default": "unknown"
+          },
+          "os_version": {
+            "type": "string",
+            "title": "Os Version",
+            "default": ""
+          },
+          "kernel_version": {
+            "type": "string",
+            "title": "Kernel Version",
+            "default": ""
+          },
+          "driver_version": {
+            "type": "string",
+            "title": "Driver Version",
+            "default": ""
+          },
+          "cuda_driver_api_version": {
+            "type": "string",
+            "title": "Cuda Driver Api Version",
+            "default": ""
+          },
+          "incus_status": {
+            "type": "string",
+            "title": "Incus Status",
+            "default": "unknown"
+          },
+          "agent_version": {
+            "type": "string",
+            "title": "Agent Version",
+            "default": ""
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "title": "Uptime Seconds",
+            "default": 0
+          },
+          "resources": {
+            "$ref": "#/components/schemas/ResourceReport"
+          },
+          "gpus": {
+            "items": {
+              "$ref": "#/components/schemas/GPUReport"
+            },
+            "type": "array",
+            "title": "Gpus"
+          },
+          "containers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ContainerStateReport"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Containers"
+          },
+          "images": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/IncusImageReport"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Images"
+          },
+          "storage_volumes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/StorageVolumeReport"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Volumes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "NodeRegistration"
+      },
+      "PasswordChangeInput": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "title": "Current Password",
+            "default": ""
+          },
+          "new_password": {
+            "type": "string",
+            "title": "New Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "new_password"
+        ],
+        "title": "PasswordChangeInput"
+      },
+      "PlatformSettingsInput": {
+        "properties": {
+          "local_login_enabled": {
+            "type": "boolean",
+            "title": "Local Login Enabled",
+            "default": true
+          },
+          "platform_registration_enabled": {
+            "type": "boolean",
+            "title": "Platform Registration Enabled",
+            "default": false
+          },
+          "platform_registration_auto_enable": {
+            "type": "boolean",
+            "title": "Platform Registration Auto Enable",
+            "default": false
+          },
+          "platform_registration_default_group": {
+            "type": "string",
+            "enum": [
+              "platform_admin",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "title": "Platform Registration Default Group",
+            "default": "member"
+          },
+          "sso_registration_enabled": {
+            "type": "boolean",
+            "title": "Sso Registration Enabled",
+            "default": true
+          },
+          "sso_auto_create_users": {
+            "type": "boolean",
+            "title": "Sso Auto Create Users",
+            "default": true
+          },
+          "sso_auto_enable_new_users": {
+            "type": "boolean",
+            "title": "Sso Auto Enable New Users",
+            "default": false
+          },
+          "sso_default_group": {
+            "type": "string",
+            "enum": [
+              "platform_admin",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "title": "Sso Default Group",
+            "default": "member"
+          },
+          "platform_timezone": {
+            "type": "string",
+            "title": "Platform Timezone",
+            "default": "Asia/Shanghai"
+          },
+          "transfer_bandwidth_limit_mbps": {
+            "type": "integer",
+            "title": "Transfer Bandwidth Limit Mbps",
+            "default": 0
+          },
+          "sso_provider_enabled": {
+            "type": "boolean",
+            "title": "Sso Provider Enabled",
+            "default": false
+          },
+          "sso_provider_type": {
+            "type": "string",
+            "enum": [
+              "oidc",
+              "cas"
+            ],
+            "title": "Sso Provider Type",
+            "default": "oidc"
+          },
+          "sso_provider_name": {
+            "type": "string",
+            "title": "Sso Provider Name",
+            "default": "casdoor"
+          },
+          "sso_provider_display_name": {
+            "type": "string",
+            "title": "Sso Provider Display Name",
+            "default": "统一认证"
+          },
+          "sso_callback_base_url": {
+            "type": "string",
+            "title": "Sso Callback Base Url",
+            "default": ""
+          },
+          "sso_cas_server_url": {
+            "type": "string",
+            "title": "Sso Cas Server Url",
+            "default": ""
+          },
+          "sso_cas_version": {
+            "type": "integer",
+            "title": "Sso Cas Version",
+            "default": 3
+          },
+          "sso_oidc_issuer": {
+            "type": "string",
+            "title": "Sso Oidc Issuer",
+            "default": ""
+          },
+          "sso_oidc_authorization_endpoint": {
+            "type": "string",
+            "title": "Sso Oidc Authorization Endpoint",
+            "default": ""
+          },
+          "sso_oidc_token_endpoint": {
+            "type": "string",
+            "title": "Sso Oidc Token Endpoint",
+            "default": ""
+          },
+          "sso_oidc_userinfo_endpoint": {
+            "type": "string",
+            "title": "Sso Oidc Userinfo Endpoint",
+            "default": ""
+          },
+          "sso_oidc_client_id": {
+            "type": "string",
+            "title": "Sso Oidc Client Id",
+            "default": ""
+          },
+          "sso_oidc_client_secret": {
+            "type": "string",
+            "title": "Sso Oidc Client Secret",
+            "default": ""
+          },
+          "sso_oidc_scopes": {
+            "type": "string",
+            "title": "Sso Oidc Scopes",
+            "default": "openid profile email"
+          },
+          "sso_casdoor_admin_owner": {
+            "type": "string",
+            "title": "Sso Casdoor Admin Owner",
+            "default": "built-in"
+          }
+        },
+        "type": "object",
+        "title": "PlatformSettingsInput"
+      },
+      "QuotaProfileInput": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member"
+            ],
+            "title": "Role"
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "title": "Cpu Cores"
+          },
+          "memory_gb": {
+            "type": "integer",
+            "title": "Memory Gb"
+          },
+          "disk_gb": {
+            "type": "integer",
+            "title": "Disk Gb"
+          },
+          "container_disk_limit_gb": {
+            "type": "integer",
+            "title": "Container Disk Limit Gb"
+          },
+          "storage_quota_gb": {
+            "type": "integer",
+            "title": "Storage Quota Gb"
+          },
+          "gpu_count": {
+            "type": "integer",
+            "title": "Gpu Count"
+          },
+          "container_count": {
+            "type": "integer",
+            "title": "Container Count"
+          },
+          "allowed_node_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Allowed Node Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "cpu_cores",
+          "memory_gb",
+          "disk_gb",
+          "container_disk_limit_gb",
+          "storage_quota_gb",
+          "gpu_count",
+          "container_count"
+        ],
+        "title": "QuotaProfileInput"
+      },
+      "RegisterInput": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "email",
+          "password"
+        ],
+        "title": "RegisterInput"
+      },
+      "RemoveWorkspaceVolumeInput": {
+        "properties": {
+          "confirm_username": {
+            "type": "string",
+            "title": "Confirm Username",
+            "default": ""
+          },
+          "confirm_volume_name": {
+            "type": "string",
+            "title": "Confirm Volume Name",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "RemoveWorkspaceVolumeInput"
+      },
+      "ResourceReport": {
+        "properties": {
+          "cpu_model": {
+            "type": "string",
+            "title": "Cpu Model",
+            "default": ""
+          },
+          "cpu_total": {
+            "type": "integer",
+            "title": "Cpu Total",
+            "default": 1
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "title": "Cpu Cores",
+            "default": 1
+          },
+          "cpu_sockets": {
+            "type": "integer",
+            "title": "Cpu Sockets",
+            "default": 1
+          },
+          "cpu_temperature_c": {
+            "type": "integer",
+            "title": "Cpu Temperature C",
+            "default": 0
+          },
+          "memory_total_gb": {
+            "type": "integer",
+            "title": "Memory Total Gb",
+            "default": 1
+          },
+          "disk_total_gb": {
+            "type": "number",
+            "title": "Disk Total Gb",
+            "default": 1
+          },
+          "cpu_used": {
+            "type": "integer",
+            "title": "Cpu Used",
+            "default": 0
+          },
+          "memory_used_gb": {
+            "type": "integer",
+            "title": "Memory Used Gb",
+            "default": 0
+          },
+          "disk_used_gb": {
+            "type": "number",
+            "title": "Disk Used Gb",
+            "default": 0
+          },
+          "load_avg": {
+            "type": "number",
+            "title": "Load Avg",
+            "default": 0
+          },
+          "cpu_usage_percent": {
+            "type": "number",
+            "title": "Cpu Usage Percent",
+            "default": 0
+          },
+          "swap_total_gb": {
+            "type": "number",
+            "title": "Swap Total Gb",
+            "default": 0
+          },
+          "swap_used_gb": {
+            "type": "number",
+            "title": "Swap Used Gb",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ResourceReport"
+      },
+      "SSOCallbackInput": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "default": ""
+          },
+          "ticket": {
+            "type": "string",
+            "title": "Ticket",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "SSOCallbackInput"
+      },
+      "SharedResourceInfoInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "default"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SharedResourceInfoInput"
+      },
+      "SharedResourceInput": {
+        "properties": {
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "dataset",
+              "huggingface_model",
+              "pytorch_model"
+            ],
+            "title": "Resource Type"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "default"
+          },
+          "source_path": {
+            "type": "string",
+            "title": "Source Path"
+          },
+          "mount_path": {
+            "type": "string",
+            "title": "Mount Path"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "readonly": {
+            "type": "boolean",
+            "title": "Readonly",
+            "default": true
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "name",
+          "source_path",
+          "mount_path"
+        ],
+        "title": "SharedResourceInput"
+      },
+      "SharedResourceRequestInput": {
+        "properties": {
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "dataset",
+              "huggingface_model",
+              "pytorch_model"
+            ],
+            "title": "Resource Type"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "default"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "huggingface"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "hf_repo_id": {
+            "type": "string",
+            "title": "Hf Repo Id",
+            "default": ""
+          },
+          "hf_revision": {
+            "type": "string",
+            "title": "Hf Revision",
+            "default": "main"
+          },
+          "hf_token": {
+            "type": "string",
+            "title": "Hf Token",
+            "default": ""
+          },
+          "ms_repo_id": {
+            "type": "string",
+            "title": "Ms Repo Id",
+            "default": ""
+          },
+          "ms_revision": {
+            "type": "string",
+            "title": "Ms Revision",
+            "default": "master"
+          },
+          "ms_token": {
+            "type": "string",
+            "title": "Ms Token",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "resource_type",
+          "name"
+        ],
+        "title": "SharedResourceRequestInput"
+      },
+      "SharedResourceTagsInput": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "title": "SharedResourceTagsInput"
+      },
+      "SshKeyInput": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "public_key": {
+            "type": "string",
+            "title": "Public Key"
+          },
+          "expires_at": {
+            "type": "integer",
+            "title": "Expires At",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "public_key"
+        ],
+        "title": "SshKeyInput"
+      },
+      "StorageImageDistributeInput": {
+        "properties": {
+          "target_node_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Target Node Ids"
+          }
+        },
+        "type": "object",
+        "title": "StorageImageDistributeInput"
+      },
+      "StorageImageExportInput": {
+        "properties": {
+          "source_node_id": {
+            "type": "integer",
+            "title": "Source Node Id"
+          },
+          "image_ref": {
+            "type": "string",
+            "title": "Image Ref"
+          },
+          "alias": {
+            "type": "string",
+            "title": "Alias",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_node_id",
+          "image_ref"
+        ],
+        "title": "StorageImageExportInput"
+      },
+      "StorageSettingsInput": {
+        "properties": {
+          "dataset_base_path": {
+            "type": "string",
+            "title": "Dataset Base Path",
+            "default": "/data/datasets"
+          },
+          "model_base_path": {
+            "type": "string",
+            "title": "Model Base Path",
+            "default": "/data/models/huggingface"
+          },
+          "user_base_path": {
+            "type": "string",
+            "title": "User Base Path",
+            "default": "/data/users"
+          },
+          "hf_endpoint": {
+            "type": "string",
+            "title": "Hf Endpoint",
+            "default": ""
+          },
+          "hf_endpoint_enabled": {
+            "type": "boolean",
+            "title": "Hf Endpoint Enabled",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "StorageSettingsInput"
+      },
+      "StorageVolumeReport": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "exists": {
+            "type": "boolean",
+            "title": "Exists",
+            "default": false
+          },
+          "total_gb": {
+            "type": "integer",
+            "title": "Total Gb",
+            "default": 0
+          },
+          "used_gb": {
+            "type": "integer",
+            "title": "Used Gb",
+            "default": 0
+          },
+          "free_gb": {
+            "type": "integer",
+            "title": "Free Gb",
+            "default": 0
+          },
+          "directory_used_gb": {
+            "type": "integer",
+            "title": "Directory Used Gb",
+            "default": 0
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "unknown"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "StorageVolumeReport"
+      },
+      "UserDirectoryScanInput": {
+        "properties": {
+          "relative_path": {
+            "type": "string",
+            "title": "Relative Path",
+            "default": ""
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "default": 500
+          }
+        },
+        "type": "object",
+        "title": "UserDirectoryScanInput"
+      },
+      "UserPreferenceInput": {
+        "properties": {
+          "value": {
+            "type": "object",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "title": "UserPreferenceInput"
+      },
+      "UserProfileInput": {
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "phone": {
+            "type": "string",
+            "title": "Phone",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "UserProfileInput"
+      },
+      "UserUpsertInput": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "phone": {
+            "type": "string",
+            "title": "Phone",
+            "default": ""
+          },
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "default": ""
+          },
+          "group_name": {
+            "type": "string",
+            "enum": [
+              "platform_admin",
+              "admin",
+              "member",
+              "guest"
+            ],
+            "title": "Group Name",
+            "default": "member"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "default": ""
+          },
+          "ssh_key": {
+            "type": "string",
+            "title": "Ssh Key",
+            "default": ""
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "cpu_cores": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpu Cores"
+          },
+          "memory_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Gb"
+          },
+          "disk_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk Gb"
+          },
+          "container_disk_limit_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Disk Limit Gb"
+          },
+          "storage_quota_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Quota Gb"
+          },
+          "gpu_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gpu Count"
+          },
+          "container_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Count"
+          },
+          "allowed_node_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Allowed Node Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "display_name"
+        ],
+        "title": "UserUpsertInput"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

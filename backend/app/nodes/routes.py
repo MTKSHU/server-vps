@@ -177,7 +177,6 @@ def register_node_routes(app, deps: dict[str, Any]):
     def update_node_config(node_id: int, payload: NodeConfigInput):
         require_admin()
         payload = normalize_node_config(payload)
-        ts = now_ts()
         with db() as conn:
             row = conn.execute(
                 """

@@ -2,7 +2,7 @@ import { createI18n } from "vue-i18n";
 import zhCN from "./locales/zh-CN";
 import enUS from "./locales/en-US";
 
-export const supportedLocales = ["zh-CN", "en-US"] as const;
+const supportedLocales = ["zh-CN", "en-US"] as const;
 export type AppLocale = (typeof supportedLocales)[number];
 
 const storageKey = "server-vps.locale";

@@ -13,18 +13,6 @@ func TestIsContainerHomePath(t *testing.T) {
 	}
 }
 
-func TestIsDeprecatedHomeCachePath(t *testing.T) {
-	if !isDeprecatedHomeCachePath("/home/alice/.cache/huggingface", "alice") {
-		t.Fatal("expected Hugging Face cache mount to be deprecated")
-	}
-	if !isDeprecatedHomeCachePath("/home/alice/.cache/torch/checkpoints", "alice") {
-		t.Fatal("expected nested PyTorch cache mount to be deprecated")
-	}
-	if isDeprecatedHomeCachePath("/home/alice/work", "alice") {
-		t.Fatal("expected unrelated home subdirectory to be allowed")
-	}
-}
-
 func TestAuthorizedKeysDeduplicates(t *testing.T) {
 	keys := authorizedKeys("ssh-ed25519 AAAAalice alice@laptop", "ssh-ed25519 AAAAalice alice@laptop")
 	if keys != "ssh-ed25519 AAAAalice alice@laptop" {

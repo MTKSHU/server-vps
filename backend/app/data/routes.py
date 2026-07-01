@@ -47,7 +47,7 @@ from ..config import (
     SYNC_SSH_PORT,
     SYNC_SSH_USER,
 )
-from ..schemas import SharedResourceInfoInput, SharedResourceInput, SharedResourceRequestInput, SharedResourceTagsInput, StorageSettingsInput, UserDataPolicyInput, UserDirectoryScanInput
+from ..schemas import SharedResourceInfoInput, SharedResourceInput, SharedResourceRequestInput, SharedResourceTagsInput, StorageSettingsInput, UserDirectoryScanInput
 from ..auth import is_admin_user, require_admin
 from ..platform_settings import get_platform_settings
 
@@ -128,12 +128,8 @@ def _resolve_user_directory_root(conn, user_id: int, policy: dict[str, Any]) -> 
         mountpoint = str(dataset_any["mountpoint"]).strip()
         if mountpoint.startswith("/"):
             return dict(dataset_any), mountpoint.rstrip("/") or "/"
-    # 2) 回退：通过平台路径选择存储节点并转换
-    node = select_storage_node_for_path(conn, policy["home_path"])
-    if not node:
-        raise HTTPException(status_code=400, detail="用户目录所在存储节点不在线")
-    root_path = source_path_for_node(policy["home_path"], node)
-    return node, root_path
+    # 2) 无可用的 ZFS 挂载点，无法解析用户目录
+    raise HTTPException(status_code=400, detail="用户存储数据集尚未就绪，请联系管理员分配存储节点")
 
 
 def normalize_relative_directory(value: str) -> str:
@@ -1559,7 +1555,6 @@ def register_data_routes(app, deps: dict[str, Any]):
 
             return StreamingResponse(file_stream(), media_type="application/octet-stream", headers=headers)
 
-        parent_path = os.path.dirname(absolute_path.rstrip("/")) or "/"
         archive_name = os.path.basename(absolute_path.rstrip("/")) or os.path.basename(root_path.rstrip("/")) or "home"
 
         async def archive_stream():

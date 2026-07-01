@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import os
 import re
 import socket
 from pathlib import Path

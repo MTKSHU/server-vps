@@ -1,0 +1,8 @@
+# Ruff configuration for the FastAPI backend
+target-version = "py312"
+
+[lint]
+# F: pyflakes (undefined names, unused imports/vars)  ← primary goal
+# E: pycodestyle errors (not style warnings)
+select = ["F", "E9"]
+ignore = []

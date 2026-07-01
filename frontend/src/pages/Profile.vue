@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Close, Delete, Plus, Select, Upload } from "@element-plus/icons-vue";
-import { getMe, updateProfile, getSshKeys, addSshKey, deleteSshKey, syncSshKeysToContainers, type SshKey } from "../api/cluster";
+import { getMe, updateProfile, getSshKeys, addSshKey, deleteSshKey, syncSshKeysToContainers, changePassword, type SshKey } from "../api/cluster";
 import { authUser, setAuth, authToken } from "../auth";
 
 const { locale, t } = useI18n();
@@ -24,6 +24,31 @@ const groupLabelKeys: Record<string, string> = {
 };
 function groupLabel(groupName: string) {
   return groupLabelKeys[groupName] ? t(groupLabelKeys[groupName]) : groupName;
+}
+
+// Password change
+const passwordSaving = ref(false);
+const passwordForm = reactive({ current_password: "", new_password: "", confirm_password: "" });
+
+async function submitPasswordChange() {
+  if (!passwordForm.current_password || !passwordForm.new_password) {
+    ElMessage.error(t("profile.passwordRequired"));
+    return;
+  }
+  if (passwordForm.new_password !== passwordForm.confirm_password) {
+    ElMessage.error(t("profile.passwordMismatch"));
+    return;
+  }
+  passwordSaving.value = true;
+  try {
+    await changePassword({ current_password: passwordForm.current_password, new_password: passwordForm.new_password });
+    ElMessage.success(t("profile.passwordChanged"));
+    Object.assign(passwordForm, { current_password: "", new_password: "", confirm_password: "" });
+  } catch (e: unknown) {
+    ElMessage.error((e as { detail?: string })?.detail || t("profile.passwordChangeFailed"));
+  } finally {
+    passwordSaving.value = false;
+  }
 }
 
 // SSH Keys
@@ -159,6 +184,25 @@ onMounted(load);
       </el-form>
       <div style="margin-top:16px;text-align:right">
         <el-button type="primary" :icon="Select" :loading="saving" @click="submitProfile">{{ t("common.save") }}</el-button>
+      </div>
+    </el-card>
+
+    <!-- 修改密码 -->
+    <el-card shadow="never">
+      <template #header><strong>{{ t("profile.changePassword") }}</strong></template>
+      <el-form :model="passwordForm" label-position="top" class="form-grid">
+        <el-form-item :label="t('profile.currentPassword')">
+          <el-input v-model="passwordForm.current_password" type="password" show-password :placeholder="t('profile.currentPassword')" />
+        </el-form-item>
+        <el-form-item :label="t('profile.newPassword')">
+          <el-input v-model="passwordForm.new_password" type="password" show-password :placeholder="t('profile.newPassword')" />
+        </el-form-item>
+        <el-form-item :label="t('profile.confirmPassword')">
+          <el-input v-model="passwordForm.confirm_password" type="password" show-password :placeholder="t('profile.confirmPassword')" />
+        </el-form-item>
+      </el-form>
+      <div style="margin-top:16px;text-align:right">
+        <el-button type="primary" :icon="Select" :loading="passwordSaving" @click="submitPasswordChange">{{ t("common.save") }}</el-button>
       </div>
     </el-card>
 

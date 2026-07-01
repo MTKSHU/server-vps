@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/csv"
-	"fmt"
 	"math"
 	"net"
 	"os"
@@ -193,17 +192,52 @@ func inferVRAMGB(model string) int {
 }
 
 func inferDriverPool(gpus []GPUReport) string {
-	models := strings.ToLower(fmt.Sprintf("%v", gpus))
-	switch {
-	case strings.Contains(models, "titan xp"):
-		return "legacy-pascal"
-	case strings.Contains(models, "a6000"):
-		return "workstation"
-	case len(gpus) > 0:
-		return "modern-geforce"
-	default:
+	if len(gpus) == 0 {
 		return "unknown"
 	}
+	hasPascal := false
+	hasWorkstation := false
+	for _, gpu := range gpus {
+		model := strings.ToLower(gpu.Model)
+		if isPascalGPU(model) {
+			hasPascal = true
+		} else if isWorkstationGPU(model) {
+			hasWorkstation = true
+		}
+	}
+	switch {
+	case hasPascal:
+		return "legacy-pascal"
+	case hasWorkstation:
+		return "workstation"
+	default:
+		return "modern-geforce"
+	}
+}
+
+// isPascalGPU reports whether model (lowercase) is a Pascal-architecture GPU
+// (CUDA compute capability 6.x). Pascal cards may not be supported by
+// newer CUDA/PyTorch builds and are assigned the "legacy-pascal" driver pool.
+func isPascalGPU(model string) bool {
+	return strings.Contains(model, "gtx 10") || // GTX 1050/1060/1070/1080 series
+		strings.Contains(model, "titan xp") ||
+		strings.Contains(model, "titan x (pascal)") ||
+		strings.Contains(model, "tesla p") || // Tesla P4/P10/P40/P100
+		strings.Contains(model, "quadro p") || // Quadro P4000/P5000/P6000
+		strings.Contains(model, "quadro gp") // Quadro GP100
+}
+
+// isWorkstationGPU reports whether model (lowercase) is a workstation or
+// datacenter GPU that warrants the "workstation" driver pool.
+func isWorkstationGPU(model string) bool {
+	return strings.Contains(model, "a6000") ||
+		strings.Contains(model, "a5000") ||
+		strings.Contains(model, "a4000") ||
+		strings.Contains(model, "a100") ||
+		strings.Contains(model, "a40") ||
+		strings.Contains(model, "v100") ||
+		strings.Contains(model, "h100") ||
+		strings.Contains(model, "quadro rtx")
 }
 
 func memoryGB() (int, int) {

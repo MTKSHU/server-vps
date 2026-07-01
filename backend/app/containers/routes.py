@@ -38,7 +38,6 @@ def register_container_routes(app, deps: dict[str, Any]):
     add_container_port = deps["add_container_port"]
     select_node_and_gpus = deps["select_node_and_gpus"]
     build_data_mounts = deps["build_data_mounts"]
-    is_deprecated_home_cache_mount = deps["is_deprecated_home_cache_mount"]
     enqueue_incus_image_import_task = deps["enqueue_incus_image_import_task"]
     enqueue_node_task = deps["enqueue_node_task"]
     public_task = deps["public_task"]
@@ -548,8 +547,6 @@ def register_container_routes(app, deps: dict[str, Any]):
                 if not resource:
                     raise HTTPException(status_code=400, detail=f"公开资源 {selected.resource_id} 不存在")
                 mount_path = selected.mount_path.strip() or resource["mount_path"]
-                if is_deprecated_home_cache_mount(mount_path, payload.ssh_username):
-                    raise HTTPException(status_code=400, detail="不再支持将资源挂载到容器用户 cache 目录")
                 conn.execute("INSERT INTO container_resources VALUES (%s,%s,%s,%s)", (container["id"], resource["id"], mount_path, ts))
             for gpu in selected_gpus:
                 conn.execute("INSERT INTO container_gpus VALUES (%s, %s)", (container["id"], gpu["id"]))

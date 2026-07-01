@@ -374,6 +374,111 @@ func incusFileTarget(container string, path string) (string, error) {
 	return name + cleaned, nil
 }
 
+// attemptDirectContainerSync 尝试在容器内直接运行 rsync，
+// 避免在宿主机（可能是 tmpfs 的 /tmp）上暂存大文件导致空间不足。
+// 要求：容器内已安装 rsync，且不使用 JumpHost（容器内 ProxyCommand 配置复杂）。
+func attemptDirectContainerSync(payload DataSyncPayload) (string, error) {
+	// 检查容器内是否安装了 rsync
+	if _, err := runCommandCombined("incus", "exec", payload.ContainerName, "--", "which", "rsync"); err != nil {
+		return "", fmt.Errorf("rsync not available in container: %w", err)
+	}
+	endpoint := payload.SourceEndpoint
+	// 暂不支持 JumpHost 直接同步（容器内的跳板机 SSH 配置过于复杂）
+	if strings.TrimSpace(endpoint.JumpHost) != "" {
+		return "", fmt.Errorf("jump host not supported for direct container sync")
+	}
+	host := strings.TrimSpace(endpoint.Host)
+	user := strings.TrimSpace(endpoint.User)
+	if user == "" {
+		user = "root"
+	}
+	port := endpoint.Port
+	if port <= 0 {
+		port = 22
+	}
+	// 将 SSH 私钥推入容器内临时路径
+	containerKeyPath := ""
+	key := strings.TrimSpace(endpoint.PrivateKey)
+	if key != "" {
+		f, err := os.CreateTemp("", "cluster-sync-key-*")
+		if err != nil {
+			return "", fmt.Errorf("create temp key file: %w", err)
+		}
+		hostKeyPath := f.Name()
+		defer os.Remove(hostKeyPath)
+		if _, err := f.WriteString(key); err != nil {
+			f.Close()
+			return "", fmt.Errorf("write temp key file: %w", err)
+		}
+		if err := f.Chmod(0600); err != nil {
+			f.Close()
+			return "", fmt.Errorf("chmod temp key file: %w", err)
+		}
+		f.Close()
+		containerKeyPath = "/tmp/cluster-sync-key-direct"
+		if _, err := runCommandCombined("incus", "file", "push", hostKeyPath,
+			payload.ContainerName+containerKeyPath); err != nil {
+			return "", fmt.Errorf("push key to container: %w", err)
+		}
+		defer runCommandCombined("incus", "exec", payload.ContainerName, "--", "rm", "-f", containerKeyPath) //nolint:errcheck
+		if _, err := runCommandCombined("incus", "exec", payload.ContainerName, "--",
+			"chmod", "600", containerKeyPath); err != nil {
+			return "", fmt.Errorf("chmod key in container: %w", err)
+		}
+	}
+	// 构建容器内 rsync 使用的 ssh 命令（容器无宿主机的 known_hosts，使用 /dev/null）
+	sshCmd := fmt.Sprintf(
+		"ssh -p %d -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+		port,
+	)
+	if containerKeyPath != "" {
+		sshCmd += " -i " + containerKeyPath
+	}
+	// 构建远端路径（支持 rrsync restricted 模式）
+	remotePath := strings.TrimSpace(payload.SourcePath)
+	if endpoint.Restricted && strings.TrimSpace(endpoint.AllowedPath) != "" {
+		rel, err := makeRestrictedRsyncPath(endpoint.AllowedPath, payload.SourcePath)
+		if err != nil {
+			return "", err
+		}
+		remotePath = rel
+		if remotePath == "." {
+			remotePath = "./"
+		} else if !strings.HasSuffix(remotePath, "/") {
+			remotePath += "/"
+		}
+	} else {
+		remotePath = strings.TrimSuffix(remotePath, "/") + "/"
+	}
+	if strings.ContainsAny(remotePath, "\r\n") {
+		return "", fmt.Errorf("source path contains invalid characters")
+	}
+	rsyncArgs := []string{"-a"}
+	if payload.Delete {
+		rsyncArgs = append(rsyncArgs, "--delete")
+	}
+	if payload.IgnoreExisting {
+		rsyncArgs = append(rsyncArgs, "--ignore-existing")
+	}
+	if payload.Update {
+		rsyncArgs = append(rsyncArgs, "--update")
+	}
+	if payload.BandwidthLimit > 0 {
+		rsyncArgs = append(rsyncArgs, "--bwlimit="+strconv.Itoa(payload.BandwidthLimit*1024))
+	}
+	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
+	rsyncArgs = append(rsyncArgs, fmt.Sprintf("%s@%s:%s", user, host, remotePath))
+	rsyncArgs = append(rsyncArgs, strings.TrimSuffix(payload.TargetPath, "/")+"/")
+	// 在容器内创建目标目录
+	if _, err := runCommandCombined("incus", "exec", payload.ContainerName, "--",
+		"mkdir", "-p", payload.TargetPath); err != nil {
+		return "", fmt.Errorf("mkdir in container: %w", err)
+	}
+	// 在容器内运行 rsync
+	incusArgs := append([]string{"exec", payload.ContainerName, "--", "rsync"}, rsyncArgs...)
+	return runCommandCombinedTimeout(60*time.Minute, "incus", incusArgs...)
+}
+
 func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string, error) {
 	mode := strings.TrimSpace(payload.Mode)
 	if mode != "storage_to_container" && mode != "container_to_storage" {
@@ -386,9 +491,12 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string,
 		return "", fmt.Errorf("container %s does not exist", payload.ContainerName)
 	}
 	// 优先使用 /mnt/data/tmp 作为临时目录（避免 /tmp 是 tmpfs 且空间不足）
+	// 若目录不存在则尝试自动创建（/mnt/data 通常是磁盘挂载）
 	tmpParent := "/mnt/data/tmp"
 	if _, err := os.Stat(tmpParent); os.IsNotExist(err) {
-		tmpParent = "" // 回退到系统默认临时目录
+		if mkErr := os.MkdirAll(tmpParent, 0755); mkErr != nil {
+			tmpParent = "" // 回退到系统默认临时目录
+		}
 	}
 	tmpDir, err := os.MkdirTemp(tmpParent, "cluster-container-sync-*")
 	if err != nil {
@@ -398,6 +506,15 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string,
 
 	switch mode {
 	case "storage_to_container":
+		// 优先尝试在容器内直接运行 rsync，数据从存储节点直达容器，
+		// 完全绕过宿主机暂存，避免宿主机 /tmp (tmpfs) 空间不足的问题。
+		if payload.SourceEndpoint.Host != "" {
+			if output, err := attemptDirectContainerSync(payload); err == nil {
+				return output, nil
+			}
+			// 直接同步不可用（如容器内无 rsync 或使用了 JumpHost），回退到暂存方案
+		}
+		// 暂存方案：先下载到本地 tmpDir 再通过 incus file push 推入容器
 		staging := filepath.Join(tmpDir, "payload")
 		if err := os.MkdirAll(staging, 0755); err != nil {
 			return "", err

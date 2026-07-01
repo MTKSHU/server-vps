@@ -2,8 +2,6 @@ from .config import ADMIN_INITIAL_PASSWORD
 from .auth import hash_password
 from .core import db, now_ts
 from .containers.ports import backfill_node_ports, enqueue_running_port_syncs
-from .nodes.services import upsert_node
-from .schemas import GPUReport, NodeRegistration, ResourceReport
 
 def init_schema():
     with db() as conn:

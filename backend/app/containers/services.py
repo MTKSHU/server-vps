@@ -2,7 +2,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..config import RESOURCE_CONTAINER_STATUSES
-from .ports import list_container_ports, managed_ssh_keys, public_port_payload
+from .ports import list_container_ports, managed_ssh_keys
 
 
 def validate_mount_path(path: str) -> str:
@@ -10,16 +10,6 @@ def validate_mount_path(path: str) -> str:
     if not value.startswith("/") or "/../" in value or value.endswith("/.."):
         raise HTTPException(status_code=400, detail="容器资源挂载路径不合法")
     return value
-
-
-def is_deprecated_home_cache_mount(path: str, ssh_username: str) -> bool:
-    username = ssh_username.strip() or "ubuntu"
-    value = validate_mount_path(path)
-    deprecated_roots = (
-        f"/home/{username}/.cache/huggingface",
-        f"/home/{username}/.cache/torch",
-    )
-    return any(value == root or value.startswith(root + "/") for root in deprecated_roots)
 
 
 def list_containers(conn) -> list[dict[str, Any]]:
@@ -150,8 +140,6 @@ def build_data_mounts(
             selection = next((item for item in selected_resources or [] if item.resource_id == resource["id"]), None)
             default_mount = resource["mount_path"]
             mount_path = validate_mount_path(selection.mount_path) if selection and selection.mount_path else default_mount
-            if is_deprecated_home_cache_mount(mount_path, ssh_username):
-                raise HTTPException(status_code=400, detail="不再支持将资源挂载到容器用户 cache 目录")
             suffix = ":ro" if resource["readonly"] else ""
             mounts.append(f"{resource['source_path']}:{mount_path}{suffix}")
     return mounts
