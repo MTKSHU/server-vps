@@ -592,7 +592,7 @@ func executeDataSync(payload DataSyncPayload, dataPath string) (string, error) {
 		rsyncTarget = remoteTarget
 	}
 	args = append(args, rsyncSource, rsyncTarget)
-	output, err := runCommandCombined("rsync", args...)
+	output, err := runCommandCombinedTimeout(60*time.Minute, "rsync", args...)
 	if err != nil {
 		return output, err
 	}

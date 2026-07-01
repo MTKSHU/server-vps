@@ -34,14 +34,14 @@ func runCommandTimeout(timeout time.Duration, name string, args ...string) strin
 	return strings.TrimSpace(string(output))
 }
 
-func runCommandCombined(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+func runCommandCombinedTimeout(timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	output, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 	if ctx.Err() == context.DeadlineExceeded {
-		return text, fmt.Errorf("%s timed out", name)
+		return text, fmt.Errorf("%s timed out after %v", name, timeout)
 	}
 	if err != nil {
 		if text == "" {
@@ -50,6 +50,10 @@ func runCommandCombined(name string, args ...string) (string, error) {
 		return text, fmt.Errorf("%s %s failed: %s", name, strings.Join(args, " "), text)
 	}
 	return text, nil
+}
+
+func runCommandCombined(name string, args ...string) (string, error) {
+	return runCommandCombinedTimeout(10*time.Minute, name, args...)
 }
 
 func detectIP() string {

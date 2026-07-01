@@ -64,7 +64,7 @@ func executeTask(task *AgentTask, args cliArgs) TaskResultRequest {
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
-		output, err := runCommandCombined("incus", "publish", payload.Name, "--alias", payload.Alias, "--force")
+		output, err := runCommandCombinedTimeout(60*time.Minute, "incus", "publish", payload.Name, "--alias", payload.Alias, "--force")
 		if err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
@@ -126,11 +126,11 @@ func executeTask(task *AgentTask, args cliArgs) TaskResultRequest {
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
-		args := []string{"image", "copy", "--auto-update", payload.ImageRef, "local:"}
+		imageCopyArgs := []string{"image", "copy", "--auto-update", payload.ImageRef, "local:"}
 		if payload.Alias != "" {
-			args = append(args, "--alias", payload.Alias)
+			imageCopyArgs = append(imageCopyArgs, "--alias", payload.Alias)
 		}
-		output, err := runCommandCombined("incus", args...)
+		output, err := runCommandCombinedTimeout(60*time.Minute, "incus", imageCopyArgs...)
 		if err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
@@ -337,7 +337,13 @@ func processTasks(server string, args cliArgs, hostname string) {
 			case slowTaskSem <- struct{}{}:
 				// 获取慢任务槽位，在独立 goroutine 中执行，让循环立即继续轮询下一个任务
 				go func(t *AgentTask) {
-					defer func() { <-slowTaskSem }()
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "%s panic in slow task %d type=%s: %v\n",
+								time.Now().Format(time.RFC3339), t.ID, t.Type, r)
+						}
+						<-slowTaskSem
+					}()
 					runTask(server, args, hostname, t)
 				}(task)
 			default:

@@ -60,23 +60,6 @@ func isContainerHomePath(path string, username string) bool {
 	return filepath.Clean(path) == filepath.Clean("/home/"+username)
 }
 
-func isDeprecatedHomeCachePath(path string, username string) bool {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		username = "ubuntu"
-	}
-	cleaned := filepath.Clean(path)
-	for _, cachePath := range []string{
-		filepath.Clean("/home/" + username + "/.cache/huggingface"),
-		filepath.Clean("/home/" + username + "/.cache/torch"),
-	} {
-		if cleaned == cachePath || strings.HasPrefix(cleaned, cachePath+string(os.PathSeparator)) {
-			return true
-		}
-	}
-	return false
-}
-
 func cloudInitUserData(username string, sshKeys ...string) string {
 	if username == "" {
 		username = "ubuntu"
@@ -518,11 +501,6 @@ func ensureMountSource(source string, dataPath string) error {
 	return os.MkdirAll(source, 0o755)
 }
 
-func isScratchPath(path string) bool {
-	path = filepath.Clean(path)
-	return path == "/scratch" || strings.HasPrefix(path, "/scratch"+string(os.PathSeparator))
-}
-
 func normalizePCI(s string) string {
 	// 00000000:03:00.0 -> 0000:03:00.0
 	if strings.HasPrefix(s, "00000000:") {
@@ -669,14 +647,6 @@ func executeIncusCreate(payload IncusCreatePayload, storagePool string, dataPath
 			}
 			if isContainerHomePath(target, payload.SSHUsername) {
 				fmt.Fprintf(os.Stderr, "%s skip container home mount %s -> %s\n", time.Now().Format(time.RFC3339), source, target)
-				continue
-			}
-			if isDeprecatedHomeCachePath(target, payload.SSHUsername) {
-				fmt.Fprintf(os.Stderr, "%s skip deprecated home cache mount %s -> %s\n", time.Now().Format(time.RFC3339), source, target)
-				continue
-			}
-			if isScratchPath(source) || isScratchPath(target) {
-				fmt.Fprintf(os.Stderr, "%s skip deprecated scratch mount %s -> %s\n", time.Now().Format(time.RFC3339), source, target)
 				continue
 			}
 			if err := ensureMountSource(source, dataPath); err != nil {
@@ -911,7 +881,7 @@ func executeIncusImageExport(payload IncusImageExportPayload) (string, error) {
 		return "", err
 	}
 	outputBase := filepath.Join(exportDir, baseName)
-	output, err := runCommandCombined("incus", "image", "export", imageRef, outputBase)
+	output, err := runCommandCombinedTimeout(60*time.Minute, "incus", "image", "export", imageRef, outputBase)
 	if err != nil {
 		return output, err
 	}
@@ -997,7 +967,7 @@ func executeIncusImageImport(payload IncusImageImportPayload, dataPath string) (
 	if strings.TrimSpace(payload.Alias) != "" {
 		args = append(args, "--alias", strings.TrimSpace(payload.Alias))
 	}
-	output, err := runCommandCombined("incus", args...)
+	output, err := runCommandCombinedTimeout(60*time.Minute, "incus", args...)
 	if err != nil {
 		if output == "" {
 			output = syncOutput
