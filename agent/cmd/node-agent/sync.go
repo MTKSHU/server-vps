@@ -464,7 +464,9 @@ func attemptDirectContainerSync(payload DataSyncPayload) (string, error) {
 		rsyncArgs = append(rsyncArgs, "--update")
 	}
 	if payload.BandwidthLimit > 0 {
-		rsyncArgs = append(rsyncArgs, "--bwlimit="+strconv.Itoa(payload.BandwidthLimit*1024))
+		// BandwidthLimit 单位为 Mbps（Megabits/s），rsync --bwlimit 单位为 KB/s
+		// 1 Mbps = 125 KB/s
+		rsyncArgs = append(rsyncArgs, "--bwlimit="+strconv.Itoa(payload.BandwidthLimit*125))
 	}
 	rsyncArgs = append(rsyncArgs, "-e", sshCmd)
 	rsyncArgs = append(rsyncArgs, fmt.Sprintf("%s@%s:%s", user, host, remotePath))
@@ -684,7 +686,9 @@ func executeDataSync(payload DataSyncPayload, dataPath string) (string, error) {
 		args = append(args, "--ignore-existing")
 	}
 	if payload.BandwidthLimit > 0 {
-		args = append(args, "--bwlimit="+strconv.Itoa(payload.BandwidthLimit*1024))
+		// BandwidthLimit 单位为 Mbps（Megabits/s），rsync --bwlimit 单位为 KB/s
+		// 1 Mbps = 125 KB/s
+		args = append(args, "--bwlimit="+strconv.Itoa(payload.BandwidthLimit*125))
 	}
 	rsyncSource := source
 	rsyncTarget := target

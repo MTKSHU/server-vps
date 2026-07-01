@@ -24,7 +24,8 @@ func TestExecuteDataSyncAppliesBandwidthLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output, "--bwlimit=7168") {
+	// BandwidthLimit=7 Mbps → 7*125=875 KB/s
+	if !strings.Contains(output, "--bwlimit=875") {
 		t.Fatalf("bandwidth argument missing from rsync invocation: %s", output)
 	}
 }
