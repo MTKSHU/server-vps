@@ -48,7 +48,13 @@ services:
       - agent-releases:/var/lib/cluster-agent-releases
       - hf-staging:/tmp/hf-staging
       - /var/run/docker.sock:/var/run/docker.sock
-    privileged: true 
+    privileged: true
+    # 限制 backend 的 CPU 使用量，防止模型同步任务抢占 API 响应（0 = 不限制）
+    cpus: "${BACKEND_CPU_LIMIT:-0}"
+    # 降低磁盘 I/O 权重（默认 500 → 100），同步任务不再与 API 进程等权竞争磁盘
+    # 注：blkio weight 在 cgroup v1 内核上有效；cgroup v2 效果取决于发行版配置
+    blkio_config:
+      weight: 100
     restart: unless-stopped
 
   frontend:

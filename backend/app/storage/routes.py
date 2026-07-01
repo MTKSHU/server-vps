@@ -1,7 +1,10 @@
 import asyncio
+import logging
 import os
 import shlex
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import asyncssh
 from fastapi import HTTPException
@@ -58,19 +61,28 @@ def register_storage_routes(app, deps: dict[str, Any]):
     async def workspace_volume_used_gb(row: dict[str, Any]) -> float | None:
         if row.get("node_status") != "online" or not row.get("volume_name"):
             return None
+        volume_name = row["volume_name"]
         try:
-            async with asyncssh.connect(**node_ssh_kwargs(row)) as ssh:
-                pool_result = await ssh.run("incus profile device get default root pool", check=False)
-                pool = (pool_result.stdout or "").strip() or "default"
-                dataset = f"{pool}/custom/default_{row['volume_name']}"
-                used_result = await ssh.run(f"zfs list -Hp -o used {shlex.quote(dataset)}", check=False)
-                if used_result.exit_status != 0:
+            async with asyncssh.connect(**node_ssh_kwargs(row), connect_timeout=10) as ssh:
+                # Search ZFS datasets by name pattern directly.
+                # Avoids relying on `incus` being in $PATH for non-interactive SSH
+                # sessions (e.g. snap-installed incus is under /snap/bin which is
+                # not in the default non-interactive PATH), and handles any ZFS
+                # pool / source name without extra round-trips.
+                grep_pat = shlex.quote(f"/custom/default_{volume_name}")
+                result = await ssh.run(
+                    f"zfs list -Hp -o name,used -t filesystem,volume 2>/dev/null | grep -E {grep_pat}",
+                    check=False,
+                )
+                lines = (result.stdout or "").strip().splitlines()
+                if not lines:
                     return None
-                raw = (used_result.stdout or "").strip().splitlines()
-                if not raw:
+                parts = lines[0].split("\t")
+                if len(parts) < 2:
                     return None
-                return round(max(0, int(raw[0])) / 1024 / 1024 / 1024, 2)
-        except Exception:
+                return round(max(0, int(parts[1])) / 1024 / 1024 / 1024, 2)
+        except Exception as exc:
+            logger.debug("workspace_volume_used_gb(%s): %s", volume_name, exc)
             return None
 
     @app.get("/api/storage/volumes")

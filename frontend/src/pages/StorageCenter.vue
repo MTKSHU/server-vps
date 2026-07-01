@@ -1127,8 +1127,8 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 <el-tag v-else :type="workspaceStatusType(row.status)">{{ row.status }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('storage.updatedAt')" width="180">
-              <template #default="{row}">{{ formatTime(row.updated_at) }}</template>
+            <el-table-column :label="t('storage.createdAt')" width="180">
+              <template #default="{row}">{{ formatTime(row.created_at) }}</template>
             </el-table-column>
             <el-table-column :label="t('storage.actions')" width="110" fixed="right">
               <template #default="{row}">

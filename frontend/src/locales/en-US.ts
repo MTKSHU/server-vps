@@ -422,7 +422,7 @@ export default {
     containers: "Containers",
     nodeStatus: "Node Status",
     volumeStatus: "Volume Status",
-    updatedAt: "Updated At",
+    createdAt: "Created At",
     reclaimVolume: "Reclaim this user's node volume",
     unlimited: "Unlimited",
     fileBrowser: "File Browser - {name}{path}",

@@ -422,7 +422,7 @@ export default {
     containers: "容器",
     nodeStatus: "节点状态",
     volumeStatus: "数据卷状态",
-    updatedAt: "更新时间",
+    createdAt: "创建时间",
     reclaimVolume: "回收该节点上的用户数据卷",
     unlimited: "不限",
     fileBrowser: "文件浏览 — {name}{path}",
