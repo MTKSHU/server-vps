@@ -10,7 +10,7 @@ A GPU container management platform for small research groups. server-vps uses o
 The default deployment only runs the platform services and uses local account login. External OIDC/CAS SSO, Casdoor pending-user import, and platform self-registration are optional features.
 
 <p align="center">
-  <img src="pages/images/English.png" alt="Server VPS English interface" width="960">
+  <img src="docs/images/English.png" alt="Server VPS English interface" width="960">
 </p>
 
 ## Project Scope

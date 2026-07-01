@@ -10,7 +10,7 @@
 默认部署只包含平台自身服务，认证方式为本地账号密码；外部 OIDC/CAS SSO、Casdoor 待审用户导入、平台自助注册等能力均为可选配置。
 
 <p align="center">
-  <img src="pages/images/Chinese.png" alt="Server VPS 中文界面" width="960">
+  <img src="docs/images/Chinese.png" alt="Server VPS 中文界面" width="960">
 </p>
 
 ## 项目定位
