@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>server-vps — 面向课题组的 GPU 容器管理平台</title>
+  <meta name="description" content="server-vps 是一个面向小型课题组的 GPU 容器管理平台，集中管理 Incus 容器、GPU 资源、用户额度、端口访问和数据目录。">
+  <meta property="og:title" content="server-vps">
+  <meta property="og:description" content="面向课题组与实验室的轻量 GPU 容器管理平台">
+  <meta property="og:type" content="website">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #5f6f86;
+      --line: #d9e2ec;
+      --soft: #f5f7fb;
+      --blue: #2563eb;
+      --green: #0f9f6e;
+      --amber: #b7791f;
+      --red: #d14343;
+      --panel: #ffffff;
+      --nav-bg: #152238;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: #eef3f8;
+      line-height: 1.6;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Top Nav ─────────────────────────────────────── */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(21, 34, 56, 0.96);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 clamp(16px, 4vw, 56px);
+      height: 56px;
+      color: #e6eef8;
+    }
+    .topnav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 16px;
+      white-space: nowrap;
+    }
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: #2f74ff;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+    .topnav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .nav-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 6px;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: #c8d8ea;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,0.09); color: #fff; }
+    .nav-btn.primary {
+      background: #2563eb;
+      color: #fff;
+    }
+    .nav-btn.primary:hover { background: #1d50c4; }
+    .lang-toggle {
+      display: inline-flex;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .lang-toggle button {
+      height: 30px;
+      padding: 0 12px;
+      font-size: 12.5px;
+      background: transparent;
+      border: none;
+      color: #b3c6dc;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s, color 0.15s;
+    }
+    .lang-toggle button.active {
+      background: rgba(255,255,255,0.14);
+      color: #fff;
+    }
+
+    /* ── Hero ─────────────────────────────────────────── */
+    .hero {
+      min-height: 92vh;
+      display: grid;
+      align-items: center;
+      padding: 52px clamp(20px, 6vw, 80px) 72px;
+      background:
+        linear-gradient(110deg, rgba(12,22,38,0.92), rgba(21,50,82,0.78)),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Crect width='1600' height='1000' fill='%23233549'/%3E%3Cg fill='none' stroke='%238eb3dd' stroke-opacity='.25'%3E%3Cpath d='M0 220h1600M0 420h1600M0 620h1600M0 820h1600M240 0v1000M520 0v1000M800 0v1000M1080 0v1000M1360 0v1000'/%3E%3C/g%3E%3Cg fill='%23d7e7fb' fill-opacity='.28'%3E%3Ccircle cx='270' cy='230' r='7'/%3E%3Ccircle cx='520' cy='420' r='7'/%3E%3Ccircle cx='800' cy='620' r='7'/%3E%3Ccircle cx='1080' cy='420' r='7'/%3E%3Ccircle cx='1360' cy='220' r='7'/%3E%3C/g%3E%3Cg stroke='%23d7e7fb' stroke-opacity='.35' stroke-width='3'%3E%3Cpath d='M270 230 520 420 800 620 1080 420 1360 220'/%3E%3C/g%3E%3Cg fill='%230b1320' fill-opacity='.55'%3E%3Crect x='190' y='150' width='230' height='130' rx='10'/%3E%3Crect x='690' y='540' width='250' height='150' rx='10'/%3E%3Crect x='1180' y='150' width='250' height='150' rx='10'/%3E%3C/g%3E%3C/svg%3E");
+      background-size: cover;
+      background-position: center;
+      color: #fff;
+    }
+    .hero-inner {
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #c9e3ff;
+      margin-bottom: 18px;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #26d0a2;
+      box-shadow: 0 0 0 6px rgba(38,208,162,0.16);
+      flex: 0 0 auto;
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: clamp(42px, 7vw, 82px);
+      line-height: 1.02;
+    }
+    .lead {
+      max-width: 580px;
+      color: #d9e8f8;
+      font-size: clamp(18px, 2vw, 23px);
+      margin-bottom: 28px;
+    }
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 44px;
+      padding: 0 22px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d50c4; }
+    .btn-ghost {
+      background: rgba(255,255,255,0.1);
+      color: #e2ecf8;
+      border: 1px solid rgba(255,255,255,0.22);
+    }
+    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
+
+    .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: 999px; background: #e9eef7; color: #43536a; font-size: 12px; }
+    .tag { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11px; border: 1px solid #cfe0f7; color: #1b5fb8; background: #eef5ff; white-space: nowrap; }
+    .tag.success { color: #08734f; border-color: #b8ecd8; background: #eafaf3; }
+    .tag.dark { color: #fff; border-color: #0891b2; background: #0891b2; }
+
+    /* ── Sections ─────────────────────────────────────── */
+    section {
+      padding: 70px clamp(20px, 6vw, 80px);
+      background: #fff;
+    }
+    section.alt { background: var(--soft); }
+    section.dark { background: #142238; color: #fff; }
+    .wrap { max-width: 1180px; margin: 0 auto; }
+    h2 { margin: 0 0 14px; font-size: clamp(30px, 4vw, 46px); line-height: 1.14; }
+    .section-lead { max-width: 760px; margin: 0 0 30px; color: var(--muted); font-size: 18px; }
+    section.dark .section-lead { color: #d1deee; }
+
+    /* ── Screenshots ──────────────────────────────────── */
+    .screenshot-frame {
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+    }
+    .screenshot-frame img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    /* ── Features ─────────────────────────────────────── */
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; }
+    .feature {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      min-height: 190px;
+    }
+    section.alt .feature { background: var(--soft); }
+    .feature b { display: block; font-size: 18px; margin-bottom: 8px; }
+    .feature p { color: var(--muted); }
+    .icon { font-size: 24px; margin-bottom: 12px; }
+
+    /* ── Quick Start ──────────────────────────────────── */
+    .quickstart-steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .step {
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px 22px;
+    }
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .step b { display: block; font-size: 16px; margin-bottom: 6px; }
+    .step p { color: var(--muted); font-size: 14px; }
+    pre {
+      background: #111b2d;
+      color: #c9daf5;
+      border-radius: 8px;
+      padding: 18px 22px;
+      font-size: 14px;
+      line-height: 1.7;
+      overflow-x: auto;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre .c { color: #5a7a9e; }
+    pre .s { color: #26d0a2; }
+
+    /* ── CTA / Scenarios ──────────────────────────────── */
+    .cta-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-top: 28px; }
+    .cta-item { border: 1px solid rgba(255,255,255,0.16); border-radius: 8px; padding: 18px; background: rgba(255,255,255,0.06); }
+    .cta-item b { display: block; margin-bottom: 4px; }
+    .cta-item span { color: #c7d7ea; font-size: 14px; }
+
+    /* ── Footer ───────────────────────────────────────── */
+    footer {
+      background: #0e1929;
+      color: #8fa6c0;
+      padding: 36px clamp(20px, 6vw, 80px);
+    }
+    .footer-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px 32px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .footer-brand { display: flex; align-items: center; gap: 10px; color: #c8d9ec; font-weight: 600; }
+    .footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
+    .footer-links a { color: #8fa6c0; font-size: 14px; }
+    .footer-links a:hover { color: #c8d9ec; }
+    .footer-copy { font-size: 13px; }
+
+    /* ── Responsive ───────────────────────────────────── */
+    @media (max-width: 980px) {
+      .hero { min-height: auto; }
+      .grid, .cta-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+    @media (max-width: 680px) {
+      .hero { padding-top: 28px; }
+      .grid, .cta-grid { grid-template-columns: 1fr; }
+      section { padding-top: 52px; padding-bottom: 52px; }
+      .topnav-links .nav-btn:not(.primary) { display: none; }
+    }
+
+    /* ── i18n ─────────────────────────────────────────── */
+    [data-lang] { display: none; }
+    :root[lang|="zh"] [data-lang="zh"] { display: revert; }
+    :root[lang="en"] [data-lang="en"] { display: revert; }
+  </style>
+</head>
+<body>
+  <!-- Top Navigation -->
+  <nav class="topnav">
+    <a class="topnav-brand" href="#">
+      <span class="brand-mark">G</span>
+      <span>server-vps</span>
+    </a>
+    <div class="topnav-links">
+      <div class="lang-toggle">
+        <button id="btn-zh" class="active" onclick="setLang('zh')">中文</button>
+        <button id="btn-en" onclick="setLang('en')">EN</button>
+      </div>
+      <a class="nav-btn" href="https://github.com/MTKSHU/server-vps/blob/main/docs/README.md" target="_blank" rel="noopener">
+        <span data-lang="zh">文档</span><span data-lang="en">Docs</span>
+      </a>
+      <a class="nav-btn primary" href="https://github.com/MTKSHU/server-vps" target="_blank" rel="noopener">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </nav>
+
+  <main>
+    <!-- Hero -->
+    <header class="hero">
+      <div class="hero-inner">
+        <div>
+          <div class="eyebrow">
+            <span data-lang="zh">面向课题组与实验室的轻量 GPU 容器平台</span>
+            <span data-lang="en">Lightweight GPU Container Platform for Research Groups</span>
+          </div>
+          <h1>server-vps</h1>
+          <p class="lead">
+            <span data-lang="zh">把零散 GPU 服务器收拢成可登录、可调度、可审计、可自助创建容器的 Web 控制台，让老师、管理员和学生都少碰运维细节，多把时间放回计算任务。</span>
+            <span data-lang="en">Consolidate scattered GPU servers into a single web console for container creation, scheduling, auditing, and self-service. Less ops overhead for everyone.</span>
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/MTKSHU/server-vps" target="_blank" rel="noopener">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+              <span data-lang="zh">查看源码</span>
+              <span data-lang="en">View on GitHub</span>
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/MTKSHU/server-vps/blob/main/docs/deployment.md" target="_blank" rel="noopener">
+              <span data-lang="zh">部署文档</span>
+              <span data-lang="en">Deployment Docs</span>
+            </a>
+          </div>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- Screenshots -->
+    <section class="alt">
+      <div class="wrap">
+        <h2><span data-lang="zh">界面截图</span><span data-lang="en">Screenshots</span></h2>
+        <p class="section-lead">
+          <span data-lang="zh">实际控制台界面，支持中英文切换。</span>
+          <span data-lang="en">The actual management console, available in Chinese and English.</span>
+        </p>
+        <div class="screenshot-frame" data-lang="zh">
+          <img src="images/Chinese.png" alt="server-vps 中文控制台" loading="lazy">
+        </div>
+        <div class="screenshot-frame" data-lang="en">
+          <img src="images/English.png" alt="server-vps English console" loading="lazy">
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section>
+      <div class="wrap">
+        <h2><span data-lang="zh">项目亮点</span><span data-lang="en">Key Features</span></h2>
+        <p class="section-lead">
+          <span data-lang="zh">server-vps 的核心是把分散的 GPU 服务器变成一个好用的共享平台：老师和管理员看得清资源，学生和成员能自助使用，日常运维也更少靠手工操作。</span>
+          <span data-lang="en">server-vps turns scattered GPU servers into a shared platform where administrators see resources clearly, members self-serve containers, and day-to-day ops rely less on manual work.</span>
+        </p>
+        <div class="grid">
+          <article class="feature">
+            <div class="icon">🖥</div>
+            <b><span data-lang="zh">多台机器统一管理</span><span data-lang="en">Unified Multi-Node Management</span></b>
+            <p><span data-lang="zh">不管 GPU 服务器在同一个机房还是分散在不同网络，只要彼此能按需访问，就可以接入同一个管理节点，在一个网页里集中查看和维护。</span><span data-lang="en">Whether servers are co-located or spread across networks, connect them to one management node and manage everything from a single web page.</span></p>
+          </article>
+          <article class="feature">
+            <div class="icon">📊</div>
+            <b><span data-lang="zh">资源情况一眼看清</span><span data-lang="en">Real-time Resource Overview</span></b>
+            <p><span data-lang="zh">在线节点、可用 GPU、运行容器、CPU、内存、磁盘都会汇总展示，管理员不用一台台登录服务器确认谁在用、还剩多少资源。</span><span data-lang="en">Online nodes, available GPUs, running containers, CPU, memory, and disk are all summarized. No need to SSH into each server to check resource usage.</span></p>
+          </article>
+          <article class="feature">
+            <div class="icon">📦</div>
+            <b><span data-lang="zh">用户自助容器管理</span><span data-lang="en">Self-Service Container Management</span></b>
+            <p><span data-lang="zh">成员在网页里选择镜像、GPU、CPU、内存和端口，就能创建自己的实验环境，还可以直接打开浏览器 Shell 进入容器。</span><span data-lang="en">Members choose image, GPU, CPU, memory, and ports to create their own environment. Browser-based shell access is included.</span></p>
+          </article>
+          <article class="feature">
+            <div class="icon">⚡</div>
+            <b><span data-lang="zh">Incus 容器环境</span><span data-lang="en">Incus Container Environment</span></b>
+            <p><span data-lang="zh">使用 Incus，更像轻量级 Linux 主机，适合 SSH 登录、后台服务、长期训练任务和多人隔离环境；开销低、启动快，扩展到更多节点也更自然。</span><span data-lang="en">Powered by Incus — closer to a lightweight Linux host, ideal for SSH access, background services, long-running training jobs, and per-user isolation.</span></p>
+          </article>
+          <article class="feature">
+            <div class="icon">💾</div>
+            <b><span data-lang="zh">数据和模型集中管理</span><span data-lang="en">Centralized Data &amp; Model Management</span></b>
+            <p><span data-lang="zh">个人文件、共享数据集、模型资源、上传下载、预览和同步都放到存储中心，减少"数据到底在哪台机器上"的混乱。</span><span data-lang="en">Personal files, shared datasets, model resources, uploads, downloads, previews, and sync are all in the Storage Center. No more "which server has that dataset?" confusion.</span></p>
+          </article>
+          <article class="feature">
+            <div class="icon">🔧</div>
+            <b><span data-lang="zh">方便集中的日常运维</span><span data-lang="en">Streamlined Daily Ops</span></b>
+            <p><span data-lang="zh">节点接入、端口转发、容器 Shell、Agent 发布和升级都可以在控制台完成，管理员不用为每个小操作反复登录服务器。</span><span data-lang="en">Node onboarding, port forwarding, container shell, agent releases and upgrades — all done from the console without logging into individual servers.</span></p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section class="alt">
+      <div class="wrap">
+        <h2><span data-lang="zh">架构概览</span><span data-lang="en">Architecture Overview</span></h2>
+        <p class="section-lead">
+          <span data-lang="zh">管理节点通过 Docker Compose 运行平台服务；GPU / 存储节点原生运行 Incus 和 cluster-node-agent。</span>
+          <span data-lang="en">The management node runs platform services via Docker Compose. GPU/storage nodes run Incus and cluster-node-agent natively.</span>
+        </p>
+        <div class="grid" style="grid-template-columns: repeat(2, minmax(0,1fr));">
+          <article class="feature">
+            <b><span data-lang="zh">管理节点（Docker Compose）</span><span data-lang="en">Management Node (Docker Compose)</span></b>
+            <p style="margin-top:10px;line-height:2">
+              <code>nginx</code> — <span data-lang="zh">唯一 Web/API 入口</span><span data-lang="en">single Web/API entry point</span><br>
+              <code>frontend</code> — Vue 3 + Vite + Element Plus<br>
+              <code>backend</code> — FastAPI <span data-lang="zh">调度与资源账本</span><span data-lang="en">scheduling &amp; resource ledger</span><br>
+              <code>postgres</code> — <span data-lang="zh">平台数据库</span><span data-lang="en">platform database</span><br>
+              <code>port-router</code> — <span data-lang="zh">公开端口转发</span><span data-lang="en">public port forwarding</span>
+            </p>
+          </article>
+          <article class="feature">
+            <b><span data-lang="zh">GPU / 存储节点（原生）</span><span data-lang="en">GPU / Storage Nodes (native)</span></b>
+            <p style="margin-top:10px;line-height:2">
+              <code>Incus</code> — <span data-lang="zh">容器运行时</span><span data-lang="en">container runtime</span><br>
+              <code>NVIDIA Driver</code> + <code>nvidia-smi</code> — <span data-lang="zh">仅 GPU 节点</span><span data-lang="en">GPU nodes only</span><br>
+              <code>cluster-node-agent</code> — <span data-lang="zh">与管理节点通信</span><span data-lang="en">communicates with management node</span><br>
+              <code>cluster-agent-updater</code> — <span data-lang="zh">可选自动升级</span><span data-lang="en">optional auto-upgrade</span>
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section>
+      <div class="wrap">
+        <h2><span data-lang="zh">快速开始</span><span data-lang="en">Quick Start</span></h2>
+        <p class="section-lead">
+          <span data-lang="zh">在管理节点上完成以下步骤即可启动平台。</span>
+          <span data-lang="en">Complete the following steps on the management node to start the platform.</span>
+        </p>
+        <div class="quickstart-steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <b><span data-lang="zh">克隆仓库</span><span data-lang="en">Clone the repository</span></b>
+            <p><span data-lang="zh">将项目克隆到管理节点。</span><span data-lang="en">Clone the project to your management node.</span></p>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <b><span data-lang="zh">配置环境变量</span><span data-lang="en">Configure environment variables</span></b>
+            <p><span data-lang="zh">复制 <code>.env.example</code> 并修改必要参数。</span><span data-lang="en">Copy <code>.env.example</code> and set required values.</span></p>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <b><span data-lang="zh">启动服务</span><span data-lang="en">Start services</span></b>
+            <p><span data-lang="zh">运行构建脚本，访问 Web 控制台。</span><span data-lang="en">Run the build script and open the web console.</span></p>
+          </div>
+        </div>
+        <pre><span class="c"># 克隆 / Clone</span>
+git clone https://github.com/MTKSHU/server-vps.git && cd server-vps
+
+<span class="c"># 配置 / Configure</span>
+cp deploy/.env.example deploy/.env
+<span class="c"># 至少修改 POSTGRES_PASSWORD、ADMIN_INITIAL_PASSWORD、PORT_ROUTER_TOKEN</span>
+<span class="c"># At minimum set: POSTGRES_PASSWORD, ADMIN_INITIAL_PASSWORD, PORT_ROUTER_TOKEN</span>
+
+<span class="c"># 启动 / Start</span>
+./scripts/docker-build-run.sh
+
+<span class="c"># 健康检查 / Health check</span>
+curl http://127.0.0.1:<span class="s">${HTTP_PORT:-80}</span>/api/health</pre>
+      </div>
+    </section>
+
+    <!-- Scenarios / CTA -->
+    <section class="dark">
+      <div class="wrap">
+        <h2><span data-lang="zh">适合什么场景</span><span data-lang="en">Who Is This For?</span></h2>
+        <p class="section-lead">
+          <span data-lang="zh">server-vps 更偏向小团队自托管：已有几台 GPU 服务器，希望用较低复杂度做账号、额度、容器、端口和数据的统一管理。</span>
+          <span data-lang="en">server-vps targets small teams running their own GPU servers who want low-complexity unified management of accounts, quotas, containers, ports, and data.</span>
+        </p>
+        <div class="cta-grid">
+          <div class="cta-item">
+            <b><span data-lang="zh">课题组共享 GPU</span><span data-lang="en">Research Group GPU Sharing</span></b>
+            <span><span data-lang="zh">把个人排队和口头协调变成可见资源账本。</span><span data-lang="en">Replace informal queuing with a visible resource ledger.</span></span>
+          </div>
+          <div class="cta-item">
+            <b><span data-lang="zh">实验环境隔离</span><span data-lang="en">Isolated Experiment Environments</span></b>
+            <span><span data-lang="zh">每个任务一个 Incus 容器，降低环境互相污染。</span><span data-lang="en">One Incus container per task reduces environment conflicts.</span></span>
+          </div>
+          <div class="cta-item">
+            <b><span data-lang="zh">数据集集中维护</span><span data-lang="en">Centralized Dataset Management</span></b>
+            <span><span data-lang="zh">公共数据集和模型由存储中心统一管理和分发。</span><span data-lang="en">Public datasets and models managed and distributed from the Storage Center.</span></span>
+          </div>
+          <div class="cta-item">
+            <b><span data-lang="zh">轻量运维闭环</span><span data-lang="en">Lightweight Ops in One Place</span></b>
+            <span><span data-lang="zh">节点接入、Agent 发布、Shell、同步和升级都放进同一个控制台。</span><span data-lang="en">Node onboarding, agent releases, shell access, sync, and upgrades — all in one console.</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark">G</span>
+        <span>server-vps</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/MTKSHU/server-vps" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/MTKSHU/server-vps/blob/main/docs/README.md" target="_blank" rel="noopener"><span data-lang="zh">文档</span><span data-lang="en">Docs</span></a>
+        <a href="https://github.com/MTKSHU/server-vps/blob/main/docs/deployment.md" target="_blank" rel="noopener"><span data-lang="zh">部署指南</span><span data-lang="en">Deployment</span></a>
+        <a href="https://github.com/MTKSHU/server-vps/blob/main/docs/node-onboarding.md" target="_blank" rel="noopener"><span data-lang="zh">节点接入</span><span data-lang="en">Node Onboarding</span></a>
+        <a href="https://github.com/MTKSHU/server-vps/blob/main/LICENSE" target="_blank" rel="noopener">AGPLv3</a>
+      </div>
+      <div class="footer-copy">
+        <span data-lang="zh">基于 AGPLv3 协议开源</span>
+        <span data-lang="en">Open source under AGPLv3</span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ── Language toggle ──────────────────────────────────
+    function setLang(lang) {
+      document.documentElement.setAttribute('lang', lang === 'en' ? 'en' : 'zh-CN');
+      document.documentElement.dataset.activeLang = lang;
+      document.getElementById('btn-zh').classList.toggle('active', lang === 'zh');
+      document.getElementById('btn-en').classList.toggle('active', lang === 'en');
+      try { localStorage.setItem('svps-lang', lang); } catch (_) {}
+    }
+
+    // Restore saved lang on load
+    (function () {
+      let saved = 'zh';
+      try { saved = localStorage.getItem('svps-lang') || 'zh'; } catch (_) {}
+      setLang(saved);
+    })();
+
+  </script>
+</body>
+</html>
