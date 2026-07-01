@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   Close,
@@ -41,6 +42,7 @@ import {
 import NodeJoin from "./NodeJoin.vue";
 
 const router = useRouter();
+const { t } = useI18n();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -150,12 +152,25 @@ function formatDuration(totalSeconds: number) {
 }
 
 function nodeUptimeText(row: Node) {
-  if (!nodeOnline(row)) return "离线";
+  if (!nodeOnline(row)) return t("dashboard.offline");
   if (row.uptime_seconds > 0) {
     const elapsedSinceHeartbeat = Math.max(0, currentTs.value - (row.last_seen || currentTs.value));
-    return `在线 ${formatDuration(row.uptime_seconds + elapsedSinceHeartbeat)}`;
+    return t("dashboard.onlineDuration", { duration: formatDuration(row.uptime_seconds + elapsedSinceHeartbeat) });
   }
-  return "在线";
+  return t("dashboard.online");
+}
+
+function columnLabel(column: { key: string; label: string }) {
+  const keyMap: Record<string, string> = {
+    status: "nodes.status",
+    uptime: "nodes.uptime",
+    node_type: "nodes.type",
+    schedule: "nodes.schedule",
+    driver_pool: "nodes.driverPool",
+    policy: "nodes.policy",
+    resources: "nodes.resources",
+  };
+  return keyMap[column.key] ? t(keyMap[column.key]) : column.label;
 }
 
 const visibleColumnDefs = computed(() => {
@@ -499,20 +514,20 @@ onUnmounted(() => {
     <el-card shadow="never" v-loading="loading">
       <template #header>
         <div class="card-header">
-          <strong>节点管理</strong>
+          <strong>{{ t("nodes.title") }}</strong>
           <div class="header-actions">
             <el-popover placement="bottom-end" trigger="click" width="260">
               <template #reference>
-                <el-button :icon="Setting">列设置</el-button>
+                <el-button :icon="Setting">{{ t("nodes.columnSettings") }}</el-button>
               </template>
               <div class="column-settings">
                 <div v-for="(column, index) in visibleColumnDefs" :key="column.key" class="column-setting-row">
                   <el-checkbox :model-value="true" @change="toggleColumn(column.key, false)">
-                    {{ column.label }}
+                    {{ columnLabel(column) }}
                   </el-checkbox>
                   <div class="column-order-actions">
-                    <el-button size="small" text :icon="Upload" :disabled="index === 0" @click="moveColumn(index, -1)">上移</el-button>
-                    <el-button size="small" text :icon="Download" :disabled="index === visibleColumnDefs.length - 1" @click="moveColumn(index, 1)">下移</el-button>
+                    <el-button size="small" text :icon="Upload" :disabled="index === 0" @click="moveColumn(index, -1)">{{ t("nodes.moveUp") }}</el-button>
+                    <el-button size="small" text :icon="Download" :disabled="index === visibleColumnDefs.length - 1" @click="moveColumn(index, 1)">{{ t("nodes.moveDown") }}</el-button>
                   </div>
                 </div>
                 <el-divider style="margin: 8px 0" />
@@ -522,24 +537,24 @@ onUnmounted(() => {
                   :model-value="false"
                   @change="toggleColumn(column.key, true)"
                 >
-                  {{ column.label }}
+                  {{ columnLabel(column) }}
                 </el-checkbox>
-                <el-button size="small" text :icon="RefreshRight" @click="resetVisibleColumns">恢复默认</el-button>
+                <el-button size="small" text :icon="RefreshRight" @click="resetVisibleColumns">{{ t("nodes.restoreDefault") }}</el-button>
               </div>
             </el-popover>
-            <el-button :icon="Refresh" @click="load">刷新</el-button>
-            <el-button :icon="Upload" @click="openReleases">Agent 发布</el-button>
-            <el-button type="primary" :icon="Plus" @click="addDialogVisible = true">添加节点</el-button>
+            <el-button :icon="Refresh" @click="load">{{ t("common.refresh") }}</el-button>
+            <el-button :icon="Upload" @click="openReleases">{{ t("nodes.agentReleases") }}</el-button>
+            <el-button type="primary" :icon="Plus" @click="addDialogVisible = true">{{ t("nodes.addNode") }}</el-button>
           </div>
         </div>
       </template>
       <el-table :data="nodes" stripe>
-        <el-table-column prop="hostname" label="主机名" min-width="160" fixed />
+        <el-table-column prop="hostname" :label="t('nodes.hostname')" min-width="160" fixed />
         <el-table-column
           v-for="column in visibleColumnDefs"
           :key="column.key"
           :prop="column.key"
-          :label="column.label"
+          :label="columnLabel(column)"
           :min-width="column.key === 'gpus' ? 260 : column.key === 'policy' || column.key === 'resources' ? 220 : column.key === 'driver_pool' || column.key === 'uptime' ? 150 : 130"
           :width="column.key === 'uptime' ? 150 : ['status', 'node_type', 'schedule', 'incus_status'].includes(column.key) ? 110 : undefined"
         >
@@ -552,14 +567,14 @@ onUnmounted(() => {
             <template v-else-if="column.key === 'node_type'">{{ row.node_type }}</template>
             <template v-else-if="column.key === 'schedule'">
               <el-tag :type="row.schedulable && !row.maintenance ? 'success' : 'warning'" round>
-                {{ row.maintenance ? "维护" : row.schedulable ? "启用" : "关闭" }}
+                {{ row.maintenance ? t("nodes.maintenance") : row.schedulable ? t("nodes.enabled") : t("nodes.disabled") }}
               </el-tag>
             </template>
             <template v-else-if="column.key === 'driver_pool'">{{ row.driver_pool }}</template>
             <template v-else-if="column.key === 'policy'">
-              容器 {{ row.max_running_containers }}/{{ row.max_containers }} ·
-              GPU {{ row.allow_gpu_sharing ? `共享 ${row.max_gpu_shared_containers}` : "独占" }} ·
-              权重 {{ row.scheduler_weight }}
+              {{ t("nodes.containers") }} {{ row.max_running_containers }}/{{ row.max_containers }} ·
+              GPU {{ row.allow_gpu_sharing ? t("nodes.gpuShared", { count: row.max_gpu_shared_containers }) : t("nodes.gpuExclusive") }} ·
+              {{ t("nodes.weight") }} {{ row.scheduler_weight }}
             </template>
             <template v-else-if="column.key === 'resources'">
               {{ row.cpu_used }}/{{ row.cpu_total }} CPU ·
@@ -579,8 +594,8 @@ onUnmounted(() => {
               <span v-else>—</span>
             </template>
             <template v-else-if="column.key === 'agent_version'">
-              <div>{{ row.agent_version || "未知" }}</div>
-              <el-tag v-if="latestVersion && row.agent_version === latestVersion" type="success" size="small">最新版本</el-tag>
+              <div>{{ row.agent_version || t("nodes.unknown") }}</div>
+              <el-tag v-if="latestVersion && row.agent_version === latestVersion" type="success" size="small">{{ t("nodes.latestVersion") }}</el-tag>
               <el-button
                 v-else-if="latestVersion && row.agent_version"
                 size="small"
@@ -588,7 +603,7 @@ onUnmounted(() => {
                 :icon="RefreshRight"
                 :disabled="!nodeOnline(row)"
                 @click="doTriggerUpdate(row)"
-              >立即更新</el-button>
+              >{{ t("nodes.updateNow") }}</el-button>
               <el-tag
                 v-if="row.agent_update_status && row.agent_update_status !== 'idle' && row.agent_update_status !== 'updated'"
                 size="small"
@@ -597,18 +612,18 @@ onUnmounted(() => {
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column :label="t('nodes.actions')" width="260" fixed="right">
           <template #default="{ row }">
             <div class="node-action-col">
               <div class="node-action-row">
-                <el-button size="small" class="node-action-button" type="warning" :icon="TurnOff" :disabled="!nodeOnline(row)" @click="shutdownNode(row)">关机</el-button>
-                <el-button size="small" class="node-action-button" :icon="RefreshRight" :disabled="!nodeOnline(row)" @click="rebootNode(row)">重启</el-button>
-                <el-button size="small" class="node-action-button node-action-button-wide" :icon="SwitchButton" :disabled="!nodeWakeEnabled(row)" @click="wakeNode(row)">LAN 唤醒</el-button>
+                <el-button size="small" class="node-action-button" type="warning" :icon="TurnOff" :disabled="!nodeOnline(row)" @click="shutdownNode(row)">{{ t("nodes.shutdown") }}</el-button>
+                <el-button size="small" class="node-action-button" :icon="RefreshRight" :disabled="!nodeOnline(row)" @click="rebootNode(row)">{{ t("nodes.reboot") }}</el-button>
+                <el-button size="small" class="node-action-button node-action-button-wide" :icon="SwitchButton" :disabled="!nodeWakeEnabled(row)" @click="wakeNode(row)">{{ t("nodes.wakeLan") }}</el-button>
               </div>
               <div class="node-action-row">
                 <el-button size="small" class="node-action-button" :icon="Connection" :disabled="!nodeOnline(row)" @click="router.push({ name: 'nodeShell', params: { id: row.id } })">Shell</el-button>
-                <el-button size="small" class="node-action-button" :icon="Setting" @click="openConfig(row)">配置</el-button>
-                <el-button size="small" class="node-action-button" type="danger" :icon="Delete" @click="removeNode(row)">移除</el-button>
+                <el-button size="small" class="node-action-button" :icon="Setting" @click="openConfig(row)">{{ t("nodes.configure") }}</el-button>
+                <el-button size="small" class="node-action-button node-action-button-wide" type="danger" :icon="Delete" @click="removeNode(row)">{{ t("nodes.remove") }}</el-button>
               </div>
             </div>
           </template>
@@ -616,140 +631,140 @@ onUnmounted(() => {
       </el-table>
     </el-card>
 
-    <el-dialog v-model="addDialogVisible" title="添加节点" width="980px" destroy-on-close>
+    <el-dialog v-model="addDialogVisible" :title="t('nodes.addNode')" width="980px" destroy-on-close>
       <NodeJoin />
     </el-dialog>
 
-    <el-dialog v-model="configDialogVisible" :title="`节点配置 · ${editingNode?.hostname || ''}`" width="860px">
+    <el-dialog v-model="configDialogVisible" :title="t('nodes.nodeConfig', { name: editingNode?.hostname || '' })" width="860px">
       <el-form :model="configForm" label-position="top" class="config-grid">
-        <el-form-item label="节点类型">
+        <el-form-item :label="t('nodes.nodeType')">
           <el-select v-model="configForm.node_type">
-            <el-option label="计算节点" value="compute" />
-            <el-option label="存储节点" value="storage" />
-            <el-option label="应用服务节点" value="app" />
-            <el-option label="混合节点" value="mixed" />
+            <el-option :label="t('nodes.computeNode')" value="compute" />
+            <el-option :label="t('nodes.storageNode')" value="storage" />
+            <el-option :label="t('nodes.appNode')" value="app" />
+            <el-option :label="t('nodes.mixedNode')" value="mixed" />
           </el-select>
         </el-form-item>
-        <el-form-item label="参与调度">
+        <el-form-item :label="t('nodes.schedulable')">
           <el-switch v-model="configForm.schedulable" />
         </el-form-item>
-        <el-form-item label="维护模式">
+        <el-form-item :label="t('nodes.maintenanceMode')">
           <el-switch v-model="configForm.maintenance" />
         </el-form-item>
-        <el-form-item label="允许 GPU 共享">
+        <el-form-item :label="t('nodes.allowGpuSharing')">
           <el-switch v-model="configForm.allow_gpu_sharing" />
         </el-form-item>
-        <el-form-item label="最大容器数量">
+        <el-form-item :label="t('nodes.maxContainers')">
           <el-input-number v-model="configForm.max_containers" :min="0" :max="500" />
         </el-form-item>
-        <el-form-item label="最大运行中容器">
+        <el-form-item :label="t('nodes.maxRunningContainers')">
           <el-input-number v-model="configForm.max_running_containers" :min="0" :max="500" />
         </el-form-item>
-        <el-form-item label="每张 GPU 最大共享容器">
+        <el-form-item :label="t('nodes.maxGpuSharedContainers')">
           <el-input-number v-model="configForm.max_gpu_shared_containers" :min="0" :max="100" />
         </el-form-item>
-        <el-form-item label="调度权重">
+        <el-form-item :label="t('nodes.schedulerWeight')">
           <el-input-number v-model="configForm.scheduler_weight" :min="-1000" :max="1000" />
         </el-form-item>
-        <el-form-item label="单容器最大 CPU">
+        <el-form-item :label="t('nodes.maxCpu')">
           <el-input-number v-model="configForm.max_cpu_per_container" :min="0" :max="1024" />
         </el-form-item>
-        <el-form-item label="单容器最大内存 GB">
+        <el-form-item :label="t('nodes.maxMemoryGb')">
           <el-input-number v-model="configForm.max_memory_gb_per_container" :min="0" :max="8192" />
         </el-form-item>
-        <el-form-item label="单容器最大磁盘 GB">
+        <el-form-item :label="t('nodes.maxDiskGb')">
           <el-input-number v-model="configForm.max_disk_gb_per_container" :min="0" :max="100000" />
         </el-form-item>
-        <el-form-item label="保留内存 GB">
+        <el-form-item :label="t('nodes.reservedMemoryGb')">
           <el-input-number v-model="configForm.reserved_memory_gb" :min="0" :max="8192" />
         </el-form-item>
-        <el-form-item label="保留磁盘 GB">
+        <el-form-item :label="t('nodes.reservedDiskGb')">
           <el-input-number v-model="configForm.reserved_disk_gb" :min="0" :max="100000" />
         </el-form-item>
-        <el-form-item label="允许端口映射">
+        <el-form-item :label="t('nodes.allowPortMapping')">
           <el-switch v-model="configForm.allow_port_mapping" />
         </el-form-item>
-        <el-form-item label="单容器最大端口数">
+        <el-form-item :label="t('nodes.maxPorts')">
           <el-input-number v-model="configForm.max_ports_per_container" :min="0" :max="1000" />
         </el-form-item>
-        <el-form-item label="标签" class="wide">
+        <el-form-item :label="t('nodes.labels')" class="wide">
           <el-input v-model="labelText" placeholder="p40, ssd, app-zone" />
         </el-form-item>
-        <el-form-item label="WOL MAC 地址">
+        <el-form-item :label="t('nodes.wolMac')">
           <el-input v-model="configForm.wol_mac" placeholder="aa:bb:cc:dd:ee:ff" />
         </el-form-item>
-        <el-form-item label="WOL 广播地址">
+        <el-form-item :label="t('nodes.wolBroadcast')">
           <el-input v-model="configForm.wol_broadcast" placeholder="255.255.255.255" />
         </el-form-item>
-        <el-form-item label="Shell SSH 用户">
+        <el-form-item :label="t('nodes.shellSshUser')">
           <el-input v-model="configForm.ssh_user" placeholder="root" />
         </el-form-item>
-        <el-form-item label="Shell SSH 端口">
+        <el-form-item :label="t('nodes.shellSshPort')">
           <el-input-number v-model="configForm.ssh_port" :min="1" :max="65535" />
         </el-form-item>
         <el-form-item
           v-if="editingNode?.node_type === 'storage' || editingNode?.node_type === 'mixed'"
-          label="数据同步 IP"
+          :label="t('nodes.syncIp')"
         >
-          <el-input v-model="configForm.sync_ip" placeholder="留空使用节点上报 IP" />
+          <el-input v-model="configForm.sync_ip" :placeholder="t('nodes.syncIpPlaceholder')" />
           <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">
-            rsync / 镜像分发时优先使用该地址，解决内网 IP 对计算节点不可达的问题
+            {{ t("nodes.syncIpHint") }}
           </div>
         </el-form-item>
         <el-form-item
           v-if="editingNode?.node_type === 'storage' || editingNode?.node_type === 'mixed'"
-          label="数据同步 SSH 端口"
+          :label="t('nodes.syncSshPort')"
         >
           <el-input-number v-model="configForm.sync_ssh_port" :min="0" :max="65535" />
           <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">
-            0 表示回退到 Shell SSH 端口
+            {{ t("nodes.syncSshPortHint") }}
           </div>
         </el-form-item>
-        <el-form-item label="平台 SSH 公钥" class="wide">
-          <el-input :value="sshPubkey || '尚未生成，打开配置面板后将自动获取'" readonly>
+        <el-form-item :label="t('nodes.platformSshKey')" class="wide">
+          <el-input :value="sshPubkey || t('nodes.sshKeyMissing')" readonly>
             <template #append>
-              <el-button :icon="CopyDocument" @click="copySshPubkey">复制</el-button>
-              <el-button :icon="Upload" :loading="pushingPubkey" :disabled="!sshPubkey" @click="pushSshPubkey">推送到节点</el-button>
+              <el-button :icon="CopyDocument" @click="copySshPubkey">{{ t("nodes.copy") }}</el-button>
+              <el-button :icon="Upload" :loading="pushingPubkey" :disabled="!sshPubkey" @click="pushSshPubkey">{{ t("nodes.pushToNode") }}</el-button>
             </template>
           </el-input>
-          <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">「推送到节点」会通过 agent 自动将公鉅写入节点 <code>~/.ssh/authorized_keys</code></div>
+          <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">{{ t("nodes.pushKeyHint") }}</div>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button :icon="Close" @click="configDialogVisible = false">取消</el-button>
-        <el-button type="primary" :icon="Select" :loading="saving" @click="saveConfig">保存</el-button>
+        <el-button :icon="Close" @click="configDialogVisible = false">{{ t("common.cancel") }}</el-button>
+        <el-button type="primary" :icon="Select" :loading="saving" @click="saveConfig">{{ t("common.save") }}</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="releasesDialogVisible" title="Agent 版本管理" width="800px">
+    <el-dialog v-model="releasesDialogVisible" :title="t('nodes.releasesTitle')" width="800px">
       <el-alert type="info" :closable="false" style="margin-bottom:16px">
-        <template #title>如何构建？</template>
-        填写版本号并选择通道，点击「构建」后后端将自动调用 Docker 启动 <code>golang:1.23-alpine</code> 容器编译最新源码，编译产物直接写入发布目录。首次构建需下载 Go 模块，可能需要较长时间，请耐心等待。
+        <template #title>{{ t("nodes.buildHelpTitle") }}</template>
+        {{ t("nodes.buildHelp") }}
       </el-alert>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:16px">
-        <el-button :icon="Download" data-keep-label="true" @click="downloadLatestAgent">下载最新版 Agent</el-button>
-        <el-button :icon="Download" data-keep-label="true" @click="downloadLatestUpdater">下载 Updater</el-button>
+        <el-button :icon="Download" data-keep-label="true" @click="downloadLatestAgent">{{ t("nodes.downloadLatestAgent") }}</el-button>
+        <el-button :icon="Download" data-keep-label="true" @click="downloadLatestUpdater">{{ t("nodes.downloadUpdater") }}</el-button>
       </div>
       <el-form label-position="top">
         <div style="display:flex;gap:12px;align-items:flex-end">
-          <el-form-item label="版本号" style="margin-bottom:0;flex:1"><el-input v-model="releaseVersion" placeholder="0.3.0" /></el-form-item>
-          <el-form-item label="通道" style="margin-bottom:0">
+          <el-form-item :label="t('nodes.version')" style="margin-bottom:0;flex:1"><el-input v-model="releaseVersion" placeholder="0.3.0" /></el-form-item>
+          <el-form-item :label="t('nodes.channel')" style="margin-bottom:0">
             <el-select v-model="releaseChannel" style="width:120px"><el-option label="Stable" value="stable" /><el-option label="Canary" value="canary" /></el-select>
           </el-form-item>
-          <el-form-item label=" " style="margin-bottom:0"><el-button type="primary" :icon="Finished" :loading="publishing" @click="publishRelease">{{ publishing ? '编译中…' : '构建' }}</el-button></el-form-item>
+          <el-form-item label=" " style="margin-bottom:0"><el-button type="primary" :icon="Finished" :loading="publishing" @click="publishRelease">{{ publishing ? t("nodes.building") : t("nodes.build") }}</el-button></el-form-item>
         </div>
-        <el-form-item label="版本更新内容" style="margin-top:12px;margin-bottom:0">
-          <el-input v-model="releaseChangelog" type="textarea" :rows="3" placeholder="本版本的功能变更、修复说明（可选）" />
+        <el-form-item :label="t('nodes.changelog')" style="margin-top:12px;margin-bottom:0">
+          <el-input v-model="releaseChangelog" type="textarea" :rows="3" :placeholder="t('nodes.changelogPlaceholder')" />
         </el-form-item>
       </el-form>
       <el-divider />
       <el-table :data="releases" max-height="300">
-        <el-table-column prop="version" label="版本" width="100" />
-        <el-table-column prop="channel" label="通道" width="80" />
-        <el-table-column prop="architecture" label="架构" width="80" />
-        <el-table-column label="大小" width="90"><template #default="{ row }">{{ (row.size_bytes / 1024 / 1024).toFixed(1) }} MB</template></el-table-column>
+        <el-table-column prop="version" :label="t('nodes.version')" width="100" />
+        <el-table-column prop="channel" :label="t('nodes.channel')" width="80" />
+        <el-table-column prop="architecture" :label="t('nodes.architecture')" width="80" />
+        <el-table-column :label="t('nodes.size')" width="90"><template #default="{ row }">{{ (row.size_bytes / 1024 / 1024).toFixed(1) }} MB</template></el-table-column>
         <el-table-column label="SHA256" width="150"><template #default="{ row }">{{ row.sha256.slice(0, 14) }}…</template></el-table-column>
-        <el-table-column label="更新内容" min-width="140">
+        <el-table-column :label="t('nodes.changelogColumn')" min-width="140">
           <template #default="{ row }">
             <el-tooltip v-if="row.changelog" :content="row.changelog" placement="top" :show-after="300">
               <span style="cursor:default;color:var(--el-color-primary)">{{ row.changelog.length > 30 ? row.changelog.slice(0, 30) + '…' : row.changelog }}</span>
@@ -757,34 +772,34 @@ onUnmounted(() => {
             <span v-else style="color:var(--el-text-color-placeholder)">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" align="center">
+        <el-table-column :label="t('nodes.actions')" width="160" align="center">
           <template #default="{ row }">
             <div style="display:flex;gap:8px;justify-content:center">
-              <el-button size="small" :icon="Download" @click="downloadRelease(row)">下载</el-button>
-              <el-button size="small" type="danger" :icon="Delete" @click="removeRelease(row)">删除</el-button>
+              <el-button size="small" :icon="Download" @click="downloadRelease(row)">{{ t("nodes.download") }}</el-button>
+              <el-button size="small" type="danger" :icon="Delete" @click="removeRelease(row)">{{ t("nodes.delete") }}</el-button>
             </div>
           </template>
         </el-table-column>
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="updateDialogVisible" :title="`Agent 更新 · ${editingNode?.hostname || ''}`" width="520px">
+    <el-dialog v-model="updateDialogVisible" :title="t('nodes.agentUpdate', { name: editingNode?.hostname || '' })" width="520px">
       <el-form label-position="top">
-        <el-form-item label="启用自动更新"><el-switch v-model="updateForm.auto_update" /></el-form-item>
-        <el-form-item label="更新通道">
+        <el-form-item :label="t('nodes.autoUpdate')"><el-switch v-model="updateForm.auto_update" /></el-form-item>
+        <el-form-item :label="t('nodes.channel')">
           <el-select v-model="updateForm.channel"><el-option label="Stable" value="stable" /><el-option label="Canary" value="canary" /></el-select>
         </el-form-item>
-        <el-form-item label="固定目标版本">
-          <el-select v-model="updateForm.target_version" clearable placeholder="留空则跟随通道最新版本">
+        <el-form-item :label="t('nodes.targetVersion')">
+          <el-select v-model="updateForm.target_version" clearable :placeholder="t('nodes.targetVersionPlaceholder')">
             <el-option v-for="release in releases" :key="`${release.version}-${release.architecture}`" :label="`${release.version} (${release.channel})`" :value="release.version" />
           </el-select>
         </el-form-item>
         <el-alert v-if="editingNode?.agent_update_error" type="error" :closable="false" :title="editingNode.agent_update_error" />
       </el-form>
       <template #footer>
-        <el-button :icon="Close" @click="updateDialogVisible = false">取消</el-button>
-        <el-button type="warning" :icon="RefreshRight" :loading="triggeringUpdate" :disabled="!editingNode" @click="editingNode && doTriggerUpdate(editingNode).then(() => { updateDialogVisible = false })">立即触发更新</el-button>
-        <el-button type="primary" :icon="Select" @click="saveAgentUpdate">保存策略</el-button>
+        <el-button :icon="Close" @click="updateDialogVisible = false">{{ t("common.cancel") }}</el-button>
+        <el-button type="warning" :icon="RefreshRight" :loading="triggeringUpdate" :disabled="!editingNode" @click="editingNode && doTriggerUpdate(editingNode).then(() => { updateDialogVisible = false })">{{ t("nodes.triggerUpdate") }}</el-button>
+        <el-button type="primary" :icon="Select" @click="saveAgentUpdate">{{ t("nodes.savePolicy") }}</el-button>
       </template>
     </el-dialog>
   </div>

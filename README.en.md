@@ -1,10 +1,17 @@
-# server-vps
+<h1 align="center">Server VPS</h1>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License"></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/docs-%E4%B8%AD%E6%96%87-blue.svg" alt="中文文档"></a>
+</p>
 
 A GPU container management platform for small research groups. server-vps uses one management node and multiple GPU/storage nodes to centralize Incus containers, GPU allocation, user quotas, port access, data directories, and node agent releases in a web console.
 
 The default deployment only runs the platform services and uses local account login. External OIDC/CAS SSO, Casdoor pending-user import, and platform self-registration are optional features.
 
-中文文档: [README.md](README.md)
+<p align="center">
+  <img src=".asserts/English.png" alt="Server VPS English interface" width="960">
+</p>
 
 ## Project Scope
 
@@ -166,11 +173,6 @@ docker cp extract-agent:/cluster-node-agent ./cluster-node-agent
 docker cp extract-agent:/cluster-agent-updater ./cluster-agent-updater
 docker rm extract-agent
 ```
-
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/chart?repos=MTKSHU/server-vps&type=date&legend=top-left)](https://www.star-history.com/?repos=MTKSHU%2Fserver-vps&type=date&legend=top-left)
-
-## License and Contributing
-
-This project is licensed under `AGPL-3.0-or-later`. See [LICENSE](LICENSE).

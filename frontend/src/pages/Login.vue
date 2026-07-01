@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ElMessage } from "element-plus";
 import { Plus, Promotion } from "@element-plus/icons-vue";
 import { login, getAuthConfig, getSSOProviders, ssoStartUrl, type AuthConfig, type SSOProvider } from "../api/cluster";
 import { setAuth } from "../auth";
+import LanguageSwitcher from "../components/LanguageSwitcher.vue";
 
 const router = useRouter();
 const route = useRoute();
+const { t } = useI18n();
 const loading = ref(false);
 const form = reactive({ username: "", password: "" });
 const ssoProviders = ref<SSOProvider[]>([]);
@@ -30,7 +33,7 @@ function loginWithSSO(providerId: string) {
 
 async function submitLocal() {
   if (authConfig.value && !authConfig.value.local_login_enabled) {
-    ElMessage.error("平台账号登录未启用");
+    ElMessage.error(t("auth.platformLoginDisabled"));
     return;
   }
   loading.value = true;
@@ -39,7 +42,7 @@ async function submitLocal() {
     setAuth(result.token, result.user);
     await router.replace((route.query.redirect as string) || { name: "dashboard" });
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "登录失败");
+    ElMessage.error(e instanceof Error ? e.message : t("auth.loginFailed"));
   } finally { loading.value = false; }
 }
 </script>
@@ -47,11 +50,14 @@ async function submitLocal() {
 <template>
   <div class="login-page">
     <el-card class="login-card" shadow="always">
-      <h1>GPU 集群平台</h1>
-      <p>请选择登录方式</p>
+      <div class="login-card-toolbar">
+        <LanguageSwitcher />
+      </div>
+      <h1>{{ t("app.name") }}</h1>
+      <p>{{ t("auth.loginTitle") }}</p>
 
       <el-tabs v-model="activeTab" stretch class="login-tabs">
-        <el-tab-pane label="机构登录" name="sso">
+        <el-tab-pane :label="t('auth.ssoLogin')" name="sso">
           <div class="sso-section primary-sso">
             <el-button
               v-for="p in ssoProviders"
@@ -63,22 +69,22 @@ async function submitLocal() {
               data-keep-label="true"
               @click="loginWithSSO(p.id)"
             >
-              {{ p.display_name || "机构统一认证" }}
+              {{ p.display_name || t("auth.defaultSSOProvider") }}
             </el-button>
-            <el-empty v-if="ssoProviders.length === 0" description="暂无可用统一认证入口" />
+            <el-empty v-if="ssoProviders.length === 0" :description="t('auth.noSSOProvider')" />
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="平台登录" name="platform">
+        <el-tab-pane :label="t('auth.platformLogin')" name="platform">
           <el-form :model="form" label-position="top" class="login-form" @submit.prevent="submitLocal">
             <template v-if="!authConfig || authConfig.local_login_enabled">
-              <el-form-item label="用户名"><el-input v-model="form.username" autocomplete="username" /></el-form-item>
-              <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password autocomplete="current-password" @keyup.enter="submitLocal" /></el-form-item>
+              <el-form-item :label="t('auth.username')"><el-input v-model="form.username" autocomplete="username" /></el-form-item>
+              <el-form-item :label="t('auth.password')"><el-input v-model="form.password" type="password" show-password autocomplete="current-password" @keyup.enter="submitLocal" /></el-form-item>
               <el-button type="primary" class="login-submit" :loading="loading" @click="submitLocal">
-                登录
+                {{ t("common.login") }}
               </el-button>
             </template>
-            <el-empty v-else description="平台账号登录未启用" />
+            <el-empty v-else :description="t('auth.platformLoginDisabled')" />
             <el-button
               v-if="showPlatformRegister"
               class="register-link"
@@ -86,7 +92,7 @@ async function submitLocal() {
               data-keep-label="true"
               @click="router.push({ name: 'register' })"
             >
-              注册平台账号
+              {{ t("auth.registerPlatformAccount") }}
             </el-button>
           </el-form>
         </el-tab-pane>
@@ -96,6 +102,11 @@ async function submitLocal() {
 </template>
 
 <style scoped>
+.login-card-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
 .login-form {
   margin-top: 20px;
 }

@@ -1,4 +1,5 @@
 import { authToken, clearAuth } from "../auth";
+import { translateApiError } from "./errors";
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const isFormData = options.body instanceof FormData;
@@ -24,7 +25,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       clearAuth();
       if (window.location.pathname !== "/login") window.location.assign("/login");
     }
-    throw new Error(data?.detail || data?.error || "请求失败");
+    throw new Error(translateApiError(data?.detail || data?.error || "请求失败"));
   }
   return data as T;
 }

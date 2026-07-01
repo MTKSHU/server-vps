@@ -18,26 +18,26 @@ import { authToken, authUser, hasAdminAccess } from "../auth";
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/login", name: "login", component: Login, meta: { public: true, title: "登录" } },
-    { path: "/platform-login", name: "platformLogin", component: Login, meta: { public: true, title: "平台登录" } },
-    { path: "/register", name: "register", component: Register, meta: { public: true, title: "注册" } },
-    { path: "/login/callback", name: "loginCallback", component: LoginCallback, meta: { public: true, title: "认证中" } },
+    { path: "/login", name: "login", component: Login, meta: { public: true, titleKey: "common.login" } },
+    { path: "/platform-login", name: "platformLogin", component: Login, meta: { public: true, titleKey: "auth.platformLogin" } },
+    { path: "/register", name: "register", component: Register, meta: { public: true, titleKey: "common.register" } },
+    { path: "/login/callback", name: "loginCallback", component: LoginCallback, meta: { public: true, titleKey: "auth.authenticating" } },
     {
       path: "/",
       component: AdminLayout,
       children: [
-        { path: "", name: "dashboard", component: Dashboard, meta: { title: "仪表盘" } },
-        { path: "nodes", name: "nodes", component: Nodes, meta: { title: "节点管理", admin: true } },
+        { path: "", name: "dashboard", component: Dashboard, meta: { titleKey: "nav.dashboard" } },
+        { path: "nodes", name: "nodes", component: Nodes, meta: { titleKey: "nav.nodes", admin: true } },
         { path: "node-join", name: "nodeJoin", redirect: { name: "nodes" } },
-        { path: "containers", name: "containers", component: Containers, meta: { title: "容器管理" } },
-        { path: "containers/:id/shell", name: "containerShell", component: ContainerShell, meta: { title: "容器 Shell" } },
-        { path: "nodes/:id/shell", name: "nodeShell", component: NodeShell, meta: { title: "节点 Shell", admin: true } },
+        { path: "containers", name: "containers", component: Containers, meta: { titleKey: "nav.containers" } },
+        { path: "containers/:id/shell", name: "containerShell", component: ContainerShell, meta: { titleKey: "nav.containerShell" } },
+        { path: "nodes/:id/shell", name: "nodeShell", component: NodeShell, meta: { titleKey: "nav.nodeShell", admin: true } },
         { path: "create", name: "create", redirect: { name: "containers" } },
-        { path: "images", name: "images", component: Images, meta: { title: "镜像管理", admin: true } },
-        { path: "storage", name: "storage", component: StorageCenter, meta: { title: "存储中心" } },
-        { path: "profile", name: "profile", component: Profile, meta: { title: "个人信息" } },
-        { path: "settings", name: "settings", component: PlatformSettings, meta: { title: "平台设置", admin: true } },
-        { path: "users", name: "users", component: Users, meta: { title: "用户管理", admin: true } }
+        { path: "images", name: "images", component: Images, meta: { titleKey: "nav.images", admin: true } },
+        { path: "storage", name: "storage", component: StorageCenter, meta: { titleKey: "nav.storage" } },
+        { path: "profile", name: "profile", component: Profile, meta: { titleKey: "nav.profile" } },
+        { path: "settings", name: "settings", component: PlatformSettings, meta: { titleKey: "nav.settings", admin: true } },
+        { path: "users", name: "users", component: Users, meta: { titleKey: "nav.users", admin: true } }
       ]
     }
   ]

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ElMessage } from "element-plus";
 import { Back, Plus } from "@element-plus/icons-vue";
 import { getAuthConfig, registerPlatformUser, type AuthConfig } from "../api/cluster";
+import LanguageSwitcher from "../components/LanguageSwitcher.vue";
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(false);
 const config = ref<AuthConfig | null>(null);
 const form = reactive({
@@ -25,11 +28,11 @@ onMounted(async () => {
 
 async function submit() {
   if (config.value && (!config.value.registration_enabled || config.value.registration_mode !== "platform")) {
-    ElMessage.error("平台注册未启用");
+    ElMessage.error(t("auth.platformRegisterDisabled"));
     return;
   }
   if (form.password !== form.confirmPassword) {
-    ElMessage.error("两次输入的密码不一致");
+    ElMessage.error(t("auth.passwordMismatch"));
     return;
   }
   loading.value = true;
@@ -39,10 +42,10 @@ async function submit() {
       email: form.email,
       password: form.password,
     });
-    ElMessage.success(result.enabled ? "注册成功，请登录" : "注册成功，等待管理员审核");
+    ElMessage.success(result.enabled ? t("auth.registerSuccessLogin") : t("auth.registerSuccessPending"));
     await router.replace({ name: "platformLogin" });
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "注册失败");
+    ElMessage.error(error instanceof Error ? error.message : t("auth.registerFailed"));
   } finally {
     loading.value = false;
   }
@@ -52,27 +55,30 @@ async function submit() {
 <template>
   <div class="login-page">
     <el-card class="login-card" shadow="always">
-      <h1>GPU 集群平台</h1>
-      <p>注册平台账号</p>
+      <div class="login-card-toolbar">
+        <LanguageSwitcher />
+      </div>
+      <h1>{{ t("app.name") }}</h1>
+      <p>{{ t("auth.registering") }}</p>
 
       <el-form :model="form" label-position="top" class="register-form" @submit.prevent="submit">
-        <el-form-item label="用户名">
+        <el-form-item :label="t('auth.username')">
           <el-input v-model="form.username" autocomplete="username" />
         </el-form-item>
-        <el-form-item label="电子邮箱">
+        <el-form-item :label="t('auth.email')">
           <el-input v-model="form.email" autocomplete="email" />
         </el-form-item>
-        <el-form-item label="密码">
+        <el-form-item :label="t('auth.password')">
           <el-input v-model="form.password" type="password" show-password autocomplete="new-password" />
         </el-form-item>
-        <el-form-item label="确认密码">
+        <el-form-item :label="t('auth.confirmPassword')">
           <el-input v-model="form.confirmPassword" type="password" show-password autocomplete="new-password" @keyup.enter="submit" />
         </el-form-item>
         <el-button type="primary" class="register-submit" :icon="Plus" :loading="loading" data-keep-label="true" @click="submit">
-          注册
+          {{ t("common.register") }}
         </el-button>
         <el-button class="back-login" :icon="Back" data-keep-label="true" @click="router.push({ name: 'platformLogin' })">
-          返回登录
+          {{ t("auth.backToLogin") }}
         </el-button>
       </el-form>
     </el-card>
@@ -80,6 +86,11 @@ async function submit() {
 </template>
 
 <style scoped>
+.login-card-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
 .register-form {
   margin-top: 20px;
 }

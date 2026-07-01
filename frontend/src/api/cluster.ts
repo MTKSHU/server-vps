@@ -1,5 +1,6 @@
 import { authToken } from "../auth";
 import { patchJson, postJson, request } from "./client";
+import { translateApiError } from "./errors";
 
 // ── SSO 统一认证 ──────────────────────────────────────────────────────────────
 export interface SSOProvider {
@@ -789,9 +790,9 @@ export function uploadUserFiles(userId: number, relativePath: string, files: Fil
         let data: any = null;
         try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { data = { detail: xhr.responseText }; }
         if (xhr.status >= 200 && xhr.status < 300) resolve(data as UserUploadResult);
-        else reject(new Error(data?.detail || data?.error || "上传失败"));
+        else reject(new Error(translateApiError(data?.detail || data?.error || "上传失败")));
       };
-      xhr.onerror = () => reject(new Error("上传失败，请检查网络连接"));
+      xhr.onerror = () => reject(new Error(translateApiError("上传失败，请检查网络连接")));
       xhr.send(form);
     });
   }

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { Refresh } from "@element-plus/icons-vue";
 import StatCard from "../components/StatCard.vue";
 import { getGpus, getNodeHardware, getSummary, type Gpu, type NodeHardware, type Summary } from "../api/cluster";
 
+const { t } = useI18n();
 const SPARKLINE_MAX = 30; // 保留最近 30 个采样点（2s 间隔 = 1 分钟历史）
 
 const loading = ref(false);
@@ -59,9 +61,9 @@ function pctColor(p: number): string {
 }
 
 function gpuState(utilization: number) {
-  if (utilization < 5) return { label: "空闲", type: "success" as const };
-  if (utilization < 50) return { label: "工作中", type: "warning" as const };
-  return { label: "繁忙", type: "danger" as const };
+  if (utilization < 5) return { label: t("dashboard.idle"), type: "success" as const };
+  if (utilization < 50) return { label: t("dashboard.working"), type: "warning" as const };
+  return { label: t("dashboard.busy"), type: "danger" as const };
 }
 
 function gpuContainers(row: Gpu) {
@@ -108,12 +110,12 @@ function formatDuration(totalSeconds: number) {
 }
 
 function nodeUptimeText(row: NodeHardware) {
-  if (row.status !== "online") return "离线";
+  if (row.status !== "online") return t("dashboard.offline");
   if (row.uptime_seconds > 0) {
     const elapsedSinceHeartbeat = Math.max(0, currentTs.value - (row.last_seen || currentTs.value));
-    return `在线 ${formatDuration(row.uptime_seconds + elapsedSinceHeartbeat)}`;
+    return t("dashboard.onlineDuration", { duration: formatDuration(row.uptime_seconds + elapsedSinceHeartbeat) });
   }
-  return "在线";
+  return t("dashboard.online");
 }
 
 /** 显存已用/总量，输入单位 MB，输出自适应单位 */
@@ -143,28 +145,28 @@ function formatCpuHardware(row: NodeHardware) {
   const parts = [modelText];
   if (sockets > 1) {
     const perSocket = [
-      coresPerSocket > 0 ? `${coresPerSocket} 核` : "",
-      threadsPerSocket > 0 ? `${threadsPerSocket} 线程` : "",
+      coresPerSocket > 0 ? t("dashboard.cores", { count: coresPerSocket }) : "",
+      threadsPerSocket > 0 ? t("dashboard.threads", { count: threadsPerSocket }) : "",
     ].filter(Boolean).join(" / ");
     const totalCores = coresPerSocket > 0 ? coresPerSocket * sockets : 0;
     const total = [
-      totalCores > 0 ? `${totalCores} 核` : "",
-      row.cpu_total > 0 ? `${row.cpu_total} 线程` : "",
+      totalCores > 0 ? t("dashboard.cores", { count: totalCores }) : "",
+      row.cpu_total > 0 ? t("dashboard.threads", { count: row.cpu_total }) : "",
     ].filter(Boolean).join(" / ");
-    if (perSocket) parts.push(`单颗 ${perSocket}`);
-    if (total) parts.push(`合计 ${total}`);
+    if (perSocket) parts.push(t("dashboard.perSocket", { value: perSocket }));
+    if (total) parts.push(t("dashboard.total", { value: total }));
   } else {
-    if (coresPerSocket > 0) parts.push(`${coresPerSocket} 核`);
-    if (row.cpu_total > 0) parts.push(`${row.cpu_total} 线程`);
+    if (coresPerSocket > 0) parts.push(t("dashboard.cores", { count: coresPerSocket }));
+    if (row.cpu_total > 0) parts.push(t("dashboard.threads", { count: row.cpu_total }));
   }
   return parts.join(" · ");
 }
 
 function formatGpuHardware(row: NodeHardware) {
-  if (!row.gpus.length) return "无";
+  if (!row.gpus.length) return t("dashboard.none");
   const groups = new Map<string, number>();
   for (const gpu of row.gpus) {
-    const label = `${gpu.model || "未知 GPU"} ${gpu.vram_gb || 0} GB`;
+    const label = `${gpu.model || t("dashboard.unknownGpu")} ${gpu.vram_gb || 0} GB`;
     groups.set(label, (groups.get(label) || 0) + 1);
   }
   return Array.from(groups.entries()).map(([label, count]) => count > 1 ? `${label} x${count}` : label).join(" · ");
@@ -213,20 +215,20 @@ onUnmounted(() => {
 <template>
   <div v-loading="loading" class="page-stack">
     <div v-if="summary" class="stats-grid">
-      <StatCard label="在线节点" :value="`${summary.nodes_online}/${summary.nodes_total}`" detail="已注册服务器" />
-      <StatCard label="可用 GPU" :value="`${summary.gpus_free}/${summary.gpus_total}`" detail="支持多容器共享" />
-      <StatCard label="运行容器" :value="`${summary.containers_running} / ${summary.containers_total}`" detail="运行中 / 总数" />
-      <StatCard label="CPU" :value="`${pct(summary.cpu_used, summary.cpu_total)}%`" :detail="`${summary.cpu_used}/${summary.cpu_total} 核`" />
-      <StatCard label="内存" :value="`${pct(summary.memory_used_gb, summary.memory_total_gb)}%`" :detail="`${formatGb(summary.memory_used_gb)} / ${formatGb(summary.memory_total_gb)}`" />
-      <StatCard label="磁盘" :value="`${pct(summary.disk_used_gb, summary.disk_total_gb)}%`" :detail="`${formatGb(summary.disk_used_gb)} / ${formatGb(summary.disk_total_gb)}`" />
+      <StatCard :label="t('dashboard.onlineNodes')" :value="`${summary.nodes_online}/${summary.nodes_total}`" :detail="t('dashboard.registeredServers')" />
+      <StatCard :label="t('dashboard.availableGpu')" :value="`${summary.gpus_free}/${summary.gpus_total}`" :detail="t('dashboard.gpuSharing')" />
+      <StatCard :label="t('dashboard.runningContainers')" :value="`${summary.containers_running} / ${summary.containers_total}`" :detail="t('dashboard.runningTotal')" />
+      <StatCard label="CPU" :value="`${pct(summary.cpu_used, summary.cpu_total)}%`" :detail="t('dashboard.cpuCores', { used: summary.cpu_used, total: summary.cpu_total })" />
+      <StatCard :label="t('dashboard.memory')" :value="`${pct(summary.memory_used_gb, summary.memory_total_gb)}%`" :detail="`${formatGb(summary.memory_used_gb)} / ${formatGb(summary.memory_total_gb)}`" />
+      <StatCard :label="t('dashboard.disk')" :value="`${pct(summary.disk_used_gb, summary.disk_total_gb)}%`" :detail="`${formatGb(summary.disk_used_gb)} / ${formatGb(summary.disk_total_gb)}`" />
     </div>
 
     <!-- 节点实时监控图表卡片 -->
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <strong>节点实时监控</strong>
-          <el-button :icon="Refresh" :loading="monitorRefreshing" @click="refreshMonitor">刷新</el-button>
+          <strong>{{ t("dashboard.realtimeMonitor") }}</strong>
+          <el-button :icon="Refresh" :loading="monitorRefreshing" @click="refreshMonitor">{{ t("common.refresh") }}</el-button>
         </div>
       </template>
       <div class="node-monitor-grid">
@@ -238,7 +240,7 @@ onUnmounted(() => {
           </div>
 
           <div class="metric-section metric-section-cpu">
-            <div class="metric-section-title">处理器</div>
+            <div class="metric-section-title">{{ t("dashboard.processor") }}</div>
             <div class="metric-row">
               <div class="metric-label">
                 <span>CPU</span>
@@ -260,20 +262,20 @@ onUnmounted(() => {
           </div>
 
           <div v-if="node.containers_total > 0" class="metric-section metric-section-container">
-            <div class="metric-section-title">容器</div>
+            <div class="metric-section-title">{{ t("dashboard.containers") }}</div>
             <div class="metric-row compact-row">
               <div class="metric-label">
-                <span>运行情况</span>
-                <span class="metric-value">{{ node.containers_running ?? 0 }} 运行中 / 共 {{ node.containers_total }} 个</span>
+                <span>{{ t("dashboard.runningContainers") }}</span>
+                <span class="metric-value">{{ t("dashboard.containerRunning", { running: node.containers_running ?? 0, total: node.containers_total }) }}</span>
               </div>
             </div>
           </div>
 
           <div class="metric-section metric-section-memory">
-            <div class="metric-section-title">内存与交换</div>
+            <div class="metric-section-title">{{ t("dashboard.memorySwap") }}</div>
             <div class="metric-row">
               <div class="metric-label">
-                <span>内存</span>
+                <span>{{ t("dashboard.memory") }}</span>
                 <span class="metric-value">{{ formatGbPair(node.memory_used_gb, node.memory_total_gb) }}</span>
               </div>
               <div class="bar-wrap">
@@ -298,10 +300,10 @@ onUnmounted(() => {
           </div>
 
           <div class="metric-section metric-section-disk">
-            <div class="metric-section-title">磁盘</div>
+            <div class="metric-section-title">{{ t("dashboard.disk") }}</div>
             <div class="metric-row">
               <div class="metric-label">
-                <span>存储池</span>
+                <span>{{ t("dashboard.storagePool") }}</span>
                 <span class="metric-value">{{ formatGbPair(node.disk_used_gb, node.disk_total_gb) }}</span>
               </div>
               <div class="bar-wrap">
@@ -315,13 +317,13 @@ onUnmounted(() => {
 
           <div v-if="nodeGpus(node).length" class="metric-section metric-section-gpu">
             <div class="metric-section-title">
-              <span>显卡</span>
+              <span>{{ t("dashboard.gpu") }}</span>
             </div>
             <template v-for="gpu in nodeGpus(node)" :key="gpu.id">
               <div class="metric-row gpu-metric-row">
                 <div class="metric-label">
                   <span class="gpu-label">{{ gpu.model || 'GPU' }} #{{ gpu.slot }}</span>
-                  <span class="metric-value">利用率 {{ metricNumber(gpu.utilization) }}%</span>
+                  <span class="metric-value">{{ t("dashboard.utilization", { value: metricNumber(gpu.utilization) }) }}</span>
                 </div>
                 <div class="bar-wrap">
                   <div class="bar-track">
@@ -332,7 +334,7 @@ onUnmounted(() => {
               </div>
               <div class="metric-row gpu-memory-row">
                 <div class="metric-label">
-                  <span class="gpu-label">显存</span>
+                  <span class="gpu-label">{{ t("dashboard.vram") }}</span>
                   <span class="metric-value">{{ formatMbPair(gpu.vram_used_mb ?? 0, (gpu.vram_gb ?? 0) * 1024) }}</span>
                 </div>
                 <div class="bar-wrap">

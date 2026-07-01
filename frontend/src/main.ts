@@ -4,6 +4,7 @@ import "element-plus/dist/index.css";
 import "./styles/app.css";
 import App from "./App.vue";
 import router from "./router";
+import { i18n } from "./i18n";
 
 function enhanceIconButtons(root: ParentNode = document) {
   const buttons = [
@@ -35,5 +36,5 @@ function installIconButtonEnhancer() {
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 }
 
-createApp(App).use(router).use(ElementPlus).mount("#app");
+createApp(App).use(router).use(i18n).use(ElementPlus).mount("#app");
 installIconButtonEnhancer();

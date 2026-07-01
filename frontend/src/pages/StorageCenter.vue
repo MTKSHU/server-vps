@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { FolderOpened, Edit, RefreshRight, CircleCheck, Delete, Refresh, Download, View, Setting, DataLine, Connection, Upload, FolderAdd, Close, Select } from "@element-plus/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
@@ -19,6 +20,7 @@ import { authToken, authUser, hasAdminAccess } from "../auth";
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(false);
 const resources = ref<SharedResource[]>([]);
 const volumes = ref<StorageVolume[]>([]);
@@ -779,8 +781,9 @@ onUnmounted(() => {
 });
 
 function storageStatusLabel(status: string | undefined): string {
-  const map: Record<string, string> = { ok: '正常', warning: '警告', missing: '未挂载', error: '异常', unknown: '未知' };
-  return map[status ?? 'unknown'] ?? status ?? '未知';
+  const map: Record<string, string> = { ok: 'status.ready', warning: 'status.pending', missing: 'status.missing', error: 'status.failed', unknown: 'nodes.unknown' };
+  const key = map[status ?? 'unknown'];
+  return key ? t(key) : status ?? t("nodes.unknown");
 }
 function storageStatusType(status: string | undefined): string {
   if (status === 'ok') return 'success';
@@ -789,9 +792,10 @@ function storageStatusType(status: string | undefined): string {
   return 'info';
 }
 function checkStatusLabel(row: { request_status?: string; check_status?: string }): string {
-  if (row.request_status === 'failed') return '下载失败';
-  const map: Record<string, string> = { ok: '正常', failed: '异常', unknown: '未知', checking: '校验中' };
-  return map[row.check_status ?? ''] ?? row.check_status ?? '—';
+  if (row.request_status === 'failed') return t("storage.downloadFailed");
+  const map: Record<string, string> = { ok: 'status.ready', failed: 'status.failed', unknown: 'nodes.unknown', checking: 'status.verifying' };
+  const key = map[row.check_status ?? ''];
+  return key ? t(key) : row.check_status ?? '—';
 }
 function checkStatusType(row: { request_status?: string; check_status?: string }): string {
   if (row.check_status === 'ok') return 'success';
@@ -804,38 +808,38 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
 <template>
   <div v-loading="loading" class="page-stack">
     <div class="stats-grid storage-stats">
-      <el-card shadow="never"><span>存储状态</span><div style="margin:8px 0"><el-tag :type="storageStatusType(storage?.status)" effect="light" size="large">{{ storageStatusLabel(storage?.status) }}</el-tag></div><small>{{ storage?.hostname || "无存储节点" }}</small></el-card>
-      <el-card shadow="never"><span>存储用量</span><strong>{{ storage ? gbytes(storage.used_gb, storage.total_gb) : "-" }}</strong><small>已用 / 总容量</small></el-card>
-      <el-card shadow="never"><span>公开数据集</span><strong>{{ allDatasets.length }}</strong><small>{{ bytes(allDatasets.reduce((s, x) => s + x.size_bytes, 0)) }}</small></el-card>
-      <el-card shadow="never"><span>公开模型</span><strong>{{ allModels.length }}</strong><small>{{ bytes(allModels.reduce((s, x) => s + x.size_bytes, 0)) }}</small></el-card>
-      <el-card shadow="never"><span>公开资源总量</span><strong>{{ bytes(totalResourceBytes) }}</strong><small>{{ resources.length }} 个集合</small></el-card>
+      <el-card shadow="never"><span>{{ t("storage.status") }}</span><div style="margin:8px 0"><el-tag :type="storageStatusType(storage?.status)" effect="light" size="large">{{ storageStatusLabel(storage?.status) }}</el-tag></div><small>{{ storage?.hostname || t("storage.noStorageNode") }}</small></el-card>
+      <el-card shadow="never"><span>{{ t("storage.usage") }}</span><strong>{{ storage ? gbytes(storage.used_gb, storage.total_gb) : "-" }}</strong><small>{{ t("storage.usedTotal") }}</small></el-card>
+      <el-card shadow="never"><span>{{ t("storage.datasets") }}</span><strong>{{ allDatasets.length }}</strong><small>{{ bytes(allDatasets.reduce((s, x) => s + x.size_bytes, 0)) }}</small></el-card>
+      <el-card shadow="never"><span>{{ t("storage.models") }}</span><strong>{{ allModels.length }}</strong><small>{{ bytes(allModels.reduce((s, x) => s + x.size_bytes, 0)) }}</small></el-card>
+      <el-card shadow="never"><span>{{ t("storage.publicResourceTotal") }}</span><strong>{{ bytes(totalResourceBytes) }}</strong><small>{{ t("storage.collections", { count: resources.length }) }}</small></el-card>
     </div>
     
     <div v-if="isAdmin" class="storage-card-header">
-      <el-tooltip content="存储路径设置" placement="top" :show-after="300">
-        <el-button :icon="Setting" size="small" @click="openSettings">存储路径设置</el-button>
+      <el-tooltip :content="t('storage.settings')" placement="top" :show-after="300">
+        <el-button :icon="Setting" size="small" @click="openSettings">{{ t("storage.settings") }}</el-button>
       </el-tooltip>
     </div>
 
     <el-card shadow="never">
       
       <el-tabs v-model="activeTab">
-        <el-tab-pane label="公开数据集" name="datasets">
+        <el-tab-pane :label="t('storage.datasets')" name="datasets">
           <div class="table-toolbar res-toolbar">
-            <el-input v-model="datasetSearch" placeholder="按名称搜索..." clearable style="width:180px" />
-            <el-select v-model="datasetTagFilter" multiple filterable collapse-tags collapse-tags-tooltip placeholder="按标签筛选" style="width:220px">
+            <el-input v-model="datasetSearch" :placeholder="t('storage.searchByName')" clearable style="width:180px" />
+            <el-select v-model="datasetTagFilter" multiple filterable collapse-tags collapse-tags-tooltip :placeholder="t('storage.filterByTag')" style="width:220px">
               <el-option-group v-for="group in datasetFilterTagGroups" :key="group.label" :label="group.label">
                 <el-option v-for="opt in group.options" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-option-group>
             </el-select>
             <span class="toolbar-spacer" />
-            <el-button v-if="isAdmin" type="primary" :icon="DataLine" @click="openRequest('dataset')">数据集下载请求</el-button>
+            <el-button v-if="isAdmin" type="primary" :icon="DataLine" @click="openRequest('dataset')">{{ t("storage.datasetRequest") }}</el-button>
           </div>
           <el-table :data="datasets" stripe>
-            <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip/>
-            <el-table-column prop="version" label="版本" width="120"/>
-            <el-table-column label="来源" width="130"><template #default="{row}"><el-tag size="small" effect="plain">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
-            <el-table-column label="标签" min-width="200">
+            <el-table-column prop="name" :label="t('storage.name')" min-width="200" show-overflow-tooltip/>
+            <el-table-column prop="version" :label="t('storage.version')" width="120"/>
+            <el-table-column :label="t('storage.source')" width="130"><template #default="{row}"><el-tag size="small" effect="plain">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
+            <el-table-column :label="t('storage.tags')" min-width="200">
               <template #default="{row}">
                 <div v-if="row.tags?.length" style="display:flex;flex-wrap:wrap;gap:6px">
                   <el-tag v-for="tag in row.tags.slice(0, 3)" :key="tag" size="small" effect="light">{{ tag }}</el-tag>
@@ -846,9 +850,9 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 <span v-else style="color:var(--el-text-color-placeholder)">-</span>
               </template>
             </el-table-column>
-            <el-table-column label="文件数" width="100"><template #default="{row}">{{ row.file_count || '-' }}</template></el-table-column>
-            <el-table-column label="容量" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
-            <el-table-column label="状态" min-width="160">
+            <el-table-column :label="t('storage.files')" width="100"><template #default="{row}">{{ row.file_count || '-' }}</template></el-table-column>
+            <el-table-column :label="t('storage.size')" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
+            <el-table-column :label="t('storage.state')" min-width="160">
               <template #default="{row}">
                 <div v-if="row.request_status === 'downloading'" class="dl-progress">
                   <div class="dl-phase">{{ progressPhaseLabel(row) }}</div>
@@ -858,50 +862,50 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                   <div class="dl-file">{{ progressDetail(row) }}</div>
                 </div>
                 <el-tooltip v-else-if="row.request_status === 'failed' && row.check_error" :content="row.check_error" placement="top" :show-after="300">
-                  <el-tag type="danger" style="cursor:help">下载失败</el-tag>
+                  <el-tag type="danger" style="cursor:help">{{ t("storage.downloadFailed") }}</el-tag>
                 </el-tooltip>
                 <el-tag v-else :type="checkStatusType(row)">
                   {{ checkStatusLabel(row) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="260">
+            <el-table-column :label="t('storage.actions')" width="260">
               <template #default="{row}">
-                <el-tooltip content="查看文件" placement="top" :show-after="300">
+                <el-tooltip :content="t('storage.viewFiles')" placement="top" :show-after="300">
                   <el-button size="small" :icon="FolderOpened" @click="openResourceBrowser(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin" content="编辑" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin" :content="t('common.edit')" placement="top" :show-after="300">
                   <el-button size="small" :icon="Edit" @click="editResource(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin && row.request_status === 'failed' && row.source_url" content="重试下载" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin && row.request_status === 'failed' && row.source_url" :content="t('storage.retryDownload')" placement="top" :show-after="300">
                   <el-button size="small" type="warning" :icon="RefreshRight" @click="redownload(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin" content="校验" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin" :content="t('storage.verify')" placement="top" :show-after="300">
                   <el-button size="small" :icon="CircleCheck" @click="checkResource(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin" content="删除" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin" :content="t('storage.delete')" placement="top" :show-after="300">
                   <el-button size="small" type="danger" :icon="Delete" @click="removeResource(row)" />
                 </el-tooltip>
               </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
-        <el-tab-pane label="公开模型" name="models">
+        <el-tab-pane :label="t('storage.models')" name="models">
           <div class="table-toolbar res-toolbar">
-            <el-input v-model="modelSearch" placeholder="按名称搜索..." clearable style="width:180px" />
-            <el-select v-model="modelTagFilter" multiple filterable collapse-tags collapse-tags-tooltip placeholder="按标签筛选" style="width:220px">
+            <el-input v-model="modelSearch" :placeholder="t('storage.searchByName')" clearable style="width:180px" />
+            <el-select v-model="modelTagFilter" multiple filterable collapse-tags collapse-tags-tooltip :placeholder="t('storage.filterByTag')" style="width:220px">
               <el-option-group v-for="group in modelFilterTagGroups" :key="group.label" :label="group.label">
                 <el-option v-for="opt in group.options" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-option-group>
             </el-select>
             <span class="toolbar-spacer" />
-            <el-button v-if="isAdmin" type="primary" :icon="Connection" @click="openRequest('huggingface_model')">模型下载请求</el-button>
+            <el-button v-if="isAdmin" type="primary" :icon="Connection" @click="openRequest('huggingface_model')">{{ t("storage.modelRequest") }}</el-button>
           </div>
           <el-table :data="models" stripe>
-            <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip/>
-            <el-table-column prop="version" label="版本" width="120"/>
-            <el-table-column label="来源" width="130"><template #default="{row}"><el-tag size="small" effect="plain">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
-            <el-table-column label="标签" min-width="200">
+            <el-table-column prop="name" :label="t('storage.name')" min-width="200" show-overflow-tooltip/>
+            <el-table-column prop="version" :label="t('storage.version')" width="120"/>
+            <el-table-column :label="t('storage.source')" width="130"><template #default="{row}"><el-tag size="small" effect="plain">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
+            <el-table-column :label="t('storage.tags')" min-width="200">
               <template #default="{row}">
                 <div v-if="row.tags?.length" style="display:flex;flex-wrap:wrap;gap:6px">
                   <el-tag v-for="tag in row.tags.slice(0, 3)" :key="tag" size="small" effect="light">{{ tag }}</el-tag>
@@ -912,9 +916,9 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 <span v-else style="color:var(--el-text-color-placeholder)">-</span>
               </template>
             </el-table-column>
-            <el-table-column label="文件数" width="100"><template #default="{row}">{{ row.file_count || '-' }}</template></el-table-column>
-            <el-table-column label="容量" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
-            <el-table-column label="状态" min-width="160">
+            <el-table-column :label="t('storage.files')" width="100"><template #default="{row}">{{ row.file_count || '-' }}</template></el-table-column>
+            <el-table-column :label="t('storage.size')" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
+            <el-table-column :label="t('storage.state')" min-width="160">
               <template #default="{row}">
                 <div v-if="row.request_status === 'downloading'" class="dl-progress">
                   <div class="dl-phase">{{ progressPhaseLabel(row) }}</div>
@@ -924,35 +928,35 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                   <div class="dl-file">{{ progressDetail(row) }}</div>
                 </div>
                 <el-tooltip v-else-if="row.request_status === 'failed' && row.check_error" :content="row.check_error" placement="top" :show-after="300">
-                  <el-tag type="danger" style="cursor:help">下载失败</el-tag>
+                  <el-tag type="danger" style="cursor:help">{{ t("storage.downloadFailed") }}</el-tag>
                 </el-tooltip>
                 <el-tag v-else :type="checkStatusType(row)">
                   {{ checkStatusLabel(row) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="260">
+            <el-table-column :label="t('storage.actions')" width="260">
               <template #default="{row}">
-                <el-tooltip content="查看文件" placement="top" :show-after="300">
+                <el-tooltip :content="t('storage.viewFiles')" placement="top" :show-after="300">
                   <el-button size="small" :icon="FolderOpened" @click="openResourceBrowser(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin" content="编辑" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin" :content="t('common.edit')" placement="top" :show-after="300">
                   <el-button size="small" :icon="Edit" @click="editResource(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin && row.request_status === 'failed' && row.source_url" content="重试下载" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin && row.request_status === 'failed' && row.source_url" :content="t('storage.retryDownload')" placement="top" :show-after="300">
                   <el-button size="small" type="warning" :icon="RefreshRight" @click="redownload(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin" content="校验" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin" :content="t('storage.verify')" placement="top" :show-after="300">
                   <el-button size="small" :icon="CircleCheck" @click="checkResource(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="isAdmin" content="删除" placement="top" :show-after="300">
+                <el-tooltip v-if="isAdmin" :content="t('storage.delete')" placement="top" :show-after="300">
                   <el-button size="small" type="danger" :icon="Delete" @click="removeResource(row)" />
                 </el-tooltip>
               </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
-        <el-tab-pane label="我的文件" name="files">
+        <el-tab-pane :label="t('storage.myFiles')" name="files">
           <div class="card-header">
             <div class="my-files-head">
               <div>
@@ -961,7 +965,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
               </div>
               <div class="quota-meter">
                 <div class="quota-line">
-                  <span>我的文件用量</span>
+                  <span>{{ t("storage.myFilesUsage") }}</span>
                   <strong>{{ homeUsageText }}</strong>
                 </div>
                 <el-progress
@@ -974,8 +978,8 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
               </div>
               <div v-if="uploading || uploadProgress.percent > 0" class="upload-meter">
                 <div class="quota-line">
-                  <span>上传进度</span>
-                  <strong>{{ uploadProgress.total ? `${bytes(uploadProgress.loaded)} / ${bytes(uploadProgress.total)}` : '准备上传' }}</strong>
+                  <span>{{ t("storage.uploadProgress") }}</span>
+                  <strong>{{ uploadProgress.total ? `${bytes(uploadProgress.loaded)} / ${bytes(uploadProgress.total)}` : t("storage.preparingUpload") }}</strong>
                 </div>
                 <el-progress :percentage="uploadProgress.percent" :stroke-width="6" :show-text="false" />
               </div>
@@ -983,37 +987,37 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
             <div class="file-actions">
               <input ref="fileInputRef" class="hidden-file-input" type="file" multiple @change="handleUploadSelection($event, 'files')" />
               <input ref="folderInputRef" class="hidden-file-input" type="file" multiple webkitdirectory directory @change="handleUploadSelection($event, 'folder')" />
-              <el-tooltip content="上传文件" placement="top" :show-after="300">
+              <el-tooltip :content="t('storage.uploadFiles')" placement="top" :show-after="300">
                 <el-button :icon="Upload" :loading="uploading" :disabled="!currentUserId" @click="pickFiles" />
               </el-tooltip>
-              <el-tooltip content="上传文件夹" placement="top" :show-after="300">
+              <el-tooltip :content="t('storage.uploadFolder')" placement="top" :show-after="300">
                 <el-button :icon="FolderAdd" :loading="uploading" :disabled="!currentUserId" @click="pickFolder" />
               </el-tooltip>
-              <el-tooltip content="刷新目录" placement="top" :show-after="300">
+              <el-tooltip :content="t('storage.refreshDirectory')" placement="top" :show-after="300">
                 <el-button :icon="Refresh" :disabled="uploading" @click="refreshDirectory" />
               </el-tooltip>
             </div>
           </div>
           <el-table :data="userBrowseEntriesPaged" stripe>
-            <el-table-column label="名称">
+            <el-table-column :label="t('storage.name')">
               <template #default="{row}">
-                <el-button v-if="row._virtual === 'parent'" link type="primary" @click="up">../ 上一级</el-button>
+                <el-button v-if="row._virtual === 'parent'" link type="primary" @click="up">{{ t("storage.parent") }}</el-button>
                 <el-button v-else-if="row.type === 'directory'" link type="primary" @click="enter(row.name)">{{ row.name }}/</el-button>
                 <span v-else>{{ row.name }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="type" label="类型" width="100"/>
-            <el-table-column label="大小" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
-            <el-table-column prop="mode" label="权限" width="130"/>
-            <el-table-column label="操作" width="200">
+            <el-table-column prop="type" :label="t('storage.type')" width="100"/>
+            <el-table-column :label="t('storage.size')" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
+            <el-table-column prop="mode" :label="t('storage.permissions')" width="130"/>
+            <el-table-column :label="t('storage.actions')" width="200">
               <template #default="{row}">
-                <el-tooltip v-if="!row._virtual && previewable(row)" content="预览" placement="top" :show-after="300">
+                <el-tooltip v-if="!row._virtual && previewable(row)" :content="t('storage.preview')" placement="top" :show-after="300">
                   <el-button size="small" :icon="View" @click="previewMyFile(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="!row._virtual" content="下载" placement="top" :show-after="300">
+                <el-tooltip v-if="!row._virtual" :content="t('storage.download')" placement="top" :show-after="300">
                   <el-button size="small" :icon="Download" :loading="isDownloading(row.name)" @click="download(row)" />
                 </el-tooltip>
-                <el-tooltip v-if="!row._virtual" content="删除" placement="top" :show-after="300">
+                <el-tooltip v-if="!row._virtual" :content="t('storage.delete')" placement="top" :show-after="300">
                   <el-button size="small" type="danger" :icon="Delete" @click="deleteMyFile(row)" />
                 </el-tooltip>
               </template>
@@ -1028,36 +1032,36 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
             style="margin-top: 12px; justify-content: flex-end"
           />
         </el-tab-pane>
-        <el-tab-pane v-if="isAdmin" label="ZFS 用户目录" name="zfs-users">
+        <el-tab-pane v-if="isAdmin" :label="t('storage.zfsUsers')" name="zfs-users">
           <div class="card-header" style="margin-bottom:12px">
             <div>
-              <strong>用户目录 Dataset</strong>
-              <small class="field-hint">用于将现有用户目录纳入 ZFS quota 管理</small>
+              <strong>{{ t("storage.userDataset") }}</strong>
+              <small class="field-hint">{{ t("storage.userDatasetHint") }}</small>
             </div>
             <div class="file-actions">
-              <el-tooltip content="刷新状态" placement="top" :show-after="300">
+              <el-tooltip :content="t('storage.refreshStatus')" placement="top" :show-after="300">
                 <el-button :icon="Refresh" @click="loadUserDatasets" />
               </el-tooltip>
-              <el-tooltip content="全部确保" placement="top" :show-after="300">
+              <el-tooltip :content="t('storage.ensureAll')" placement="top" :show-after="300">
                 <el-button type="primary" :icon="CircleCheck" :loading="zfsEnsuring" @click="ensureAllZfsDatasets" />
               </el-tooltip>
             </div>
           </div>
           <el-table :data="userDatasets" stripe>
-            <el-table-column prop="username" label="用户" width="140" />
-            <el-table-column label="启用" width="80">
-              <template #default="{row}"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '是' : '否' }}</el-tag></template>
+            <el-table-column prop="username" :label="t('storage.user')" width="140" />
+            <el-table-column :label="t('storage.enabled')" width="80">
+              <template #default="{row}"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? t("storage.yes") : t("storage.no") }}</el-tag></template>
             </el-table-column>
-            <el-table-column prop="home_path" label="平台路径" min-width="190" show-overflow-tooltip />
-            <el-table-column prop="mountpoint" label="节点挂载点" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="home_path" :label="t('storage.platformPath')" min-width="190" show-overflow-tooltip />
+            <el-table-column prop="mountpoint" :label="t('storage.mountpoint')" min-width="220" show-overflow-tooltip />
             <el-table-column prop="dataset_name" label="Dataset" min-width="200" show-overflow-tooltip />
             <el-table-column label="Quota" width="100">
-              <template #default="{row}">{{ row.quota_gb || row.storage_quota_gb || 0 ? `${row.quota_gb || row.storage_quota_gb} GB` : '不限' }}</template>
+              <template #default="{row}">{{ row.quota_gb || row.storage_quota_gb || 0 ? `${row.quota_gb || row.storage_quota_gb} GB` : t("storage.unlimited") }}</template>
             </el-table-column>
-            <el-table-column label="节点" width="150">
+            <el-table-column :label="t('storage.node')" width="150">
               <template #default="{row}">{{ row.node || '-' }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="130">
+            <el-table-column :label="t('storage.state')" width="130">
               <template #default="{row}">
                 <el-tooltip v-if="row.last_error" :content="row.last_error" placement="top" :show-after="300">
                   <el-tag :type="zfsStatusType(row.status)" style="cursor:help">{{ row.status || 'unknown' }}</el-tag>
@@ -1065,13 +1069,13 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 <el-tag v-else :type="zfsStatusType(row.status)">{{ row.status || 'unknown' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="应用时间" width="180">
+            <el-table-column :label="t('storage.appliedAt')" width="180">
               <template #default="{row}">{{ formatTime(row.applied_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="130" fixed="right">
+            <el-table-column :label="t('storage.actions')" width="130" fixed="right">
               <template #default="{row}">
                 <div style="display:flex;gap:8px">
-                  <el-tooltip content="确保 Dataset / Quota" placement="top" :show-after="300">
+                  <el-tooltip :content="t('storage.ensureDataset')" placement="top" :show-after="300">
                     <el-button size="small" :icon="CircleCheck" :loading="zfsBusy(row)" @click="ensureZfsDataset(row)" />
                   </el-tooltip>
                   <el-tooltip :content="row.enabled ? '只能删除未启用用户的 Dataset' : row.status === 'removing' ? '重新提交删除任务' : '删除存储节点上的用户 Dataset'" placement="top" :show-after="300">
@@ -1089,33 +1093,33 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
             </el-table-column>
           </el-table>
         </el-tab-pane>
-        <el-tab-pane v-if="isAdmin" label="节点用户数据卷" name="workspace-volumes">
+        <el-tab-pane v-if="isAdmin" :label="t('storage.workspaceVolumes')" name="workspace-volumes">
           <div class="card-header" style="margin-bottom:12px">
             <div>
-              <strong>计算节点 /workspace 数据卷</strong>
-              <small class="field-hint">用于回收用户在单个计算节点上共享给多个容器的 Incus 数据卷</small>
+              <strong>{{ t("storage.workspaceVolumesTitle") }}</strong>
+              <small class="field-hint">{{ t("storage.workspaceVolumesHint") }}</small>
             </div>
-            <el-tooltip content="刷新状态" placement="top" :show-after="300">
+            <el-tooltip :content="t('storage.refreshStatus')" placement="top" :show-after="300">
               <el-button :icon="Refresh" :loading="workspaceLoading" @click="loadWorkspaceVolumes" />
             </el-tooltip>
           </div>
           <el-table :data="workspaceVolumes" stripe>
-            <el-table-column prop="node" label="节点" width="150" />
-            <el-table-column prop="username" label="用户" width="140" />
-            <el-table-column prop="volume_name" label="数据卷" min-width="170" show-overflow-tooltip />
-            <el-table-column label="容量上限" width="110">
-              <template #default="{row}">{{ row.quota_gb ? `${row.quota_gb} GB` : '不限' }}</template>
+            <el-table-column prop="node" :label="t('storage.node')" width="150" />
+            <el-table-column prop="username" :label="t('storage.user')" width="140" />
+            <el-table-column prop="volume_name" :label="t('storage.volume')" min-width="170" show-overflow-tooltip />
+            <el-table-column :label="t('storage.quotaLimit')" width="110">
+              <template #default="{row}">{{ row.quota_gb ? `${row.quota_gb} GB` : t("storage.unlimited") }}</template>
             </el-table-column>
-            <el-table-column label="容量已用" width="110">
+            <el-table-column :label="t('storage.used')" width="110">
               <template #default="{row}">{{ row.used_gb == null ? '-' : gbValue(row.used_gb) }}</template>
             </el-table-column>
-            <el-table-column label="容器" width="120">
-              <template #default="{row}">{{ row.active_container_count }} 个</template>
+            <el-table-column :label="t('storage.containers')" width="120">
+              <template #default="{row}">{{ row.active_container_count }}</template>
             </el-table-column>
-            <el-table-column label="节点状态" width="110">
+            <el-table-column :label="t('storage.nodeStatus')" width="110">
               <template #default="{row}"><el-tag :type="row.node_status === 'online' ? 'success' : 'info'" size="small">{{ row.node_status }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="数据卷状态" width="130">
+            <el-table-column :label="t('storage.volumeStatus')" width="130">
               <template #default="{row}">
                 <el-tooltip v-if="row.last_error" :content="row.last_error" placement="top" :show-after="300">
                   <el-tag :type="workspaceStatusType(row.status)" style="cursor:help">{{ row.status }}</el-tag>
@@ -1123,12 +1127,12 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 <el-tag v-else :type="workspaceStatusType(row.status)">{{ row.status }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="更新时间" width="180">
+            <el-table-column :label="t('storage.updatedAt')" width="180">
               <template #default="{row}">{{ formatTime(row.updated_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="110" fixed="right">
+            <el-table-column :label="t('storage.actions')" width="110" fixed="right">
               <template #default="{row}">
-                <el-tooltip content="回收该节点上的用户数据卷" placement="top" :show-after="300">
+                <el-tooltip :content="t('storage.reclaimVolume')" placement="top" :show-after="300">
                   <el-button
                     size="small"
                     type="danger"

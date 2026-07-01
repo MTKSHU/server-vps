@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   CircleClose,
@@ -53,6 +54,7 @@ import {
 import { authUser, hasAdminAccess } from "../auth";
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(false);
 const isAdmin = computed(() => hasAdminAccess());
 const containers = ref<Container[]>([]);
@@ -378,9 +380,9 @@ function lifecycleBusy(row: Container) {
 function accessLabel(row: Container) {
   if (row.status !== "running") return "";
   const map: Record<string, string> = {
-    pending: "SSH 初始化",
-    ready: "SSH 就绪",
-    failed: "SSH 失败",
+    pending: "SSH Initializing",
+    ready: "SSH Ready",
+    failed: "SSH Failed",
   };
   return map[row.access_status] || row.access_status || "";
 }
@@ -395,7 +397,19 @@ function formatTime(timestamp: number) {
 }
 
 function conflictPolicyLabel(value: string) {
-  return value === "skip" ? "跳过已存在文件" : "覆盖并删除多余文件";
+  return value === "skip" ? t("containers.skipExisting") : t("containers.overwrite");
+}
+
+function columnLabel(column: { key: string; label: string }) {
+  const keyMap: Record<string, string> = {
+    owner: "containers.owner",
+    image_name: "containers.image",
+    spec: "containers.spec",
+    status: "containers.status",
+    ports: "containers.ports",
+    connection: "containers.connection",
+  };
+  return keyMap[column.key] ? t(keyMap[column.key]) : column.label;
 }
 
 function scheduleIntervalMinutes(kind: "daily" | "weekly" | "monthly") {
@@ -669,20 +683,20 @@ onBeforeUnmount(() => {
   <el-card shadow="never" v-loading="loading">
     <template #header>
       <div class="card-header">
-        <strong>容器管理</strong>
+        <strong>{{ t("containers.title") }}</strong>
         <div class="header-actions">
           <el-popover placement="bottom-end" trigger="click" width="260">
             <template #reference>
-              <el-button :icon="Setting">列设置</el-button>
+              <el-button :icon="Setting">{{ t("containers.columnSettings") }}</el-button>
             </template>
             <div class="column-settings">
               <div v-for="(column, index) in visibleColumnDefs" :key="column.key" class="column-setting-row">
                 <el-checkbox :model-value="true" @change="toggleColumn(column.key, false)">
-                  {{ column.label }}
+                  {{ columnLabel(column) }}
                 </el-checkbox>
                 <div class="column-order-actions">
-                  <el-button size="small" text :icon="Upload" :disabled="index === 0" @click="moveColumn(index, -1)">上移</el-button>
-                  <el-button size="small" text :icon="Download" :disabled="index === visibleColumnDefs.length - 1" @click="moveColumn(index, 1)">下移</el-button>
+                  <el-button size="small" text :icon="Upload" :disabled="index === 0" @click="moveColumn(index, -1)">{{ t("containers.moveUp") }}</el-button>
+                  <el-button size="small" text :icon="Download" :disabled="index === visibleColumnDefs.length - 1" @click="moveColumn(index, 1)">{{ t("containers.moveDown") }}</el-button>
                 </div>
               </div>
               <el-divider style="margin: 8px 0" />
@@ -692,22 +706,22 @@ onBeforeUnmount(() => {
                 :model-value="false"
                 @change="toggleColumn(column.key, true)"
               >
-                {{ column.label }}
+                {{ columnLabel(column) }}
               </el-checkbox>
-              <el-button size="small" text :icon="RefreshRight" @click="resetVisibleColumns">恢复默认</el-button>
+              <el-button size="small" text :icon="RefreshRight" @click="resetVisibleColumns">{{ t("containers.restoreDefault") }}</el-button>
             </div>
           </el-popover>
-          <el-button :icon="Refresh" @click="load">刷新</el-button>
-          <el-button type="primary" :icon="Plus" @click="createDialogVisible = true">创建容器</el-button>
+          <el-button :icon="Refresh" @click="load">{{ t("common.refresh") }}</el-button>
+          <el-button type="primary" :icon="Plus" @click="createDialogVisible = true">{{ t("containers.createContainer") }}</el-button>
         </div>
       </div>
     </template>
     <el-table :data="containers" stripe>
-      <el-table-column prop="name" label="名称" min-width="150" fixed />
+      <el-table-column prop="name" :label="t('containers.name')" min-width="150" fixed />
       <el-table-column
         v-for="column in visibleColumnDefs"
         :key="column.key"
-        :label="column.label"
+        :label="columnLabel(column)"
         :width="column.key === 'owner' ? 110 : column.key === 'status' ? 145 : column.key === 'spec' ? 190 : undefined"
         :min-width="column.key === 'image_name' ? 220 : column.key === 'gpu' ? 180 : column.key === 'ports' ? 200 : column.key === 'connection' ? 250 : undefined"
       >
@@ -735,7 +749,7 @@ onBeforeUnmount(() => {
                 type="warning"
                 :icon="RefreshRight"
                 circle
-                title="重试 SSH 准备"
+                :title="t('containers.retrySsh')"
                 @click="retrySshAccess(row.id)"
               />
               <el-button
@@ -744,15 +758,15 @@ onBeforeUnmount(() => {
                 type="warning"
                 :icon="RefreshRight"
                 circle
-                title="重试创建"
+                :title="t('containers.retryCreate')"
                 @click="retry(row.id)"
               />
             </div>
           </template>
           <template v-else-if="column.key === 'ports'">
             <div class="port-cell">
-              <div><span class="port-label">管理</span><code>{{ portsText(row) }}</code></div>
-              <div><span class="port-label">节点</span><code>{{ nodePortsText(row) }}</code></div>
+              <div><span class="port-label">{{ t("containers.management") }}</span><code>{{ portsText(row) }}</code></div>
+              <div><span class="port-label">{{ t("containers.node") }}</span><code>{{ nodePortsText(row) }}</code></div>
             </div>
           </template>
           <template v-else-if="column.key === 'connection'">
@@ -760,37 +774,37 @@ onBeforeUnmount(() => {
               <code v-if="sshPort(row)">ssh {{ row.ssh_username }}@{{ publicHost() }} -p {{ publicPort(sshPort(row)!) }}</code>
               <code v-else>{{ row.ip || '-' }}</code>
               <code v-if="sshPort(row) && nodeSshCommand(row, sshPort(row)!)" class="node-port-line">
-                节点 {{ nodeSshCommand(row, sshPort(row)!) }}
+                {{ t("containers.node") }} {{ nodeSshCommand(row, sshPort(row)!) }}
               </code>
             </div>
           </template>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right">
+      <el-table-column :label="t('containers.actions')" width="320" fixed="right">
         <template #default="{ row }">
           <div class="container-action-panel">
             <div class="container-action-line">
-              <el-button v-if="row.status === 'running'" size="small" class="container-action-button" :icon="TurnOff" :disabled="lifecycleBusy(row)" @click="action(row.id, 'stop')">停止</el-button>
-              <el-button v-else size="small" class="container-action-button" :icon="VideoPlay" :disabled="lifecycleBusy(row)" @click="action(row.id, 'start')">启动</el-button>
-              <el-button size="small" class="container-action-button" :icon="RefreshRight" :disabled="lifecycleBusy(row)" @click="action(row.id, 'restart')">重启</el-button>
-              <el-button size="small" class="container-action-button container-action-button-wide" type="danger" :icon="Delete" @click="remove(row)">{{ lifecycleBusy(row) ? "移除" : "删除" }}</el-button>
-              <el-button size="small" class="container-action-button" :icon="Setting" :disabled="lifecycleBusy(row)" @click="openResourceDialog(row)">配置</el-button>
+              <el-button v-if="row.status === 'running'" size="small" class="container-action-button" :icon="TurnOff" :disabled="lifecycleBusy(row)" @click="action(row.id, 'stop')">{{ t("containers.stop") }}</el-button>
+              <el-button v-else size="small" class="container-action-button" :icon="VideoPlay" :disabled="lifecycleBusy(row)" @click="action(row.id, 'start')">{{ t("containers.start") }}</el-button>
+              <el-button size="small" class="container-action-button" :icon="RefreshRight" :disabled="lifecycleBusy(row)" @click="action(row.id, 'restart')">{{ t("containers.restart") }}</el-button>
+              <el-button size="small" class="container-action-button container-action-button-wide" type="danger" :icon="Delete" @click="remove(row)">{{ lifecycleBusy(row) ? t("containers.remove") : t("containers.delete") }}</el-button>
+              <el-button size="small" class="container-action-button" :icon="Setting" :disabled="lifecycleBusy(row)" @click="openResourceDialog(row)">{{ t("containers.configure") }}</el-button>
             </div>
             <div class="container-action-line">
               <el-button size="small" class="container-action-button" :icon="Connection" :disabled="!accessReady(row)" @click="openShell(row)">Shell</el-button>
-              <el-button size="small" class="container-action-button" :icon="Switch" @click="openSyncDialog(row)">同步</el-button>
-              <el-button v-if="isAdmin" size="small" class="container-action-button container-action-button-wide" :icon="Upload" @click="publishImage(row)">镜像</el-button>
+              <el-button size="small" class="container-action-button" :icon="Switch" @click="openSyncDialog(row)">{{ t("containers.sync") }}</el-button>
+              <el-button v-if="isAdmin" size="small" class="container-action-button container-action-button-wide" :icon="Upload" @click="publishImage(row)">{{ t("containers.publishImage") }}</el-button>
               <el-dropdown trigger="click">
-                <el-button size="small" class="container-action-button" :icon="Tickets">端口</el-button>
+                <el-button size="small" class="container-action-button" :icon="Tickets">{{ t("containers.ports") }}</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item @click="openPortDialog(row)">新增映射</el-dropdown-item>
+                    <el-dropdown-item @click="openPortDialog(row)">{{ t("containers.addMapping") }}</el-dropdown-item>
                     <el-dropdown-item
                       v-for="port in row.ports"
                       :key="`edit-${port.id}`"
                       @click="openPortDialog(row, port)"
                     >
-                      编辑 平台:{{ publicPort(port) }} -> 容器:{{ port.container_port }}/{{ port.protocol }}
+                      {{ t("containers.editPlatformPort", { publicPort: publicPort(port), containerPort: port.container_port, protocol: port.protocol }) }}
                     </el-dropdown-item>
                     <el-dropdown-item
                       v-for="port in row.ports"
@@ -798,7 +812,7 @@ onBeforeUnmount(() => {
                       divided
                       @click="removePort(row, port)"
                     >
-                      删除 平台:{{ publicPort(port) }}
+                      {{ t("containers.deletePlatformPort", { publicPort: publicPort(port) }) }}
                     </el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -810,26 +824,26 @@ onBeforeUnmount(() => {
     </el-table>
   </el-card>
 
-  <el-dialog v-model="createDialogVisible" title="创建容器" width="980px" destroy-on-close>
+  <el-dialog v-model="createDialogVisible" :title="t('containers.createContainer')" width="980px" destroy-on-close>
     <CreateContainer embedded @created="handleCreated" />
   </el-dialog>
 
-	  <el-dialog v-model="portDialogVisible" :title="editingPort ? '编辑端口映射' : '新增端口映射'" width="460px">
+	  <el-dialog v-model="portDialogVisible" :title="editingPort ? t('containers.editPort') : t('containers.addPort')" width="460px">
     <el-form :model="portForm" label-position="top">
-      <el-form-item label="名称">
+      <el-form-item :label="t('containers.portName')">
         <el-input v-model="portForm.name" placeholder="ssh / jupyter / web" />
       </el-form-item>
-      <el-form-item label="端口类型">
+      <el-form-item :label="t('containers.portType')">
         <el-select v-model="portForm.port_type" @change="applyPortType">
           <el-option label="SSH" value="ssh" />
           <el-option label="Web" value="web" />
-          <el-option label="自定义" value="custom" />
+          <el-option :label="t('containers.custom')" value="custom" />
         </el-select>
       </el-form-item>
-      <el-form-item label="容器内端口">
+      <el-form-item :label="t('containers.containerPort')">
         <el-input-number v-model="portForm.container_port" :min="1" :max="65535" />
       </el-form-item>
-      <el-form-item label="协议">
+      <el-form-item :label="t('containers.protocol')">
         <el-select v-model="portForm.protocol">
           <el-option label="TCP" value="tcp" />
           <el-option label="UDP" value="udp" />
@@ -841,73 +855,73 @@ onBeforeUnmount(() => {
         type="info"
         show-icon
         :closable="false"
-        title="这里只填写容器内服务端口；平台入口端口和节点转发端口由后端随机分配。"
+        :title="t('containers.portHelp')"
       />
     </el-form>
     <template #footer>
-      <el-button :icon="Close" @click="portDialogVisible = false">取消</el-button>
-	      <el-button type="primary" :icon="Select" @click="savePort">保存</el-button>
+      <el-button :icon="Close" @click="portDialogVisible = false">{{ t("common.cancel") }}</el-button>
+	      <el-button type="primary" :icon="Select" @click="savePort">{{ t("common.save") }}</el-button>
 	    </template>
 	  </el-dialog>
 
-	  <el-dialog v-model="imageDialogVisible" :title="`镜像上传 · ${selectedContainer?.name || ''}`" width="560px">
+	  <el-dialog v-model="imageDialogVisible" :title="t('containers.imageUpload', { name: selectedContainer?.name || '' })" width="560px">
 	    <el-form :model="imageForm" label-position="top">
-	      <el-form-item label="镜像 Alias">
+	      <el-form-item :label="t('containers.imageAlias')">
 	        <el-input v-model="imageForm.alias" placeholder="my-training-image" />
 	      </el-form-item>
-	      <el-form-item label="显示名称">
-	        <el-input v-model="imageForm.display_name" placeholder="用于平台镜像列表展示" />
+	      <el-form-item :label="t('containers.displayName')">
+	        <el-input v-model="imageForm.display_name" :placeholder="t('containers.imageDisplayPlaceholder')" />
 	      </el-form-item>
-	      <el-form-item label="后续动作">
+	      <el-form-item :label="t('containers.nextActions')">
 	        <div class="checkbox-stack">
-	          <el-checkbox v-model="imageForm.export_to_storage">导出到存储节点自建镜像</el-checkbox>
-	          <el-checkbox v-model="imageForm.register_platform">注册到平台可用镜像</el-checkbox>
+	          <el-checkbox v-model="imageForm.export_to_storage">{{ t("containers.exportImage") }}</el-checkbox>
+	          <el-checkbox v-model="imageForm.register_platform">{{ t("containers.registerPlatformImage") }}</el-checkbox>
 	        </div>
 	      </el-form-item>
 	    </el-form>
 	    <template #footer>
-	      <el-button :icon="Close" @click="imageDialogVisible = false">取消</el-button>
-	      <el-button type="primary" :icon="Upload" :loading="imagePublishing" @click="submitPublishImage">提交</el-button>
+	      <el-button :icon="Close" @click="imageDialogVisible = false">{{ t("common.cancel") }}</el-button>
+	      <el-button type="primary" :icon="Upload" :loading="imagePublishing" @click="submitPublishImage">{{ t("common.submit") }}</el-button>
 	    </template>
 	  </el-dialog>
 
-  <el-dialog v-model="resourceDialogVisible" :title="`修改配置 · ${selectedContainer?.name || ''}`" width="440px">
+  <el-dialog v-model="resourceDialogVisible" :title="t('containers.updateConfig', { name: selectedContainer?.name || '' })" width="440px">
     <el-alert type="info" show-icon :closable="false" style="margin-bottom:16px"
-      title="修改立即生效（容器无需重启）；GPU 变更需要容器处于 running 状态。" />
+      :title="t('containers.updateConfigTip')" />
     <el-form :model="resourceForm" label-position="top">
-      <el-form-item label="CPU 核数">
+      <el-form-item :label="t('containers.cpuCores')">
         <el-input-number v-model="resourceForm.cpu_cores" :min="1" :max="256" style="width:100%" />
       </el-form-item>
-      <el-form-item label="内存 GB">
+      <el-form-item :label="t('containers.memoryGb')">
         <el-input-number v-model="resourceForm.memory_gb" :min="1" :max="1024" style="width:100%" />
       </el-form-item>
-      <el-form-item label="GPU 数量">
+      <el-form-item :label="t('containers.gpuCount')">
         <el-input-number v-model="resourceForm.gpu_count" :min="0" :max="8" style="width:100%" />
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button :icon="Close" @click="resourceDialogVisible = false">取消</el-button>
-      <el-button type="primary" :icon="Select" :loading="resourceSaving" @click="submitResourceUpdate">保存</el-button>
+      <el-button :icon="Close" @click="resourceDialogVisible = false">{{ t("common.cancel") }}</el-button>
+      <el-button type="primary" :icon="Select" :loading="resourceSaving" @click="submitResourceUpdate">{{ t("common.save") }}</el-button>
     </template>
   </el-dialog>
 
-	  <el-dialog v-model="syncDialogVisible" :title="`同步设置 · ${selectedContainer?.name || ''}`" width="920px">
+	  <el-dialog v-model="syncDialogVisible" :title="t('containers.syncSettings', { name: selectedContainer?.name || '' })" width="920px">
 	    <div v-loading="syncLoading">
 	      <el-tabs>
-	        <el-tab-pane label="下载到容器">
+	        <el-tab-pane :label="t('containers.downloadToContainer')">
 	          <el-form :model="syncDownloadForm" label-position="top" class="sync-form">
-	            <el-form-item label="存储节点类型">
+	            <el-form-item :label="t('containers.storageType')">
 	              <el-segmented
 	                v-model="syncDownloadForm.storage_type"
 	                :options="[
-	                  { label: '我的文件', value: 'user_file' },
-	                  { label: '公开数据集', value: 'dataset' },
-	                  { label: '公开模型', value: 'model' }
+	                  { label: t('containers.myFiles'), value: 'user_file' },
+	                  { label: t('containers.publicDataset'), value: 'dataset' },
+	                  { label: t('containers.publicModel'), value: 'model' }
 	                ]"
 	              />
 	            </el-form-item>
-	            <el-form-item v-if="syncDownloadForm.storage_type !== 'user_file'" label="数据集/模型">
-	              <el-select v-model="syncDownloadForm.resource_id" filterable style="width:100%" placeholder="选择公开资源">
+	            <el-form-item v-if="syncDownloadForm.storage_type !== 'user_file'" :label="t('containers.datasetModel')">
+	              <el-select v-model="syncDownloadForm.resource_id" filterable style="width:100%" :placeholder="t('containers.choosePublicResource')">
 	                <el-option
 	                  v-for="resource in resourceOptions(syncDownloadForm.storage_type)"
 	                  :key="resource.id"
@@ -916,58 +930,58 @@ onBeforeUnmount(() => {
 	                />
 	              </el-select>
 	            </el-form-item>
-            <el-form-item v-if="syncDownloadForm.storage_type === 'user_file'" label="存储路径">
+            <el-form-item v-if="syncDownloadForm.storage_type === 'user_file'" :label="t('containers.storagePath')">
               <div class="path-picker-row">
-                <el-input v-model="syncDownloadForm.storage_relative_path" placeholder="相对路径，留空表示根目录" />
-                <el-button :icon="FolderOpened" @click="openStorageDirPicker('download_storage')">浏览</el-button>
+                <el-input v-model="syncDownloadForm.storage_relative_path" :placeholder="t('containers.relativeRootPlaceholder')" />
+                <el-button :icon="FolderOpened" @click="openStorageDirPicker('download_storage')">{{ t("containers.browse") }}</el-button>
               </div>
             </el-form-item>
-            <el-form-item v-if="syncDownloadForm.storage_type !== 'user_file'" label="保存到容器路径">
+            <el-form-item v-if="syncDownloadForm.storage_type !== 'user_file'" :label="t('containers.saveToContainerPath')">
               <el-input v-model="syncDownloadForm.container_path" placeholder="/workspace" />
             </el-form-item>
-            <el-form-item v-if="syncDownloadForm.storage_type === 'user_file'" label="保存到容器路径">
+            <el-form-item v-if="syncDownloadForm.storage_type === 'user_file'" :label="t('containers.saveToContainerPath')">
               <el-input v-model="syncDownloadForm.container_path" placeholder="/workspace/data" />
             </el-form-item>
-	            <el-form-item label="冲突策略">
+	            <el-form-item :label="t('containers.conflictPolicy')">
 	              <el-radio-group v-model="syncDownloadForm.conflict_policy">
-	                <el-radio value="overwrite">覆盖并删除多余文件</el-radio>
-	                <el-radio value="skip">跳过已存在文件</el-radio>
+	                <el-radio value="overwrite">{{ t("containers.overwrite") }}</el-radio>
+	                <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
 	              </el-radio-group>
 	            </el-form-item>
-	            <el-button type="primary" :icon="Download" :loading="syncSubmitting" @click="submitDownloadSync">执行下载</el-button>
+	            <el-button type="primary" :icon="Download" :loading="syncSubmitting" @click="submitDownloadSync">{{ t("containers.runDownload") }}</el-button>
 	          </el-form>
 	        </el-tab-pane>
-	        <el-tab-pane label="上传到我的文件">
+	        <el-tab-pane :label="t('containers.uploadToMyFiles')">
 	          <el-form :model="syncUploadForm" label-position="top" class="sync-form">
-	            <el-form-item label="容器路径">
+	            <el-form-item :label="t('containers.containerPath')">
 	              <el-input v-model="syncUploadForm.container_path" placeholder="/workspace/output" />
 	            </el-form-item>
-            <el-form-item label="保存到我的文件">
+            <el-form-item :label="t('containers.saveToMyFiles')">
               <div class="path-picker-row">
-                <el-input v-model="syncUploadForm.storage_relative_path" placeholder="outputs/run-001，允许新建目录" />
-                <el-button :icon="FolderOpened" @click="openStorageDirPicker('upload_storage')">浏览</el-button>
+                <el-input v-model="syncUploadForm.storage_relative_path" :placeholder="t('containers.uploadPathPlaceholder')" />
+                <el-button :icon="FolderOpened" @click="openStorageDirPicker('upload_storage')">{{ t("containers.browse") }}</el-button>
               </div>
             </el-form-item>
-	            <el-form-item label="冲突策略">
+	            <el-form-item :label="t('containers.conflictPolicy')">
 	              <el-radio-group v-model="syncUploadForm.conflict_policy">
-	                <el-radio value="overwrite">覆盖并删除多余文件</el-radio>
-	                <el-radio value="skip">跳过已存在文件</el-radio>
+	                <el-radio value="overwrite">{{ t("containers.overwrite") }}</el-radio>
+	                <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
 	              </el-radio-group>
 	            </el-form-item>
-	            <el-button type="primary" :icon="Upload" :loading="syncSubmitting" @click="submitUploadSync">执行上传</el-button>
+	            <el-button type="primary" :icon="Upload" :loading="syncSubmitting" @click="submitUploadSync">{{ t("containers.runUpload") }}</el-button>
 	          </el-form>
 	        </el-tab-pane>
-	        <el-tab-pane label="定时上传">
+	        <el-tab-pane :label="t('containers.scheduledUpload')">
 	          <el-form :model="syncRuleForm" label-position="top" class="sync-form">
-	            <el-form-item label="规则名称"><el-input v-model="syncRuleForm.name" /></el-form-item>
-	            <el-form-item label="容器路径"><el-input v-model="syncRuleForm.container_path" placeholder="/workspace/output" /></el-form-item>
-	            <el-form-item label="保存到我的文件">
+	            <el-form-item :label="t('containers.ruleName')"><el-input v-model="syncRuleForm.name" /></el-form-item>
+	            <el-form-item :label="t('containers.containerPath')"><el-input v-model="syncRuleForm.container_path" placeholder="/workspace/output" /></el-form-item>
+	            <el-form-item :label="t('containers.saveToMyFiles')">
               <div class="path-picker-row">
-                <el-input v-model="syncRuleForm.storage_relative_path" placeholder="scheduled/output，允许新建目录" />
-                <el-button :icon="FolderOpened" @click="openStorageDirPicker('rule_storage')">浏览</el-button>
+                <el-input v-model="syncRuleForm.storage_relative_path" placeholder="scheduled/output" />
+                <el-button :icon="FolderOpened" @click="openStorageDirPicker('rule_storage')">{{ t("containers.browse") }}</el-button>
               </div>
             </el-form-item>
-            <el-form-item label="周期">
+            <el-form-item :label="t('containers.schedule')">
               <div class="schedule-row">
                 <el-select v-model="syncRuleForm.schedule_kind" style="width:120px">
                   <el-option label="Daily" value="daily" />
@@ -979,50 +993,50 @@ onBeforeUnmount(() => {
                 <el-input-number v-model="syncRuleForm.minute" :min="0" :max="59" controls-position="right" />
                 <span>:</span>
                 <el-input-number v-model="syncRuleForm.second" :min="0" :max="59" controls-position="right" />
-                <el-switch v-model="syncRuleForm.enabled" active-text="启用" inactive-text="停用" />
+                <el-switch v-model="syncRuleForm.enabled" :active-text="t('containers.enabled')" :inactive-text="t('containers.disabled')" />
               </div>
             </el-form-item>
-            <el-form-item label="冲突策略">
+            <el-form-item :label="t('containers.conflictPolicy')">
               <el-radio-group v-model="syncRuleForm.conflict_policy">
-                <el-radio value="overwrite">覆盖并删除多余文件</el-radio>
-                <el-radio value="skip">跳过已存在文件</el-radio>
+                <el-radio value="overwrite">{{ t("containers.overwrite") }}</el-radio>
+                <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
               </el-radio-group>
             </el-form-item>
-            <el-button type="primary" :icon="Select" @click="submitSyncRule">保存规则</el-button>
+            <el-button type="primary" :icon="Select" @click="submitSyncRule">{{ t("containers.saveRule") }}</el-button>
 	          </el-form>
           <el-table :data="syncRules" stripe style="margin-top:16px">
-            <el-table-column prop="name" label="名称" min-width="140" />
-            <el-table-column prop="container_path" label="容器路径" min-width="170" />
-            <el-table-column prop="storage_relative_path" label="我的文件路径" min-width="170" />
-            <el-table-column label="冲突策略" width="120"><template #default="{ row }">{{ conflictPolicyLabel(row.conflict_policy) }}</template></el-table-column>
-            <el-table-column label="时间" width="150"><template #default="{ row }">{{ scheduleLabel(row) }}</template></el-table-column>
-            <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="160" fixed="right">
+            <el-table-column prop="name" :label="t('containers.name')" min-width="140" />
+            <el-table-column prop="container_path" :label="t('containers.containerPath')" min-width="170" />
+            <el-table-column prop="storage_relative_path" :label="t('containers.myFilesPath')" min-width="170" />
+            <el-table-column :label="t('containers.conflictPolicy')" width="120"><template #default="{ row }">{{ conflictPolicyLabel(row.conflict_policy) }}</template></el-table-column>
+            <el-table-column :label="t('containers.time')" width="150"><template #default="{ row }">{{ scheduleLabel(row) }}</template></el-table-column>
+            <el-table-column :label="t('containers.status')" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? t("containers.enabled") : t("containers.disabled") }}</el-tag></template></el-table-column>
+            <el-table-column :label="t('containers.actions')" width="160" fixed="right">
 	              <template #default="{ row }">
-	                <el-button size="small" :icon="Position" @click="runRule(row)">立即执行</el-button>
-	                <el-button size="small" type="danger" :icon="Delete" @click="removeRule(row)">删除</el-button>
+	                <el-button size="small" :icon="Position" @click="runRule(row)">{{ t("containers.runNow") }}</el-button>
+	                <el-button size="small" type="danger" :icon="Delete" @click="removeRule(row)">{{ t("containers.delete") }}</el-button>
 	              </template>
 	            </el-table-column>
 	          </el-table>
 	        </el-tab-pane>
-	        <el-tab-pane label="任务记录">
+	        <el-tab-pane :label="t('containers.taskRecords')">
 	          <div class="card-header">
-	            <strong>最近 50 条同步任务</strong>
-	            <el-button :icon="Refresh" @click="refreshSyncData">刷新</el-button>
+	            <strong>{{ t("containers.recentSyncTasks") }}</strong>
+	            <el-button :icon="Refresh" @click="refreshSyncData">{{ t("common.refresh") }}</el-button>
 	          </div>
 	          <el-table :data="syncTasks" stripe>
-	            <el-table-column prop="task_type" label="类型" width="150" />
-	            <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="taskStatusType(row.status)" size="small">{{ row.status }}</el-tag></template></el-table-column>
-	            <el-table-column prop="source_path" label="来源" min-width="220" show-overflow-tooltip />
-	            <el-table-column prop="target_path" label="目标" min-width="220" show-overflow-tooltip />
-	            <el-table-column label="创建时间" width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
-	            <el-table-column label="错误" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.last_error || row.detail?.error || '-' }}</template></el-table-column>
+	            <el-table-column prop="task_type" :label="t('containers.type')" width="150" />
+	            <el-table-column :label="t('containers.status')" width="110"><template #default="{ row }"><el-tag :type="taskStatusType(row.status)" size="small">{{ row.status }}</el-tag></template></el-table-column>
+	            <el-table-column prop="source_path" :label="t('containers.source')" min-width="220" show-overflow-tooltip />
+	            <el-table-column prop="target_path" :label="t('containers.target')" min-width="220" show-overflow-tooltip />
+	            <el-table-column :label="t('containers.createdAt')" width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
+	            <el-table-column :label="t('containers.error')" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.last_error || row.detail?.error || '-' }}</template></el-table-column>
 	          </el-table>
 	        </el-tab-pane>
 	      </el-tabs>
 	    </div>
 	    <template #footer>
-	      <el-button :icon="CircleClose" @click="syncDialogVisible = false">关闭</el-button>
+	      <el-button :icon="CircleClose" @click="syncDialogVisible = false">{{ t("containers.close") }}</el-button>
     </template>
   </el-dialog>
 
@@ -1138,12 +1152,12 @@ onBeforeUnmount(() => {
 }
 
 .container-action-line :deep(.container-action-button) {
-  width: 60px;
+  width: 68px;
   padding-inline: 10px;
 }
 
 .container-action-line :deep(.container-action-button-wide) {
-  width: 60px;
+  width: 68px;
 }
 
 .container-action-line :deep(.el-button > span) {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import {
   Cpu,
   Gauge,
@@ -17,9 +18,11 @@ import {
 } from "lucide-vue-next";
 import { authUser, clearAuth, hasAdminAccess } from "../auth";
 import { logout } from "../api/cluster";
+import LanguageSwitcher from "../components/LanguageSwitcher.vue";
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 const isSidebarCollapsed = ref(false);
 const active = computed(() => {
   const name = route.name?.toString() || "dashboard";
@@ -29,16 +32,21 @@ const active = computed(() => {
 });
 const sidebarWidth = computed(() => (isSidebarCollapsed.value ? "72px" : "248px"));
 const isAdmin = computed(() => hasAdminAccess());
+const sidebarToggleLabel = computed(() => isSidebarCollapsed.value ? t("layout.expandSidebar") : t("layout.collapseSidebar"));
+const routeTitle = computed(() => {
+  const key = route.meta.titleKey;
+  return typeof key === "string" ? t(key) : String(route.meta.title || "");
+});
 
 const items = computed(() => [
-  { name: "dashboard", label: "仪表盘", icon: LayoutDashboard },
-  ...(isAdmin.value ? [{ name: "nodes", label: "节点管理", icon: Server }] : []),
-  { name: "containers", label: "容器管理", icon: Cpu },
-  ...(isAdmin.value ? [{ name: "images", label: "镜像管理", icon: Layers }] : []),
-  { name: "storage", label: "存储中心", icon: HardDrive },
-  { name: "profile", label: "个人信息", icon: User },
-  ...(isAdmin.value ? [{ name: "settings", label: "平台设置", icon: Settings }] : []),
-  ...(isAdmin.value ? [{ name: "users", label: "用户管理", icon: Users }] : [])
+  { name: "dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
+  ...(isAdmin.value ? [{ name: "nodes", label: t("nav.nodes"), icon: Server }] : []),
+  { name: "containers", label: t("nav.containers"), icon: Cpu },
+  ...(isAdmin.value ? [{ name: "images", label: t("nav.images"), icon: Layers }] : []),
+  { name: "storage", label: t("nav.storage"), icon: HardDrive },
+  { name: "profile", label: t("nav.profile"), icon: User },
+  ...(isAdmin.value ? [{ name: "settings", label: t("nav.settings"), icon: Settings }] : []),
+  ...(isAdmin.value ? [{ name: "users", label: t("nav.users"), icon: Users }] : [])
 ]);
 
 async function signOut() {
@@ -47,6 +55,11 @@ async function signOut() {
 
 function navigate(name: string) {
   router.push({ name });
+}
+
+function handleUserCommand(command: string) {
+  if (command === "profile") router.push({ name: "profile" });
+  if (command === "logout") signOut();
 }
 </script>
 
@@ -58,20 +71,9 @@ function navigate(name: string) {
           <Gauge :size="22" />
         </div>
         <div class="brand-copy">
-          <strong>GPU 集群平台</strong>
-          <span>Incus VPS Console</span>
+          <strong>{{ t("app.name") }}</strong>
+          <span>{{ t("app.subtitle") }}</span>
         </div>
-        <el-tooltip :content="isSidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'" placement="right">
-          <button
-            class="sidebar-toggle"
-            type="button"
-            :aria-label="isSidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
-            @click="isSidebarCollapsed = !isSidebarCollapsed"
-          >
-            <PanelLeftOpen v-if="isSidebarCollapsed" :size="18" />
-            <PanelLeftClose v-else :size="18" />
-          </button>
-        </el-tooltip>
       </div>
 
       <el-menu
@@ -86,17 +88,48 @@ function navigate(name: string) {
           <span>{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
+
+      <div class="sidebar-footer">
+        <el-tooltip :content="sidebarToggleLabel" placement="right">
+          <button
+            class="sidebar-toggle"
+            type="button"
+            :aria-label="sidebarToggleLabel"
+            @click="isSidebarCollapsed = !isSidebarCollapsed"
+          >
+            <PanelLeftOpen v-if="isSidebarCollapsed" :size="18" />
+            <PanelLeftClose v-else :size="18" />
+          </button>
+        </el-tooltip>
+      </div>
     </el-aside>
 
     <el-container>
       <el-header class="header">
         <div>
-          <h1>{{ route.meta.title }}</h1>
-          <p>GPU 容器、公开存储与计算资源管理</p>
+          <h1>{{ routeTitle }}</h1>
+          <p>{{ t("app.tagline") }}</p>
         </div>
         <div class="header-actions">
-          <el-tag type="info">{{ authUser?.display_name || authUser?.username }}</el-tag>
-          <el-button :icon="LogOut" @click="signOut">退出</el-button>
+          <LanguageSwitcher />
+          <el-dropdown trigger="click" @command="handleUserCommand">
+            <el-button class="user-menu-button" data-keep-label="true" :aria-label="t('layout.userMenu')">
+              <User :size="16" />
+              <span>{{ authUser?.display_name || authUser?.username }}</span>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="profile">
+                  <User :size="15" />
+                  <span>{{ t("nav.profile") }}</span>
+                </el-dropdown-item>
+                <el-dropdown-item command="logout" divided>
+                  <LogOut :size="15" />
+                  <span>{{ t("common.logout") }}</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </el-header>
       <el-main class="main">
