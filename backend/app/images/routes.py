@@ -1,4 +1,3 @@
-import asyncio
 import os
 import re
 import shlex
@@ -67,7 +66,7 @@ async def _ssh_copy_incus_image(source: dict, target: dict, alias: str) -> None:
     try:
         # ── Step 1-3: export + download from source ───────────────────────
         async with asyncssh.connect(**_ssh_kwargs(source)) as src:
-            result = await src.run(
+            await src.run(
                 f"incus image export {shlex.quote(alias)} {shlex.quote(remote_base)}",
                 check=True,
             )
