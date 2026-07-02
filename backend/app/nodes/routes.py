@@ -145,7 +145,9 @@ def register_node_routes(app, deps: dict[str, Any]):
     public_task = deps["public_task"]
     current_user = deps["current_user"]
 
-    @app.get("/api/nodes")
+    from ..schemas import NodeOut
+
+    @app.get("/api/nodes", response_model=list[NodeOut])
     def nodes():
         with db() as conn:
             user = current_user(conn)

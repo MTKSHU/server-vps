@@ -84,6 +84,8 @@ def register_user_routes(app, deps: dict[str, Any]):
     enqueue_node_task = deps["enqueue_node_task"]
     ensure_user_zfs_dataset_task = deps.get("ensure_user_zfs_dataset_task")
 
+    from ..schemas import HealthResponse, UserOut
+
     @app.get("/api/health", response_model=HealthResponse)
     def health():
         return {"ok": True, "database": "postgresql"}
@@ -235,7 +237,7 @@ def register_user_routes(app, deps: dict[str, Any]):
             ).fetchone()
             return row
 
-    @app.get("/api/users")
+    @app.get("/api/users", response_model=list[UserOut])
     def users():
         require_admin()
         with db() as conn:

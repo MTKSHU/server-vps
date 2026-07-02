@@ -2,7 +2,7 @@ import ipaddress
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GPUReport(BaseModel):
@@ -444,3 +444,145 @@ class HealthResponse(BaseModel):
     """GET /api/health 响应体。"""
     ok: bool
     database: str
+
+
+# ---------------------------------------------------------------------------
+# 核心业务实体响应 Model
+# 字段与前端 cluster.ts 中对应 interface 保持一致，方便后续 openapi-typescript 替换。
+# ---------------------------------------------------------------------------
+
+class GpuOut(BaseModel):
+    id: int
+    slot: int
+    uuid: str
+    model: str
+    pci_address: str = ""
+    vram_gb: int
+
+
+class ContainerPortOut(BaseModel):
+    id: int
+    container_id: int
+    name: str
+    protocol: str
+    container_port: int
+    host_port: int
+    node_port: int | None = None
+    public_port: int | None = None
+    node_listen_port: int | None = None
+    created_at: int
+    updated_at: int
+
+
+class ContainerOut(BaseModel):
+    """GET /api/containers 响应元素。"""
+    id: int
+    name: str
+    owner_id: int
+    node_id: int
+    image_id: str
+    image_name: str = ""
+    owner: str = ""
+    node: str = ""
+    node_ip: str = ""
+    status: str
+    access_status: str = "pending"
+    access_error: str = ""
+    cpu_cores: int
+    memory_gb: int
+    disk_gb: int
+    ssh_username: str = "ubuntu"
+    ip: str = ""
+    mounts: list[str] = Field(default_factory=list)
+    created_at: int
+    updated_at: int
+    gpus: list[GpuOut] = Field(default_factory=list)
+    ports: list[ContainerPortOut] = Field(default_factory=list)
+
+
+class NodeOut(BaseModel):
+    """GET /api/nodes 响应元素。"""
+    id: int
+    hostname: str
+    ip: str
+    node_type: str = "compute"
+    driver_pool: str = "unknown"
+    status: str
+    schedulable: bool = True
+    maintenance: bool = False
+    max_containers: int = 8
+    max_running_containers: int = 8
+    max_gpu_shared_containers: int = 4
+    allow_gpu_sharing: bool = True
+    max_cpu_per_container: int = 0
+    max_memory_gb_per_container: int = 0
+    max_disk_gb_per_container: int = 0
+    reserved_memory_gb: int = 0
+    reserved_disk_gb: int = 0
+    allow_port_mapping: bool = True
+    max_ports_per_container: int = 8
+    scheduler_weight: int = 0
+    labels: list[str] = Field(default_factory=list)
+    wol_mac: str = ""
+    wol_broadcast: str = "255.255.255.255"
+    ssh_user: str = "root"
+    ssh_port: int = 22
+    sync_ip: str = ""
+    sync_ssh_port: int = 0
+    cpu_model: str = ""
+    cpu_total: int = 0
+    cpu_cores: int = 0
+    cpu_sockets: int = 1
+    cpu_temperature_c: int = 0
+    memory_total_gb: int = 0
+    disk_total_gb: float = 0
+    cpu_used: int = 0
+    memory_used_gb: int = 0
+    disk_used_gb: float = 0
+    last_seen: int = 0
+    load_avg: float = 0
+    cpu_usage_percent: float = 0
+    swap_total_gb: float = 0
+    swap_used_gb: float = 0
+    os_version: str = ""
+    kernel_version: str = ""
+    driver_version: str = ""
+    cuda_driver_api_version: str = ""
+    incus_status: str = "unknown"
+    agent_version: str = ""
+    uptime_seconds: int = 0
+    agent_update_channel: str = "stable"
+    agent_auto_update: bool = False
+    target_agent_version: str = ""
+    agent_update_status: str = ""
+    agent_update_error: str = ""
+    agent_update_at: int = 0
+    registered_at: int = 0
+    gpus: list[GpuOut] = Field(default_factory=list)
+
+
+class UserOut(BaseModel):
+    """GET /api/users 响应元素（不含密码 hash）。"""
+    # 允许后端传递额外字段（如 SSO 合并逻辑产生的扩展字段），不会因 model 不完整而报错
+    model_config = ConfigDict(extra="ignore")
+    id: int
+    username: str
+    display_name: str = ""
+    role: str = "member"
+    phone: str = ""
+    email: str = ""
+    group_name: str = "member"
+    enabled: bool = True
+    ssh_key: str = ""
+    allowed_node_ids: list[int] = Field(default_factory=list)
+    # 额度字段（可能为 null）
+    cpu_cores: int | None = None
+    memory_gb: int | None = None
+    disk_gb: int | None = None
+    container_disk_limit_gb: int | None = None
+    storage_quota_gb: int | None = None
+    gpu_count: int | None = None
+    container_count: int | None = None
+    # SSO 相关（可选）
+    pending_sso: bool | None = None
+    casdoor_id: str | None = None

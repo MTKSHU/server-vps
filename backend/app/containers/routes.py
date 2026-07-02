@@ -432,7 +432,9 @@ def register_container_routes(app, deps: dict[str, Any]):
     async def start_container_sync_scheduler():
         asyncio.create_task(scheduled_container_sync_loop())
 
-    @app.get("/api/containers")
+    from ..schemas import ContainerOut
+
+    @app.get("/api/containers", response_model=list[ContainerOut])
     def containers():
         with db() as conn:
             user = current_user(conn)
