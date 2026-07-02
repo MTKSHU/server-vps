@@ -224,7 +224,6 @@ def register_user_routes(app, deps: dict[str, Any]):
             "succeeded": ["succeeded"],
         }
         statuses = _STATUS_GROUPS.get(status_group, [])
-        status_filter = "AND status = ANY(%s::text[])" if statuses else ""
 
         with db() as conn:
             user = current_user(conn)
