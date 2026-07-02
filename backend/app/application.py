@@ -123,7 +123,7 @@ def create_app() -> FastAPI:
                     webhook_url = (settings.get("webhook_url") or "").strip()
                     if not webhook_url:
                         continue
-                    from .nodes.services import get_node, mark_stale_nodes, gpu_with_container
+                    from .nodes.services import get_node, mark_stale_nodes
                     from .containers.services import list_containers
                     mark_stale_nodes(conn)
                     node_rows = conn.execute("SELECT * FROM nodes ORDER BY hostname").fetchall()

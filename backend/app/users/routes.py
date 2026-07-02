@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from ..core import audit
 from ..platform_settings import get_platform_settings
-from ..schemas import ApiTokenCreateInput, QuotaProfileInput, SshKeyInput, UserPreferenceInput, UserProfileInput, UserUpsertInput, HealthResponse
+from ..schemas import ApiTokenCreateInput, QuotaProfileInput, SshKeyInput, UserPreferenceInput, UserProfileInput, UserUpsertInput
 from ..auth import hash_password, is_admin_user, require_admin, role_for_group, token_hash
 from ..containers.ports import managed_ssh_keys
 from ..nodes.services import allowed_node_ids_for_user
