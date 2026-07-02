@@ -431,6 +431,58 @@ def register_container_routes(app, deps: dict[str, Any]):
     @app.on_event("startup")
     async def start_container_sync_scheduler():
         asyncio.create_task(scheduled_container_sync_loop())
+        asyncio.create_task(container_expiry_loop())
+
+    async def container_expiry_loop():
+        """每 5 分钟检查一次到期容器，停止运行中的、删除已停止且超期 1 天以上的。"""
+        while True:
+            await asyncio.sleep(300)
+            try:
+                with db() as conn:
+                    ts = now_ts()
+                    expired = conn.execute(
+                        """
+                        SELECT * FROM containers
+                        WHERE expires_at > 0 AND expires_at <= %s
+                          AND status IN ('running', 'stopped', 'provisioning')
+                        """,
+                        (ts,),
+                    ).fetchall()
+                    for container in expired:
+                        try:
+                            if container["status"] == "running":
+                                conn.execute(
+                                    "UPDATE containers SET status='stopping', updated_at=%s WHERE id=%s",
+                                    (ts, container["id"]),
+                                )
+                                enqueue_node_task(
+                                    conn,
+                                    container["node_id"],
+                                    container["id"],
+                                    "incus_stop_container",
+                                    {"container_id": container["id"], "name": container["name"], "operation": "stop", "previous_status": "running"},
+                                )
+                                audit(conn, "system", "auto-stop-expired", f"container:{container['id']}", {"expires_at": container["expires_at"]})
+                            elif container["status"] in ("stopped",) and container["expires_at"] <= ts - 86400:
+                                # 停止超过 1 天且已到期 → 自动删除容器记录
+                                conn.execute(
+                                    "UPDATE containers SET status='deleting', updated_at=%s WHERE id=%s",
+                                    (ts, container["id"]),
+                                )
+                                enqueue_node_task(
+                                    conn,
+                                    container["node_id"],
+                                    container["id"],
+                                    "incus_delete_container",
+                                    {"container_id": container["id"], "name": container["name"], "force": True},
+                                )
+                                audit(conn, "system", "auto-delete-expired", f"container:{container['id']}", {"expires_at": container["expires_at"]})
+                        except Exception as exc:
+                            import sys
+                            print(f"[WARN] container_expiry: container {container['id']} error: {exc!r}", file=sys.stderr, flush=True)
+            except Exception as exc:
+                import sys
+                print(f"[WARN] container_expiry_loop: {exc!r}", file=sys.stderr, flush=True)
 
     from ..schemas import ContainerOut, DataSyncTaskOut
 
@@ -441,11 +493,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             rows = list_containers(conn)
             if is_admin_user(user):
                 return rows
-            owned = [row for row in rows if row["owner_id"] == user["id"]]
-            for row in owned:
-                row.pop("node", None)
-                row.pop("node_id", None)
-            return owned
+            # 普通用户只返回自己的容器，不隐藏 node_id（前端需要此字段）
+            return [row for row in rows if row["owner_id"] == user["id"]]
 
     @app.post("/api/containers", status_code=201)
     def create_container(payload: ContainerCreate):
@@ -535,8 +584,8 @@ def register_container_routes(app, deps: dict[str, Any]):
                 """
                 INSERT INTO containers (
                     name, owner_id, node_id, image_id, status, cpu_cores, memory_gb, disk_gb,
-                    ssh_username, ssh_key, mounts, ip, access_status, access_error, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, 'provisioning', %s, %s, %s, %s, %s, %s, %s, 'pending', '', %s, %s)
+                    ssh_username, ssh_key, mounts, ip, access_status, access_error, expires_at, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, 'provisioning', %s, %s, %s, %s, %s, %s, %s, 'pending', '', %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -551,6 +600,7 @@ def register_container_routes(app, deps: dict[str, Any]):
                     payload.ssh_key,
                     Jsonb(mounts),
                     f"10.99.{node['id']}.{100 + (ts % 100)}",
+                    payload.expires_at or 0,
                     ts,
                     ts,
                 ),

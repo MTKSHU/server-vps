@@ -59,6 +59,7 @@ def authenticate_token(conn, token: str, now: int) -> dict[str, Any] | None:
     if not token:
         return None
     hashed = token_hash(token)
+    # 优先匹配会话 Token
     row = conn.execute(
         "SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id "
         "WHERE s.token_hash=%s AND s.expires_at >= %s AND u.enabled=TRUE",
@@ -66,7 +67,17 @@ def authenticate_token(conn, token: str, now: int) -> dict[str, Any] | None:
     ).fetchone()
     if row:
         conn.execute("UPDATE auth_sessions SET last_seen_at=%s WHERE token_hash=%s", (now, hashed))
-    return normalize_user_role(row)
+        return normalize_user_role(row)
+    # 匹配 API Token（个人长效 token）
+    api_row = conn.execute(
+        "SELECT u.* FROM api_tokens t JOIN users u ON u.id=t.user_id "
+        "WHERE t.token_hash=%s AND (t.expires_at=0 OR t.expires_at>=%s) AND u.enabled=TRUE",
+        (hashed, now),
+    ).fetchone()
+    if api_row:
+        conn.execute("UPDATE api_tokens SET last_used_at=%s WHERE token_hash=%s", (now, hashed))
+        return normalize_user_role(api_row)
+    return None
 
 
 def create_session(conn, user_id: int, now: int) -> tuple[str, int]:

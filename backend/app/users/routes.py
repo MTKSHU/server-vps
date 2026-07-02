@@ -1,4 +1,5 @@
 import re
+import secrets
 from typing import Any
 
 from fastapi import HTTPException
@@ -7,8 +8,8 @@ from pydantic import BaseModel
 
 from ..core import audit
 from ..platform_settings import get_platform_settings
-from ..schemas import QuotaProfileInput, SshKeyInput, UserPreferenceInput, UserProfileInput, UserUpsertInput, HealthResponse
-from ..auth import hash_password, require_admin, role_for_group
+from ..schemas import ApiTokenCreateInput, QuotaProfileInput, SshKeyInput, UserPreferenceInput, UserProfileInput, UserUpsertInput, HealthResponse
+from ..auth import hash_password, is_admin_user, require_admin, role_for_group, token_hash
 from ..containers.ports import managed_ssh_keys
 from ..nodes.services import allowed_node_ids_for_user
 from ..sso.casdoor_mgmt import fetch_pending_casdoor_users
@@ -206,6 +207,109 @@ def register_user_routes(app, deps: dict[str, Any]):
                 )
                 task_ids.append(task["id"])
             return {"task_ids": task_ids, "container_count": len(containers)}
+
+    @app.get("/api/tasks/recent")
+    def recent_tasks():
+        """返回当前用户最近 50 条节点任务 + 同步任务（统一视图）。"""
+        with db() as conn:
+            user = current_user(conn)
+            is_admin = is_admin_user(user)
+            # 节点任务
+            if is_admin:
+                node_task_rows = conn.execute(
+                    """
+                    SELECT nt.id, 'node_task' AS kind, nt.container_id, c.name AS container_name,
+                           nt.task_type AS type, nt.status, nt.last_error AS error,
+                           nt.created_at, nt.updated_at, nt.finished_at
+                    FROM node_tasks nt
+                    LEFT JOIN containers c ON c.id = nt.container_id
+                    ORDER BY nt.created_at DESC LIMIT 50
+                    """
+                ).fetchall()
+                sync_task_rows = conn.execute(
+                    """
+                    SELECT dst.id, 'sync_task' AS kind, dst.container_id, c.name AS container_name,
+                           dst.task_type AS type, dst.status, '' AS error,
+                           dst.created_at, dst.updated_at, dst.finished_at
+                    FROM data_sync_tasks dst
+                    LEFT JOIN containers c ON c.id = dst.container_id
+                    ORDER BY dst.created_at DESC LIMIT 50
+                    """
+                ).fetchall()
+            else:
+                node_task_rows = conn.execute(
+                    """
+                    SELECT nt.id, 'node_task' AS kind, nt.container_id, c.name AS container_name,
+                           nt.task_type AS type, nt.status, nt.last_error AS error,
+                           nt.created_at, nt.updated_at, nt.finished_at
+                    FROM node_tasks nt
+                    JOIN containers c ON c.id = nt.container_id
+                    WHERE c.owner_id = %s
+                    ORDER BY nt.created_at DESC LIMIT 50
+                    """,
+                    (user["id"],),
+                ).fetchall()
+                sync_task_rows = conn.execute(
+                    """
+                    SELECT dst.id, 'sync_task' AS kind, dst.container_id, c.name AS container_name,
+                           dst.task_type AS type, dst.status, '' AS error,
+                           dst.created_at, dst.updated_at, dst.finished_at
+                    FROM data_sync_tasks dst
+                    LEFT JOIN containers c ON c.id = dst.container_id
+                    WHERE dst.user_id = %s
+                    ORDER BY dst.created_at DESC LIMIT 50
+                    """,
+                    (user["id"],),
+                ).fetchall()
+            combined = [dict(r) for r in node_task_rows] + [dict(r) for r in sync_task_rows]
+            combined.sort(key=lambda r: r["created_at"], reverse=True)
+            return combined[:100]
+
+    @app.get("/api/me/api-tokens")
+    def list_api_tokens():
+        with db() as conn:
+            user = current_user(conn)
+            rows = conn.execute(
+                "SELECT id, name, token_preview, expires_at, last_used_at, created_at "
+                "FROM api_tokens WHERE user_id=%s ORDER BY created_at DESC",
+                (user["id"],),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @app.post("/api/me/api-tokens", status_code=201)
+    def create_api_token(payload: ApiTokenCreateInput):
+        with db() as conn:
+            user = current_user(conn)
+            result = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM api_tokens WHERE user_id=%s", (user["id"],)
+            ).fetchone()
+            existing_count = result["cnt"] if result else 0
+            if existing_count >= 10:
+                raise HTTPException(status_code=400, detail="每个用户最多创建 10 个 API Token")
+            raw = "sk_" + secrets.token_urlsafe(36)
+            hashed = token_hash(raw)
+            preview = raw[:8] + "..." + raw[-4:]
+            ts = now_ts()
+            row = conn.execute(
+                "INSERT INTO api_tokens (user_id, name, token_hash, token_preview, expires_at, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (user["id"], (payload.name or "").strip()[:50], hashed, preview, payload.expires_at or 0, ts),
+            ).fetchone()
+            audit(conn, user["username"], "create-api-token", f"api-token:{row['id']}", {"name": payload.name})
+            # token 明文仅在此时返回一次
+            return {"id": row["id"], "token": raw, "preview": preview, "name": payload.name, "expires_at": payload.expires_at or 0}
+
+    @app.delete("/api/me/api-tokens/{token_id}", status_code=204)
+    def delete_api_token(token_id: int):
+        with db() as conn:
+            user = current_user(conn)
+            deleted = conn.execute(
+                "DELETE FROM api_tokens WHERE id=%s AND user_id=%s RETURNING id",
+                (token_id, user["id"]),
+            ).fetchone()
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Token 不存在")
+            audit(conn, user["username"], "delete-api-token", f"api-token:{token_id}", {})
 
     @app.get("/api/me/preferences/{key}")
     def get_user_preference(key: str):

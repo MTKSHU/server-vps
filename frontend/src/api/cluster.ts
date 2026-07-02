@@ -51,6 +51,9 @@ export interface PlatformSettings {
   sso_default_group: "platform_admin" | "admin" | "member" | "guest";
   platform_timezone: string;
   transfer_bandwidth_limit_mbps: number;
+  webhook_enabled: boolean;
+  webhook_url: string;
+  webhook_secret: string;
   sso_provider_enabled: boolean;
   sso_provider_type: "oidc" | "cas";
   sso_provider_name: string;
@@ -721,6 +724,27 @@ export function getSshKeys() {
   return request<SshKey[]>("/api/me/ssh-keys");
 }
 
+export interface ApiToken {
+  id: number;
+  name: string;
+  token_preview: string;
+  expires_at: number;
+  last_used_at: number;
+  created_at: number;
+}
+
+export function getApiTokens() {
+  return request<ApiToken[]>("/api/me/api-tokens");
+}
+
+export function createApiToken(payload: { name?: string; expires_at?: number }) {
+  return postJson<{ id: number; token: string; preview: string; name: string; expires_at: number }>("/api/me/api-tokens", payload);
+}
+
+export function deleteApiToken(id: number) {
+  return request<void>(`/api/me/api-tokens/${id}`, { method: "DELETE" });
+}
+
 export function addSshKey(payload: { label: string; public_key: string; expires_at: number }) {
   return request<SshKey>("/api/me/ssh-keys", { method: "POST", body: JSON.stringify(payload) });
 }
@@ -1028,6 +1052,23 @@ export function deleteContainerPort(containerId: number, portId: number) {
 
 export function getContainerSyncTasks(containerId: number) {
   return request<DataSyncTask[]>(`/api/containers/${containerId}/sync-tasks`);
+}
+
+export interface RecentTask {
+  id: number;
+  kind: "node_task" | "sync_task";
+  container_id: number | null;
+  container_name: string;
+  type: string;
+  status: string;
+  error: string;
+  created_at: number;
+  updated_at: number;
+  finished_at: number;
+}
+
+export function getRecentTasks() {
+  return request<RecentTask[]>("/api/tasks/recent");
 }
 
 export function runContainerSync(containerId: number, payload: {

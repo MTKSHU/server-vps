@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Close, Delete, Plus, Select, Upload } from "@element-plus/icons-vue";
-import { getMe, updateProfile, getSshKeys, addSshKey, deleteSshKey, syncSshKeysToContainers, changePassword, type SshKey } from "../api/cluster";
+import { getMe, updateProfile, getSshKeys, addSshKey, deleteSshKey, syncSshKeysToContainers, changePassword, getApiTokens, createApiToken, deleteApiToken, type SshKey, type ApiToken } from "../api/cluster";
 import { authUser, setAuth, authToken } from "../auth";
 
 const { locale, t } = useI18n();
@@ -58,6 +58,43 @@ const keyAdding = ref(false);
 const keySyncing = ref(false);
 const keyForm = reactive({ label: "", public_key: "", expires_at: null as Date | null });
 
+// API Tokens
+const apiTokens = ref<ApiToken[]>([]);
+const tokenDialogVisible = ref(false);
+const tokenCreating = ref(false);
+const tokenForm = reactive({ name: "", expires_days: 0 });
+const newTokenValue = ref("");
+
+async function loadApiTokens() {
+  apiTokens.value = await getApiTokens();
+}
+
+async function submitCreateToken() {
+  tokenCreating.value = true;
+  try {
+    const expires_at = tokenForm.expires_days > 0
+      ? Math.floor(Date.now() / 1000) + tokenForm.expires_days * 86400
+      : 0;
+    const result = await createApiToken({ name: tokenForm.name, expires_at });
+    newTokenValue.value = result.token;
+    apiTokens.value = await getApiTokens();
+    tokenForm.name = "";
+    tokenForm.expires_days = 0;
+  } catch (err) { ElMessage.error(err instanceof Error ? err.message : "创建失败"); }
+  finally { tokenCreating.value = false; }
+}
+
+async function removeToken(token: ApiToken) {
+  await ElMessageBox.confirm(`确认吊销 Token「${token.name || token.token_preview}」？`, "吊销 API Token", { type: "warning" });
+  await deleteApiToken(token.id);
+  apiTokens.value = apiTokens.value.filter(t => t.id !== token.id);
+  ElMessage.success("Token 已吊销");
+}
+
+function copyToken() {
+  navigator.clipboard.writeText(newTokenValue.value).then(() => ElMessage.success("已复制到剪贴板"));
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -67,6 +104,7 @@ async function load() {
     profileForm.email = data.email ?? "";
     profileForm.phone = data.phone ?? "";
     sshKeys.value = keys;
+    await loadApiTokens();
   } finally {
     loading.value = false;
   }
@@ -278,6 +316,71 @@ onMounted(load);
       <template #footer>
         <el-button :icon="Close" @click="keyDialogVisible = false">{{ t("common.cancel") }}</el-button>
         <el-button type="primary" :icon="Plus" :loading="keyAdding" @click="submitAddKey">{{ t("profile.addKey") }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- API Token 管理 -->
+    <el-card shadow="never">
+      <template #header>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <strong>API Token</strong>
+          <el-button type="primary" size="small" :icon="Plus" @click="tokenDialogVisible = true; newTokenValue = ''">创建 Token</el-button>
+        </div>
+      </template>
+      <p style="color:var(--el-text-color-secondary);margin:0 0 12px;font-size:13px">
+        API Token 可用于脚本自动化调用平台接口，权限与当前账号相同。Token 明文仅在创建时显示一次，请妥善保存。
+      </p>
+      <el-table :data="apiTokens" size="small" stripe>
+        <el-table-column label="名称" prop="name" min-width="140">
+          <template #default="{ row }">{{ row.name || "(无名称)" }}</template>
+        </el-table-column>
+        <el-table-column label="Token 预览" prop="token_preview" width="180" />
+        <el-table-column label="到期时间" width="160">
+          <template #default="{ row }">{{ row.expires_at ? new Date(row.expires_at * 1000).toLocaleDateString() : "永不过期" }}</template>
+        </el-table-column>
+        <el-table-column label="最后使用" width="160">
+          <template #default="{ row }">{{ row.last_used_at ? new Date(row.last_used_at * 1000).toLocaleString() : "-" }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" align="right">
+          <template #default="{ row }">
+            <el-button type="danger" size="small" text @click="removeToken(row)">吊销</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <p v-if="apiTokens.length === 0" style="color:var(--el-text-color-placeholder);text-align:center;padding:16px 0;margin:0">暂无 API Token</p>
+    </el-card>
+
+    <!-- 创建 Token 弹窗 -->
+    <el-dialog v-model="tokenDialogVisible" title="创建 API Token" width="500px" @closed="newTokenValue = ''">
+      <div v-if="!newTokenValue">
+        <el-form label-width="90px">
+          <el-form-item label="名称">
+            <el-input v-model="tokenForm.name" placeholder="如：我的脚本" maxlength="50" />
+          </el-form-item>
+          <el-form-item label="有效期">
+            <el-select v-model="tokenForm.expires_days" style="width:100%">
+              <el-option label="永不过期" :value="0" />
+              <el-option label="7 天" :value="7" />
+              <el-option label="30 天" :value="30" />
+              <el-option label="90 天" :value="90" />
+              <el-option label="180 天" :value="180" />
+              <el-option label="365 天" :value="365" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+      </div>
+      <div v-else>
+        <el-alert type="warning" :closable="false" style="margin-bottom:12px">
+          Token 明文仅显示一次，关闭弹窗后无法再次查看，请立即复制保存。
+        </el-alert>
+        <el-input :value="newTokenValue" readonly type="textarea" :rows="3" style="font-family:monospace" />
+        <div style="margin-top:8px;text-align:right">
+          <el-button type="primary" size="small" @click="copyToken">复制</el-button>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="tokenDialogVisible = false">关闭</el-button>
+        <el-button v-if="!newTokenValue" type="primary" :loading="tokenCreating" @click="submitCreateToken">创建</el-button>
       </template>
     </el-dialog>
   </div>

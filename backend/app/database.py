@@ -651,6 +651,21 @@ def init_schema():
         backfill_node_ports(conn)
         seed_defaults(conn)
         enqueue_running_port_syncs(conn)
+        # API Token 表
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS api_tokens (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL DEFAULT '',
+                token_hash TEXT NOT NULL UNIQUE,
+                token_preview TEXT NOT NULL,
+                expires_at INTEGER NOT NULL DEFAULT 0,
+                last_used_at INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )"""
+        )
+        # 容器到期时间
+        conn.execute("ALTER TABLE containers ADD COLUMN IF NOT EXISTS expires_at INTEGER NOT NULL DEFAULT 0")
 
 def migrate_group_names(conn, ts: int):
     legacy_groups = conn.execute(

@@ -31,6 +31,7 @@ export default {
     nodeShell: "节点 Shell",
     images: "镜像管理",
     storage: "存储中心",
+    tasks: "任务中心",
     profile: "个人信息",
     settings: "平台设置",
     users: "用户管理",

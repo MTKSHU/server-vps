@@ -104,6 +104,48 @@ def create_app() -> FastAPI:
                     import sys
                     print(f"[WARN] session cleanup error: {exc!r}", file=sys.stderr, flush=True)
         asyncio.create_task(_session_cleanup_loop())
+        asyncio.create_task(_webhook_alert_loop())
+
+    async def _webhook_alert_loop():
+        """每 60 秒检查告警，有新告警时向 webhook_url POST 通知（best-effort）。"""
+        import httpx
+        from .metrics.routes import register_metrics_routes  # noqa — just for _build_alerts reference
+        _seen: set[str] = set()
+        while True:
+            try:
+                await asyncio.sleep(60)
+                with db() as conn:
+                    from .platform_settings import get_platform_settings, setting_to_bool
+                    settings = get_platform_settings(conn)
+                    if not setting_to_bool(settings.get("webhook_enabled")):
+                        _seen.clear()
+                        continue
+                    webhook_url = (settings.get("webhook_url") or "").strip()
+                    if not webhook_url:
+                        continue
+                    from .nodes.services import get_node, mark_stale_nodes, gpu_with_container
+                    from .containers.services import list_containers
+                    mark_stale_nodes(conn)
+                    node_rows = conn.execute("SELECT * FROM nodes ORDER BY hostname").fetchall()
+                    all_nodes = [get_node(conn, r["id"]) for r in node_rows]
+                    all_containers = list_containers(conn)
+                    from .metrics.routes import _build_alerts_standalone
+                    alerts = _build_alerts_standalone(conn, all_nodes, all_containers)
+                    new_alerts = [a for a in alerts if f"{a['type']}:{a.get('node_id')}" not in _seen]
+                    _seen.clear()
+                    _seen.update(f"{a['type']}:{a.get('node_id')}" for a in alerts)
+                    if not new_alerts:
+                        continue
+                webhook_secret = (settings.get("webhook_secret") or "").strip()
+                headers = {"Content-Type": "application/json"}
+                if webhook_secret:
+                    headers["X-Webhook-Secret"] = webhook_secret
+                payload_body = {"alerts": new_alerts, "timestamp": now_ts()}
+                async with httpx.AsyncClient(timeout=8) as client:
+                    await client.post(webhook_url, json=payload_body, headers=headers)
+            except Exception as exc:
+                import sys
+                print(f"[WARN] webhook_alert_loop: {exc!r}", file=sys.stderr, flush=True)
 
 
     register_user_routes(

@@ -19,6 +19,9 @@ const form = reactive<PlatformSettings>({
   sso_default_group: "member",
   platform_timezone: "Asia/Shanghai",
   transfer_bandwidth_limit_mbps: 0,
+  webhook_enabled: false,
+  webhook_url: "",
+  webhook_secret: "",
   sso_provider_enabled: false,
   sso_provider_type: "oidc",
   sso_provider_name: "casdoor",
@@ -175,6 +178,24 @@ onMounted(load);
         </el-form-item>
         <el-form-item :label="t('settings.transferBandwidthLimit')">
           <el-input-number v-model="form.transfer_bandwidth_limit_mbps" :min="0" :max="100000" :step="10" />
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- Webhook 通知 -->
+    <el-card shadow="never">
+      <template #header><strong>Webhook 通知</strong></template>
+      <el-form :model="form" label-width="130px">
+        <el-form-item label="启用 Webhook">
+          <el-switch v-model="form.webhook_enabled" />
+          <span style="margin-left:8px;color:var(--el-text-color-secondary);font-size:13px">开启后，当集群告警触发时自动向 Webhook URL 发送 POST 请求</span>
+        </el-form-item>
+        <el-form-item label="Webhook URL">
+          <el-input v-model="form.webhook_url" placeholder="https://your-webhook-endpoint/notify" :disabled="!form.webhook_enabled" />
+        </el-form-item>
+        <el-form-item label="签名密钥（可选）">
+          <el-input v-model="form.webhook_secret" placeholder="留空则不添加签名头" type="password" show-password :disabled="!form.webhook_enabled" />
+          <div style="margin-top:4px;color:var(--el-text-color-secondary);font-size:12px">设置后，每次请求会在 <code>X-Webhook-Secret</code> 头携带该密钥供接收方验签</div>
         </el-form-item>
       </el-form>
     </el-card>

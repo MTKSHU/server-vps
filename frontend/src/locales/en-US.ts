@@ -31,6 +31,7 @@ export default {
     nodeShell: "Node Shell",
     images: "Images",
     storage: "Storage",
+    tasks: "Task Center",
     profile: "Profile",
     settings: "Platform Settings",
     users: "Users",

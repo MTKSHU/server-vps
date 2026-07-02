@@ -113,6 +113,7 @@ class ContainerCreate(BaseModel):
     resources: list[ContainerResourceInput] = Field(default_factory=list)
     mounts: list[str] = Field(default_factory=list)
     ports: list[ContainerPortInput] = Field(default_factory=list)
+    expires_at: int = 0  # unix timestamp，0 = 永不到期
 
 
 class NodeConfigInput(BaseModel):
@@ -254,6 +255,11 @@ class SshKeyInput(BaseModel):
     expires_at: int = 0  # 0 = 永久有效
 
 
+class ApiTokenCreateInput(BaseModel):
+    name: str = ""
+    expires_at: int = 0  # 0 = 永久有效
+
+
 class LoginInput(BaseModel):
     username: str
     password: str
@@ -356,6 +362,9 @@ class PlatformSettingsInput(BaseModel):
     sso_default_group: Literal["platform_admin", "admin", "member", "guest"] = "member"
     platform_timezone: str = "Asia/Shanghai"
     transfer_bandwidth_limit_mbps: int = 0
+    webhook_enabled: bool = False
+    webhook_url: str = ""
+    webhook_secret: str = ""
     sso_provider_enabled: bool = False
     sso_provider_type: Literal["oidc", "cas"] = "oidc"
     sso_provider_name: str = "casdoor"
@@ -524,7 +533,7 @@ class GpuOut(BaseModel):
 
 class ContainerPortOut(BaseModel):
     id: int
-    container_id: int
+    container_id: int = 0       # 部分调用路径不携带此字段，给默认值避免验证失败
     name: str
     protocol: str
     container_port: int
@@ -532,8 +541,8 @@ class ContainerPortOut(BaseModel):
     node_port: int | None = None
     public_port: int | None = None
     node_listen_port: int | None = None
-    created_at: int
-    updated_at: int
+    created_at: int = 0         # 同上
+    updated_at: int = 0         # 同上
 
 
 class ContainerOut(BaseModel):
