@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -86,6 +88,22 @@ def create_app() -> FastAPI:
                 "WHERE request_status='downloading'",
                 (ts,),
             )
+        # 每日清理过期会话行，防止 auth_sessions 表无限增长
+        async def _session_cleanup_loop():
+            while True:
+                try:
+                    await asyncio.sleep(86400)  # 每 24 小时运行一次
+                    with db() as conn:
+                        deleted = conn.execute(
+                            "DELETE FROM auth_sessions WHERE expires_at < %s",
+                            (now_ts(),),
+                        ).rowcount
+                        if deleted:
+                            print(f"[INFO] session cleanup: deleted {deleted} expired rows", flush=True)
+                except Exception as exc:
+                    import sys
+                    print(f"[WARN] session cleanup error: {exc!r}", file=sys.stderr, flush=True)
+        asyncio.create_task(_session_cleanup_loop())
 
 
     register_user_routes(

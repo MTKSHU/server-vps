@@ -116,6 +116,8 @@ export default {
     total: "合计 {value}",
     none: "无",
     unknownGpu: "未知 GPU",
+    alerts: "集群告警",
+    alertDismiss: "知道了",
   },
   users: {
     title: "用户管理",
@@ -355,6 +357,7 @@ export default {
     type: "类型",
     source: "来源",
     target: "目标",
+    progress: "进度",
     createdAt: "创建时间",
     error: "错误",
     close: "关闭",

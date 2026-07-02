@@ -463,6 +463,88 @@ def _shared_resource_ssh_kwargs(node: dict[str, Any] | str) -> dict[str, Any]:
     return connect_kwargs
 
 
+# ---------------------------------------------------------------------------
+# 存储节点 SSH 连接池
+#
+# 目录浏览等只读、短命令原本每次都新建 SSH 连接（TCP 握手 + 认证约
+# 100-500ms），在同步任务占满存储节点 IO 时尤其卡顿。这里按
+# (host, port, user) 维护一个常驻连接，asyncssh 支持在单连接上多路复用
+# 多个会话，因此并发的 ls/zfs 命令可共享同一连接。连接失效时自动重连并
+# 重试一次。仅用于快速只读命令；大文件 SFTP 传输仍使用各自独立连接。
+# ---------------------------------------------------------------------------
+_ssh_pool: dict[tuple[str, int, str], Any] = {}
+_ssh_pool_locks: dict[tuple[str, int, str], asyncio.Lock] = {}
+_ssh_pool_guard = asyncio.Lock()
+
+
+_SSH_CONNECT_TIMEOUT = 15   # 秒：建立连接的超时
+_SSH_COMMAND_TIMEOUT = 60   # 秒：单条 SSH 命令（ls/zfs get）的超时
+
+
+async def _with_pooled_ssh(node: dict[str, Any] | str, func: Callable[[Any], Awaitable[Any]]) -> Any:
+    """在池化的 SSH 连接上执行 func(ssh)，连接失效时重连并重试一次。
+
+    * connect_timeout：防止存储节点不可达时无限挂起。
+    * asyncio.wait_for：防止 ls/zfs get 等命令因节点 IO 卡死而永久阻塞。
+    """
+    connect_kwargs = _shared_resource_ssh_kwargs(node)
+    key = (connect_kwargs["host"], connect_kwargs["port"], connect_kwargs["username"])
+    async with _ssh_pool_guard:
+        lock = _ssh_pool_locks.setdefault(key, asyncio.Lock())
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        async with lock:
+            conn = _ssh_pool.get(key)
+            if conn is None:
+                try:
+                    conn = await asyncssh.connect(
+                        **connect_kwargs,
+                        keepalive_interval=30,
+                        connect_timeout=_SSH_CONNECT_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    raise HTTPException(status_code=504, detail="连接存储节点超时，请稍后重试")
+                _ssh_pool[key] = conn
+        try:
+            return await asyncio.wait_for(func(conn), timeout=_SSH_COMMAND_TIMEOUT)
+        except asyncio.TimeoutError:
+            # 命令超时：连接可能已进入异常状态，驱逐出池
+            async with lock:
+                stale = _ssh_pool.pop(key, None)
+            if stale is not None:
+                with contextlib.suppress(Exception):
+                    stale.close()
+            raise HTTPException(status_code=504, detail="存储节点响应超时，请稍后重试")
+        except (asyncssh.Error, OSError) as exc:
+            last_exc = exc
+            async with lock:
+                stale = _ssh_pool.pop(key, None)
+            if stale is not None:
+                with contextlib.suppress(Exception):
+                    stale.close()
+            # 循环重试一次（重新建立连接）
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
+# ZFS 用量缓存：dataset 用量变化较慢，避免每次访问根目录 / 每次自动刷新
+# 都额外发一次 `zfs get used` SSH 命令。
+_zfs_usage_cache: dict[tuple[int, str], tuple[float, int]] = {}
+_ZFS_USAGE_TTL = 30.0
+
+
+def _cached_zfs_usage(node_id: int, dataset_name: str) -> int | None:
+    entry = _zfs_usage_cache.get((node_id, dataset_name))
+    if entry and entry[0] > time.monotonic():
+        return entry[1]
+    return None
+
+
+def _store_zfs_usage(node_id: int, dataset_name: str, size_bytes: int) -> None:
+    _zfs_usage_cache[(node_id, dataset_name)] = (time.monotonic() + _ZFS_USAGE_TTL, size_bytes)
+
+
 async def _upload_entries_incremental(
     ssh,
     sftp,
@@ -1207,7 +1289,6 @@ def register_data_routes(app, deps: dict[str, Any]):
     @app.get("/api/storage/users/{user_id}/files/live")
     async def user_directory_live(user_id: int, relative_path: str = ""):
         """即时 SSH 到存储节点执行 ls -la，毫秒级返回文件列表，无需预扫描"""
-        print(f"[ZFS_USAGE] ========== user_directory_live called: user_id={user_id}, relative_path={relative_path!r}")
         relative_path = normalize_relative_directory(relative_path)
         dataset_name = ""
         with db() as conn:
@@ -1221,104 +1302,105 @@ def register_data_routes(app, deps: dict[str, Any]):
             ).fetchone()
             if dataset_row:
                 dataset_name = dataset_row["dataset_name"] or ""
-                print(f"[ZFS_USAGE] dataset info: dataset_name={dataset_row['dataset_name']!r}, mountpoint={dataset_row.get('mountpoint')!r}, status={dataset_row.get('status')!r}")
-            print(f"[ZFS_USAGE] user_id={user_id}, node_id={node['id']}, dataset_name={dataset_name!r}")
             audit(conn, actor["username"], "live-ls", f"user-directory:{user_id}", {"path": relative_path})
-        try:
-            async with asyncssh.connect(**_shared_resource_ssh_kwargs(node)) as ssh:
-                # ls -la --time-style=+%s 输出: drwxr-xr-x 2 root root 4096 1719876543 dirname
-                result = await ssh.run(
-                    f"ls -la --time-style=+%s {shlex.quote(absolute_path)}",
-                    check=False,
-                )
-                _stdout = (result.stdout or "").strip()
-                if result.exit_status != 0:
-                    err = (result.stderr or "").strip()
-                    # 目录不存在 -> 返回 empty-ready（允许页面正常渲染，entries 为空）
-                    if "cannot access" in err.lower() or "no such file" in err.lower():
-                        return {
-                            "user_id": user_id,
-                            "relative_path": relative_path,
-                            "status": "ready",
-                            "file_count": 0,
-                            "size_bytes": 0,
-                            "entries": [],
-                            "truncated": False,
-                            "error": f"目录不存在: {absolute_path}",
-                            "scanned_at": int(time.time()),
-                        }
-                    raise HTTPException(status_code=500, detail=f"ls 执行失败: {err[:200]}")
-                lines = (result.stdout or "").strip().split("\n")
-                entries = []
-                total_size = 0
-                file_count = 0
-                for line in lines:
-                    line = line.strip()
-                    if not line or line.startswith("total "):
-                        continue
-                    # ls -la --time-style=+%s 输出格式:
-                    # perms links owner group size mtime_epoch filename
-                    # 使用 split(None, 6) 将前6个字段分割，其余作为文件名（支持空格）
-                    parts = line.split(None, 6)
-                    if len(parts) < 7:
-                        continue
-                    # parts: [perms, links, owner, group, size, mtime_epoch, name]
-                    name = parts[6]
-                    if name in (".", ".."):
-                        continue
-                    perms = parts[0]
-                    entry_type = "directory" if perms.startswith("d") else "symlink" if perms.startswith("l") else "file"
-                    try:
-                        size_bytes = int(parts[4])
-                    except ValueError:
-                        size_bytes = 0
-                    try:
-                        mtime = int(parts[5])
-                    except ValueError:
-                        mtime = 0
-                    entries.append({
-                        "name": name,
-                        "type": entry_type,
-                        "size_bytes": size_bytes,
-                        "mtime": mtime,
-                        "mode": perms,
-                    })
-                    if entry_type != "directory":
-                        total_size += size_bytes
-                        file_count += 1
-                # 如果是根目录且有 ZFS 数据集，使用 zfs get 获取实际用量
-                print(f"[ZFS_USAGE] before ZFS check: total_size={total_size}, file_count={file_count}")
-                if not relative_path and dataset_name:
+
+        node_id = int(node["id"])
+
+        async def _run(ssh) -> dict[str, Any]:
+            # ls -la --time-style=+%s 输出: drwxr-xr-x 2 root root 4096 1719876543 dirname
+            result = await ssh.run(
+                f"ls -la --time-style=+%s {shlex.quote(absolute_path)}",
+                check=False,
+            )
+            if result.exit_status != 0:
+                err = (result.stderr or "").strip()
+                # 目录不存在 -> 返回 empty-ready（允许页面正常渲染，entries 为空）
+                if "cannot access" in err.lower() or "no such file" in err.lower():
+                    return {
+                        "user_id": user_id,
+                        "relative_path": relative_path,
+                        "status": "ready",
+                        "file_count": 0,
+                        "size_bytes": 0,
+                        "entries": [],
+                        "truncated": False,
+                        "error": f"目录不存在: {absolute_path}",
+                        "scanned_at": int(time.time()),
+                    }
+                raise HTTPException(status_code=500, detail=f"ls 执行失败: {err[:200]}")
+            lines = (result.stdout or "").strip().split("\n")
+            entries = []
+            total_size = 0
+            file_count = 0
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith("total "):
+                    continue
+                # ls -la --time-style=+%s 输出格式:
+                # perms links owner group size mtime_epoch filename
+                # 使用 split(None, 6) 将前6个字段分割，其余作为文件名（支持空格）
+                parts = line.split(None, 6)
+                if len(parts) < 7:
+                    continue
+                # parts: [perms, links, owner, group, size, mtime_epoch, name]
+                name = parts[6]
+                if name in (".", ".."):
+                    continue
+                perms = parts[0]
+                entry_type = "directory" if perms.startswith("d") else "symlink" if perms.startswith("l") else "file"
+                try:
+                    size_bytes = int(parts[4])
+                except ValueError:
+                    size_bytes = 0
+                try:
+                    mtime = int(parts[5])
+                except ValueError:
+                    mtime = 0
+                entries.append({
+                    "name": name,
+                    "type": entry_type,
+                    "size_bytes": size_bytes,
+                    "mtime": mtime,
+                    "mode": perms,
+                })
+                if entry_type != "directory":
+                    total_size += size_bytes
+                    file_count += 1
+            # 如果是根目录且有 ZFS 数据集，使用 zfs get 获取实际用量（带 TTL 缓存）
+            if not relative_path and dataset_name:
+                cached = _cached_zfs_usage(node_id, dataset_name)
+                if cached is not None:
+                    total_size = cached
+                else:
                     try:
                         zfs_cmd = f"zfs get -H -o value used {shlex.quote(dataset_name)}"
-                        print(f"[ZFS_USAGE] executing: {zfs_cmd}")
                         zfs_result = await ssh.run(zfs_cmd, check=False)
-                        print(f"[ZFS_USAGE] zfs get exit_status={zfs_result.exit_status}, stdout={((zfs_result.stdout or '')[:200])!r}, stderr={((zfs_result.stderr or '')[:200])!r}")
                         if zfs_result.exit_status == 0:
                             zfs_used = (zfs_result.stdout or "").strip()
                             if zfs_used and zfs_used != "-":
                                 try:
                                     # zfs get 返回的可能带单位（如 1.5G），需要解析
                                     total_size = parse_zfs_size(zfs_used)
-                                    print(f"[ZFS_USAGE] parsed size: {zfs_used} -> {total_size} bytes")
-                                except (ValueError, TypeError) as e:
-                                    print(f"[ZFS_USAGE] failed to parse zfs size: {zfs_used}, error: {e}")
+                                    _store_zfs_usage(node_id, dataset_name, total_size)
+                                except (ValueError, TypeError):
                                     pass
-                    except Exception as e:
-                        print(f"[ZFS_USAGE] zfs get exception: {e}")
+                    except (asyncssh.Error, OSError):
+                        # zfs 命令失败不影响文件列表返回，沿用 ls 累加的大小
                         pass
-                print(f"[ZFS_USAGE] after ZFS check: total_size={total_size}, will return size_bytes={total_size}")
-                return {
-                    "user_id": user_id,
-                    "relative_path": relative_path,
-                    "status": "ready",
-                    "file_count": file_count,
-                    "size_bytes": total_size,
-                    "entries": entries,
-                    "truncated": False,
-                    "error": "",
-                    "scanned_at": int(time.time()),
-                }
+            return {
+                "user_id": user_id,
+                "relative_path": relative_path,
+                "status": "ready",
+                "file_count": file_count,
+                "size_bytes": total_size,
+                "entries": entries,
+                "truncated": False,
+                "error": "",
+                "scanned_at": int(time.time()),
+            }
+
+        try:
+            return await _with_pooled_ssh(node, _run)
         except (OSError, asyncssh.Error) as exc:
             raise HTTPException(status_code=500, detail=f"SSH 连接存储节点失败: {str(exc)[:200]}")
 

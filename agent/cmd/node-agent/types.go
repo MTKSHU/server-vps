@@ -95,6 +95,23 @@ type TaskResultRequest struct {
 	Error    string `json:"error"`
 }
 
+// SyncProgress 描述 rsync 数据同步的实时进度，结构与后端下载进度保持一致，
+// 便于前端复用展示逻辑。
+type SyncProgress struct {
+	Phase       string `json:"phase"`
+	Pct         int    `json:"pct"`
+	BytesDone   int64  `json:"bytes_done"`
+	BytesTotal  int64  `json:"bytes_total"`
+	Rate        string `json:"rate"`
+	CurrentFile string `json:"current_file"`
+}
+
+type TaskProgressRequest struct {
+	Token    string       `json:"token"`
+	Hostname string       `json:"hostname"`
+	Progress SyncProgress `json:"progress"`
+}
+
 type TaskEnvelope struct {
 	Task *AgentTask `json:"task"`
 }

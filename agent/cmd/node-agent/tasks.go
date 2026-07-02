@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func executeTask(task *AgentTask, args cliArgs) TaskResultRequest {
+func executeTask(task *AgentTask, args cliArgs, server string, hostname string) TaskResultRequest {
 	switch task.Type {
 	case "incus_create_container":
 		var payload IncusCreatePayload
@@ -179,7 +179,17 @@ func executeTask(task *AgentTask, args cliArgs) TaskResultRequest {
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
-		output, err := executeContainerDataSync(payload, args.dataPath)
+		// 构建限流的进度上报回调：最多每 2 秒上报一次，100% 时必报。
+		var lastSent time.Time
+		onProgress := func(p SyncProgress) {
+			now := time.Now()
+			if p.Pct < 100 && now.Sub(lastSent) < 2*time.Second {
+				return
+			}
+			lastSent = now
+			reportTaskProgress(server, args, hostname, task.ID, p)
+		}
+		output, err := executeContainerDataSync(payload, args.dataPath, onProgress)
 		if err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
@@ -310,7 +320,7 @@ var slowTaskTypes = map[string]bool{
 
 func runTask(server string, args cliArgs, hostname string, task *AgentTask) {
 	fmt.Printf("%s claimed task %d type=%s attempt=%d\n", time.Now().Format(time.RFC3339), task.ID, task.Type, task.Attempts)
-	result := executeTask(task, args)
+	result := executeTask(task, args, server, hostname)
 	if err := reportTask(server, args, hostname, task.ID, result); err != nil {
 		fmt.Fprintf(os.Stderr, "%s report task %d failed: %v\n", time.Now().Format(time.RFC3339), task.ID, err)
 		return

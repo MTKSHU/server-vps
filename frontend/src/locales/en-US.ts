@@ -116,6 +116,8 @@ export default {
     total: "Total {value}",
     none: "None",
     unknownGpu: "Unknown GPU",
+    alerts: "Cluster Alerts",
+    alertDismiss: "Got it",
   },
   users: {
     title: "User Management",
@@ -355,6 +357,7 @@ export default {
     type: "Type",
     source: "Source",
     target: "Target",
+    progress: "Progress",
     createdAt: "Created At",
     error: "Error",
     close: "Close",

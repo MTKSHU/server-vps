@@ -202,6 +202,12 @@ class AgentTaskResult(BaseModel):
     error: str = ""
 
 
+class AgentTaskProgress(BaseModel):
+    token: str
+    hostname: str
+    progress: dict[str, Any] = {}
+
+
 class ContainerExecCreate(BaseModel):
     command: str
 
@@ -385,3 +391,56 @@ class SharedResourceInfoInput(BaseModel):
     name: str
     version: str = "default"
     tags: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# 响应 Model（用于 FastAPI response_model，驱动 OpenAPI 类型生成）
+# ---------------------------------------------------------------------------
+
+class AlertItem(BaseModel):
+    """集群告警条目。"""
+    level: Literal["error", "warning", "info"]
+    type: str
+    message: str
+    node_id: int | None = None
+
+
+class SummaryResponse(BaseModel):
+    """GET /api/summary 响应体。"""
+    nodes_online: int
+    nodes_total: int
+    gpus_free: int
+    gpus_total: int
+    containers_running: int
+    containers_total: int
+    cpu_used: int
+    cpu_total: int
+    memory_used_gb: float
+    memory_total_gb: float
+    disk_used_gb: float
+    disk_total_gb: float
+    alerts: list[AlertItem] = Field(default_factory=list)
+
+
+class NodeTaskOut(BaseModel):
+    """节点任务摘要（供前端展示）。"""
+    id: int
+    node_id: int
+    container_id: int | None = None
+    data_sync_task_id: int | None = None
+    type: str
+    status: str
+    attempts: int = 0
+    error: str = ""
+    result: dict[str, Any] = Field(default_factory=dict)
+    created_at: int
+    claimed_at: int | None = None
+    finished_at: int | None = None
+    available_at: int = 0
+    updated_at: int
+
+
+class HealthResponse(BaseModel):
+    """GET /api/health 响应体。"""
+    ok: bool
+    database: str

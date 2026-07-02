@@ -115,7 +115,12 @@ export interface Summary {
   memory_total_gb: number;
   disk_used_gb: number;
   disk_total_gb: number;
-  alerts: Array<{ level: string; message: string }>;
+  alerts: Array<{
+    level: "error" | "warning" | "info";
+    type: string;
+    message: string;
+    node_id?: number | null;
+  }>;
 }
 
 export interface Gpu {
@@ -440,6 +445,14 @@ export interface DataSyncTask {
   target_path: string;
   status: string;
   detail: Record<string, unknown>;
+  progress?: {
+    phase?: string;
+    pct?: number;
+    bytes_done?: number;
+    bytes_total?: number;
+    rate?: string;
+    current_file?: string;
+  } | null;
   created_at: number;
   updated_at: number;
   finished_at: number;

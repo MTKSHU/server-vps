@@ -944,7 +944,7 @@ func executeIncusImageImport(payload IncusImageImportPayload, dataPath string) (
 		Mode:           "incus_image_import",
 		Delete:         true,
 		SourceEndpoint: payload.SourceEndpoint,
-	}, dataPath)
+	}, dataPath, nil)
 	if err != nil {
 		return syncOutput, err
 	}

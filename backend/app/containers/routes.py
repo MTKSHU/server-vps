@@ -13,6 +13,7 @@ from ..config import SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER, CONTA
 from ..nodes.routes import generate_ephemeral_sync_keypair
 from ..nodes.services import allowed_node_ids_for_user
 from ..platform_settings import get_platform_settings
+from ..agent.tasks import get_node_task_event, release_node_task_event, signal_node_task_done  # noqa: F401 (signal_node_task_done re-exported for agent/routes)
 from ..schemas import (
     ContainerCreate,
     ContainerDeleteRequest,
@@ -109,6 +110,7 @@ def register_container_routes(app, deps: dict[str, Any]):
             "target_path": row["target_path"],
             "status": row["status"],
             "detail": row["detail"],
+            "progress": row.get("progress") or {},
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "finished_at": row["finished_at"],
@@ -330,13 +332,20 @@ def register_container_routes(app, deps: dict[str, Any]):
         return sync_task, node_task
 
     def _wait_for_node_task(conn, task_id: int, timeout: float = 15, interval: float = 0.3) -> tuple[str, str]:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        # 先注册 Event，再做初次检查，避免「检查后完成、Event 未注册」的竞态
+        event = get_node_task_event(task_id)
+        try:
             row = conn.execute("SELECT status, last_error FROM node_tasks WHERE id = %s", (task_id,)).fetchone()
             if row and row["status"] in ("succeeded", "failed"):
                 return row["status"], row["last_error"] or ""
-            time.sleep(interval)
-        return "timeout", "等待任务结果超时"
+            # 等待 complete_node_task 触发唤醒（最多 timeout 秒，替代 DB 轮询）
+            event.wait(timeout=timeout)
+            row = conn.execute("SELECT status, last_error FROM node_tasks WHERE id = %s", (task_id,)).fetchone()
+            if row and row["status"] in ("succeeded", "failed"):
+                return row["status"], row["last_error"] or ""
+            return "timeout", "等待任务结果超时"
+        finally:
+            release_node_task_event(task_id)
 
     def schedule_rule_due(row: dict[str, Any], ts: int, timezone_name: str) -> bool:
         try:
@@ -414,8 +423,10 @@ def register_container_routes(app, deps: dict[str, Any]):
                                 (ts, row["id"]),
                             )
                             audit(conn, "system", "scheduled-sync-failed", f"container-sync-rule:{row['id']}", {"error": str(exc)[:500]})
-            except Exception:
-                pass
+            except Exception as exc:
+                # 记录调度器本身的意外异常，避免静默失败导致定时同步停止工作
+                import sys
+                print(f"[WARN] scheduled_container_sync_loop 异常: {exc!r}", file=sys.stderr, flush=True)
 
     @app.on_event("startup")
     async def start_container_sync_scheduler():

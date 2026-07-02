@@ -20,7 +20,7 @@ func TestExecuteDataSyncAppliesBandwidthLimit(t *testing.T) {
 		SourcePath:     source,
 		TargetPath:     target,
 		BandwidthLimit: 7,
-	}, "/")
+	}, "/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

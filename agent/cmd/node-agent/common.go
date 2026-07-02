@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -116,4 +117,106 @@ func reportTask(server string, args cliArgs, hostname string, taskID int, result
 	endpoint := fmt.Sprintf("%s/api/nodes/tasks/%d/result", strings.TrimRight(server, "/"), taskID)
 	_, _, err := postJSON(endpoint, result)
 	return err
+}
+
+// reportTaskProgress 上报数据同步任务的实时进度（best-effort，失败静默忽略）。
+func reportTaskProgress(server string, args cliArgs, hostname string, taskID int, progress SyncProgress) {
+	endpoint := fmt.Sprintf("%s/api/nodes/tasks/%d/progress", strings.TrimRight(server, "/"), taskID)
+	_, _, _ = postJSON(endpoint, TaskProgressRequest{Token: args.token, Hostname: hostname, Progress: progress})
+}
+
+// scanLinesCR 是 bufio.Scanner 的分割函数，同时以 \n 与 \r 作为分隔符。
+// rsync 的 --info=progress2 进度行以 \r 结尾刷新，需要这样才能实时读取。
+func scanLinesCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\n' || b == '\r' {
+			return i + 1, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+// runCommandWithProgress 运行命令并流式读取其 stdout，逐行解析 rsync 进度行，
+// 通过 onProgress 回调实时上报。进度行不计入返回的合并输出，避免污染日志。
+func runCommandWithProgress(timeout time.Duration, onProgress func(SyncProgress), name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	var outBuf strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Split(scanLinesCR)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if p, ok := parseRsyncProgress(line); ok {
+			if onProgress != nil {
+				onProgress(p)
+			}
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		outBuf.WriteString(trimmed)
+		outBuf.WriteString("\n")
+	}
+	waitErr := cmd.Wait()
+	text := strings.TrimSpace(outBuf.String() + stderrBuf.String())
+	if ctx.Err() == context.DeadlineExceeded {
+		return text, fmt.Errorf("%s timed out after %v", name, timeout)
+	}
+	if waitErr != nil {
+		if text == "" {
+			text = waitErr.Error()
+		}
+		return text, fmt.Errorf("%s %s failed: %s", name, strings.Join(args, " "), text)
+	}
+	return text, nil
+}
+
+// parseRsyncProgress 解析 rsync --info=progress2 的进度行，形如：
+//
+//	1,234,567  45%    1.23MB/s    0:00:12
+//
+// 返回已传字节、百分比、速率；无法识别时 ok=false。
+func parseRsyncProgress(line string) (SyncProgress, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 3 || !strings.HasSuffix(fields[1], "%") {
+		return SyncProgress{}, false
+	}
+	pct, err := strconv.Atoi(strings.TrimSuffix(fields[1], "%"))
+	if err != nil {
+		return SyncProgress{}, false
+	}
+	bytesDone, err := strconv.ParseInt(strings.ReplaceAll(fields[0], ",", ""), 10, 64)
+	if err != nil {
+		return SyncProgress{}, false
+	}
+	var bytesTotal int64
+	if pct > 0 {
+		bytesTotal = bytesDone * 100 / int64(pct)
+	}
+	return SyncProgress{
+		Phase:      "running",
+		Pct:        pct,
+		BytesDone:  bytesDone,
+		BytesTotal: bytesTotal,
+		Rate:       fields[2],
+	}, true
 }

@@ -438,6 +438,28 @@ function taskStatusType(status: string) {
   return "info";
 }
 
+function formatSyncBytes(n: number) {
+  if (!n || n <= 0) return "0B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = n;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(i === 0 ? 0 : 1)}${units[i]}`;
+}
+
+function syncProgressText(row: DataSyncTask): string {
+  const p = row.progress;
+  if (!p || typeof p.pct !== "number") return "";
+  const parts: string[] = [];
+  if (p.bytes_done && p.bytes_total) parts.push(`${formatSyncBytes(p.bytes_done)} / ${formatSyncBytes(p.bytes_total)}`);
+  else if (p.bytes_done) parts.push(formatSyncBytes(p.bytes_done));
+  if (p.rate) parts.push(p.rate);
+  return parts.join("  ");
+}
+
 function resourceOptions(type: "dataset" | "model" | "user_file") {
   return sharedResources.value.filter((item) => type === "dataset" ? item.resource_type === "dataset" : item.resource_type !== "dataset");
 }
@@ -471,6 +493,21 @@ async function refreshSyncData() {
   syncRules.value = rules;
   syncTasks.value = tasks;
 }
+
+// 同步对话框打开且存在运行中任务时，每 3 秒轮询刷新以展示实时进度
+let _syncPollTimer: ReturnType<typeof setInterval> | null = null;
+function stopSyncPolling() {
+  if (_syncPollTimer) { clearInterval(_syncPollTimer); _syncPollTimer = null; }
+}
+watch([syncDialogVisible, syncTasks], ([visible, tasks]) => {
+  const hasActive = visible && (tasks as DataSyncTask[]).some((task) => ["planned", "running", "verifying"].includes(task.status));
+  if (hasActive && !_syncPollTimer) {
+    _syncPollTimer = setInterval(() => { refreshSyncData().catch(() => { /* 静默 */ }); }, 3000);
+  } else if (!hasActive) {
+    stopSyncPolling();
+  }
+});
+onBeforeUnmount(stopSyncPolling);
 
 // 公开数据集/模型下载到容器时，不需要选择存储目录，直接根目录同步
 watch(() => syncDownloadForm.storage_type, (newVal) => {
@@ -771,7 +808,7 @@ onBeforeUnmount(() => {
           </template>
           <template v-else-if="column.key === 'connection'">
             <div class="connection-cell">
-              <code v-if="sshPort(row)">ssh {{ row.ssh_username }}@{{ publicHost() }} -p {{ publicPort(sshPort(row)!) }}</code>
+              <code v-if="sshPort(row)">{{ t("containers.management") }} ssh {{ row.ssh_username }}@{{ publicHost() }} -p {{ publicPort(sshPort(row)!) }}</code>
               <code v-else>{{ row.ip || '-' }}</code>
               <code v-if="sshPort(row) && nodeSshCommand(row, sshPort(row)!)" class="node-port-line">
                 {{ t("containers.node") }} {{ nodeSshCommand(row, sshPort(row)!) }}
@@ -1027,6 +1064,15 @@ onBeforeUnmount(() => {
 	          <el-table :data="syncTasks" stripe>
 	            <el-table-column prop="task_type" :label="t('containers.type')" width="150" />
 	            <el-table-column :label="t('containers.status')" width="110"><template #default="{ row }"><el-tag :type="taskStatusType(row.status)" size="small">{{ row.status }}</el-tag></template></el-table-column>
+	            <el-table-column :label="t('containers.progress')" width="200">
+	              <template #default="{ row }">
+	                <div v-if="row.status === 'running' && row.progress && typeof row.progress.pct === 'number'" class="sync-progress-cell">
+	                  <el-progress :percentage="Math.min(100, Math.max(0, row.progress.pct))" :stroke-width="10" />
+	                  <div class="sync-progress-text">{{ syncProgressText(row) }}</div>
+	                </div>
+	                <span v-else>-</span>
+	              </template>
+	            </el-table-column>
 	            <el-table-column prop="source_path" :label="t('containers.source')" min-width="220" show-overflow-tooltip />
 	            <el-table-column prop="target_path" :label="t('containers.target')" min-width="220" show-overflow-tooltip />
 	            <el-table-column :label="t('containers.createdAt')" width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
@@ -1055,6 +1101,16 @@ onBeforeUnmount(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.sync-progress-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.sync-progress-text {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .port-cell,

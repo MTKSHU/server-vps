@@ -1,15 +1,17 @@
 from typing import Any
+import time
 
 
 def register_metrics_routes(app, deps: dict[str, Any]):
+    from ..schemas import SummaryResponse
     db = deps["db"]
     mark_stale_nodes = deps["mark_stale_nodes"]
     get_node = deps["get_node"]
     gpu_with_container = deps["gpu_with_container"]
     list_containers = deps["list_containers"]
 
-    @app.get("/api/summary")
-    @app.get("/api/metrics/cluster")
+    @app.get("/api/summary", response_model=SummaryResponse)
+    @app.get("/api/metrics/cluster", response_model=SummaryResponse)
     def summary():
         with db() as conn:
             mark_stale_nodes(conn)
@@ -55,8 +57,54 @@ def register_metrics_routes(app, deps: dict[str, Any]):
                 "memory_total_gb": memory_total,
                 "disk_used_gb": disk_used,
                 "disk_total_gb": disk_total,
-                "alerts": [],
+                "alerts": _build_alerts(conn, all_nodes),
             }
+
+    def _build_alerts(conn, all_nodes: list) -> list[dict]:
+        alerts = []
+        stale_cutoff = int(time.time()) - 300  # 5 分钟无心跳视为真正离线
+
+        # 1. 节点离线（stale/offline 状态）
+        for node in all_nodes:
+            if node["status"] != "online":
+                last_seen = node.get("last_seen") or 0
+                if last_seen < stale_cutoff:
+                    alerts.append({
+                        "level": "error",
+                        "type": "node_offline",
+                        "message": f"节点 {node['hostname']} 已离线",
+                        "node_id": node["id"],
+                    })
+
+        # 2. 磁盘使用率过高（> 85%）
+        for node in all_nodes:
+            if node["status"] == "online" and node.get("disk_total_gb", 0) > 0:
+                used_pct = node.get("disk_used_gb", 0) / node["disk_total_gb"]
+                if used_pct > 0.85:
+                    alerts.append({
+                        "level": "warning",
+                        "type": "disk_full",
+                        "message": f"节点 {node['hostname']} 磁盘使用率 {int(used_pct * 100)}%，建议清理",
+                        "node_id": node["id"],
+                    })
+
+        # 3. 待审批的共享资源请求
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM shared_resources WHERE request_status = 'pending'"
+            ).fetchone()
+            pending_count = row[0] if row else 0
+            if pending_count > 0:
+                alerts.append({
+                    "level": "info",
+                    "type": "pending_resources",
+                    "message": f"有 {pending_count} 个共享资源请求待管理员审批",
+                    "node_id": None,
+                })
+        except Exception:
+            pass  # 表不存在时静默跳过
+
+        return alerts
 
     @app.get("/api/metrics/node-hardware")
     def node_hardware():

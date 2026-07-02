@@ -214,6 +214,19 @@ onUnmounted(() => {
 
 <template>
   <div v-loading="loading" class="page-stack">
+    <!-- 集群告警条 -->
+    <template v-if="summary && summary.alerts.length > 0">
+      <el-alert
+        v-for="(alert, i) in summary.alerts"
+        :key="i"
+        :type="alert.level === 'error' ? 'error' : alert.level === 'warning' ? 'warning' : 'info'"
+        :title="alert.message"
+        show-icon
+        closable
+        style="margin-bottom: 4px;"
+      />
+    </template>
+
     <div v-if="summary" class="stats-grid">
       <StatCard :label="t('dashboard.onlineNodes')" :value="`${summary.nodes_online}/${summary.nodes_total}`" :detail="t('dashboard.registeredServers')" />
       <StatCard :label="t('dashboard.availableGpu')" :value="`${summary.gpus_free}/${summary.gpus_total}`" :detail="t('dashboard.gpuSharing')" />

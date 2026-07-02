@@ -362,7 +362,17 @@ async function load() {
     } catch {
       policy.value = null;
     }
-    if (currentUserId.value) { await loadDirectory(); if (directory.value?.status === "unknown" || (directory.value?.status === "ready" && directory.value.entries.length === 0 && directory.value.error)) refreshDirectory(); /* 异步扫描，不阻塞页面渲染 */ }
+    if (currentUserId.value) {
+      // 先用缓存结果（纯查库，毫秒级）快速渲染首屏，再后台用 live-ls 更新为最新，
+      // 避免每次进入"我的文件"都要等待到存储节点的 SSH 往返。
+      try {
+        const cached = await getUserDirectory(currentUserId.value, currentPath.value);
+        if (cached && cached.status !== "unknown") { directory.value = cached; if (!currentPath.value) homeDirectory.value = cached; }
+      } catch { /* 无缓存则忽略，交给 live-ls */ }
+      void loadDirectory().then(() => {
+        if (directory.value?.status === "unknown" || (directory.value?.status === "ready" && directory.value.entries.length === 0 && directory.value.error)) void refreshDirectory();
+      }).catch(() => { /* 静默 */ });
+    }
     await Promise.all([loadUserDatasets(), loadWorkspaceVolumes()]);
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "加载失败，请刷新页面重试");
@@ -745,7 +755,7 @@ watch(previewData, (data) => {
 });
 onMounted(load);
 
-// 在"我的文件"tab 下，每 8 秒自动触发重新扫描（不阻塞，静默刷新）
+// 在"我的文件"tab 下，每 30 秒自动触发重新扫描（不阻塞，静默刷新）
 let _fileRefreshTimer: ReturnType<typeof setInterval> | null = null;
 watch(activeTab, (tab) => {
   if (tab === "files") {
@@ -753,7 +763,7 @@ watch(activeTab, (tab) => {
       _fileRefreshTimer = setInterval(async () => {
         if (activeTab.value !== "files") return;
         try { await refreshDirectory(); } catch { /* 静默忽略，不打断用户操作 */ }
-      }, 8000);
+      }, 30000);
     }
   } else {
     if (_fileRefreshTimer) { clearInterval(_fileRefreshTimer); _fileRefreshTimer = null; }

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ..core import audit
 from ..platform_settings import get_platform_settings
-from ..schemas import QuotaProfileInput, SshKeyInput, UserPreferenceInput, UserProfileInput, UserUpsertInput
+from ..schemas import QuotaProfileInput, SshKeyInput, UserPreferenceInput, UserProfileInput, UserUpsertInput, HealthResponse
 from ..auth import hash_password, require_admin, role_for_group
 from ..containers.ports import managed_ssh_keys
 from ..nodes.services import allowed_node_ids_for_user
@@ -84,7 +84,7 @@ def register_user_routes(app, deps: dict[str, Any]):
     enqueue_node_task = deps["enqueue_node_task"]
     ensure_user_zfs_dataset_task = deps.get("ensure_user_zfs_dataset_task")
 
-    @app.get("/api/health")
+    @app.get("/api/health", response_model=HealthResponse)
     def health():
         return {"ok": True, "database": "postgresql"}
 

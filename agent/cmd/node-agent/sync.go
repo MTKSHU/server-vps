@@ -377,7 +377,7 @@ func incusFileTarget(container string, path string) (string, error) {
 // attemptDirectContainerSync 尝试在容器内直接运行 rsync，
 // 避免在宿主机（可能是 tmpfs 的 /tmp）上暂存大文件导致空间不足。
 // 要求：容器内已安装 rsync，且不使用 JumpHost（容器内 ProxyCommand 配置复杂）。
-func attemptDirectContainerSync(payload DataSyncPayload) (string, error) {
+func attemptDirectContainerSync(payload DataSyncPayload, onProgress func(SyncProgress)) (string, error) {
 	// 检查容器内是否安装了 rsync
 	if _, err := runCommandCombined("incus", "exec", payload.ContainerName, "--", "which", "rsync"); err != nil {
 		return "", fmt.Errorf("rsync not available in container: %w", err)
@@ -453,7 +453,7 @@ func attemptDirectContainerSync(payload DataSyncPayload) (string, error) {
 	if strings.ContainsAny(remotePath, "\r\n") {
 		return "", fmt.Errorf("source path contains invalid characters")
 	}
-	rsyncArgs := []string{"-a"}
+	rsyncArgs := []string{"-a", "--info=progress2"}
 	if payload.Delete {
 		rsyncArgs = append(rsyncArgs, "--delete")
 	}
@@ -478,10 +478,10 @@ func attemptDirectContainerSync(payload DataSyncPayload) (string, error) {
 	}
 	// 在容器内运行 rsync
 	incusArgs := append([]string{"exec", payload.ContainerName, "--", "rsync"}, rsyncArgs...)
-	return runCommandCombinedTimeout(60*time.Minute, "incus", incusArgs...)
+	return runCommandWithProgress(60*time.Minute, onProgress, "incus", incusArgs...)
 }
 
-func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string, error) {
+func executeContainerDataSync(payload DataSyncPayload, dataPath string, onProgress func(SyncProgress)) (string, error) {
 	mode := strings.TrimSpace(payload.Mode)
 	if mode != "storage_to_container" && mode != "container_to_storage" {
 		return "", fmt.Errorf("unsupported container sync mode: %s", payload.Mode)
@@ -511,7 +511,7 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string,
 		// 优先尝试在容器内直接运行 rsync，数据从存储节点直达容器，
 		// 完全绕过宿主机暂存，避免宿主机 /tmp (tmpfs) 空间不足的问题。
 		if payload.SourceEndpoint.Host != "" {
-			if output, err := attemptDirectContainerSync(payload); err == nil {
+			if output, err := attemptDirectContainerSync(payload, onProgress); err == nil {
 				return output, nil
 			}
 			// 直接同步不可用（如容器内无 rsync 或使用了 JumpHost），回退到暂存方案
@@ -525,7 +525,7 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string,
 		stagePayload.Mode = ""
 		stagePayload.TargetPath = staging
 		stagePayload.TargetEndpoint = DataSyncSSHEndpoint{}
-		output, err := executeDataSync(stagePayload, dataPath)
+		output, err := executeDataSync(stagePayload, dataPath, onProgress)
 		if err != nil {
 			return output, err
 		}
@@ -570,7 +570,7 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string) (string,
 		stagePayload.Mode = ""
 		stagePayload.SourcePath = staging
 		stagePayload.SourceEndpoint = DataSyncSSHEndpoint{}
-		output, err := executeDataSync(stagePayload, dataPath)
+		output, err := executeDataSync(stagePayload, dataPath, onProgress)
 		if err != nil {
 			return pullOutput + output, err
 		}
@@ -605,7 +605,7 @@ func prepareSyncEndpoint(endpoint DataSyncSSHEndpoint) (DataSyncSSHEndpoint, str
 	return endpoint, f.Name(), nil
 }
 
-func executeDataSync(payload DataSyncPayload, dataPath string) (string, error) {
+func executeDataSync(payload DataSyncPayload, dataPath string, onProgress func(SyncProgress)) (string, error) {
 	source, err := cleanSyncPath(payload.SourcePath)
 	if err != nil {
 		return "", err
@@ -675,7 +675,7 @@ func executeDataSync(payload DataSyncPayload, dataPath string) (string, error) {
 			return "", err
 		}
 	}
-	args := []string{"-a"}
+	args := []string{"-a", "--info=progress2"}
 	if payload.Update {
 		args = append(args, "--update")
 	}
@@ -713,7 +713,7 @@ func executeDataSync(payload DataSyncPayload, dataPath string) (string, error) {
 		rsyncTarget = remoteTarget
 	}
 	args = append(args, rsyncSource, rsyncTarget)
-	output, err := runCommandCombinedTimeout(60*time.Minute, "rsync", args...)
+	output, err := runCommandWithProgress(60*time.Minute, onProgress, "rsync", args...)
 	if err != nil {
 		return output, err
 	}

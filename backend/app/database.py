@@ -508,7 +508,14 @@ def init_schema():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS node_tasks_claim_idx ON node_tasks (node_id, status, available_at, created_at)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS data_sync_tasks_container_idx ON data_sync_tasks (container_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS data_sync_tasks_status_idx ON data_sync_tasks (status, updated_at DESC) WHERE status IN ('planned','running','verifying')"
+        )
         conn.execute("ALTER TABLE node_tasks ADD COLUMN IF NOT EXISTS data_sync_task_id BIGINT REFERENCES data_sync_tasks(id) ON DELETE SET NULL")
+        conn.execute("ALTER TABLE data_sync_tasks ADD COLUMN IF NOT EXISTS progress JSONB NOT NULL DEFAULT '{}'")
         conn.execute("ALTER TABLE shared_resources DROP CONSTRAINT IF EXISTS shared_resources_type_check")
         conn.execute(
             "ALTER TABLE shared_resources ADD CONSTRAINT shared_resources_type_check CHECK (resource_type IN ('dataset', 'huggingface_model', 'pytorch_model'))"

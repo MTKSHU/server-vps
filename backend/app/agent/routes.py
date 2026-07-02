@@ -8,8 +8,9 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from ..auth import authenticate_token, is_admin_user, websocket_token
 from psycopg.types.json import Jsonb
 
-from ..schemas import AgentTaskClaim, AgentTaskResult, NodeRegistration
+from ..schemas import AgentTaskClaim, AgentTaskProgress, AgentTaskResult, NodeRegistration
 from ..nodes.routes import _get_or_create_ssh_key
+from ..agent.tasks import signal_node_task_done
 
 
 class AgentChannel:
@@ -341,6 +342,29 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     "attempts": task["attempts"],
                 }
             }
+
+    @app.post("/api/nodes/tasks/{task_id}/progress")
+    def report_node_task_progress(task_id: int, payload: AgentTaskProgress):
+        """agent 在执行 container_data_sync 期间周期性上报 rsync 传输进度。"""
+        with db() as conn:
+            node = verify_agent_node(conn, payload.token, payload.hostname)
+            task = conn.execute(
+                "SELECT data_sync_task_id FROM node_tasks WHERE id = %s AND node_id = %s",
+                (task_id, node["id"]),
+            ).fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="任务不存在")
+            if task["data_sync_task_id"]:
+                # 仅在任务尚未结束（planned/running）时更新，避免覆盖已完成状态
+                conn.execute(
+                    """
+                    UPDATE data_sync_tasks
+                    SET progress = %s, updated_at = %s
+                    WHERE id = %s AND status IN ('planned', 'running')
+                    """,
+                    (Jsonb(payload.progress or {}), now_ts(), task["data_sync_task_id"]),
+                )
+        return {"ok": True}
 
     @app.post("/api/nodes/tasks/{task_id}/result")
     def complete_node_task(task_id: int, payload: AgentTaskResult):
@@ -961,4 +985,6 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     f"node-task:{task_id}",
                     {"type": task["task_type"], "error": error, "retry_scheduled": retry_scheduled},
                 )
-            return {"ok": True}
+        # with db() 块结束后事务已提交，此时再唤醒等待方可保证其读到最新数据
+        signal_node_task_done(task_id)
+        return {"ok": True}
