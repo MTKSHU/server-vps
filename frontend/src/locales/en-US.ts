@@ -32,6 +32,7 @@ export default {
     images: "Images",
     storage: "Storage",
     tasks: "Task Center",
+    monitoring: "Monitoring",
     profile: "Profile",
     settings: "Platform Settings",
     users: "Users",

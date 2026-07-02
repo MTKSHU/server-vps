@@ -1,4 +1,5 @@
 from typing import Any
+import asyncio
 import time
 
 
@@ -159,3 +160,79 @@ def register_metrics_routes(app, deps: dict[str, Any]):
     def node_metrics(node_id: int):
         with db() as conn:
             return get_node(conn, node_id)
+
+    @app.get("/api/metrics/nodes/{node_id}/history")
+    def node_metrics_history(node_id: int, hours: int = 6):
+        """返回节点指标历史（CPU%/内存%/GPU%），最多 7 天。"""
+        hours = max(1, min(hours, 24 * 7))
+        since = int(time.time()) - hours * 3600
+        with db() as conn:
+            rows = conn.execute(
+                """
+                SELECT sampled_at, cpu_pct, memory_pct, disk_pct,
+                       gpu_avg_pct, gpu_avg_vram_pct, temperature_c
+                FROM node_metrics_snapshots
+                WHERE node_id = %s AND sampled_at >= %s
+                ORDER BY sampled_at ASC
+                """,
+                (node_id, since),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @app.on_event("startup")
+    async def start_metrics_sampler():
+        asyncio.create_task(_metrics_sampling_loop())
+
+    async def _metrics_sampling_loop():
+        """每 5 分钟采集一次所有在线节点指标，写入 node_metrics_snapshots。
+        超过 7 天的历史数据自动清理，防止表无限增长。"""
+        # 错开启动，避免与其他 startup 任务同时冲击 DB
+        await asyncio.sleep(30)
+        while True:
+            try:
+                with db() as conn:
+                    ts = int(time.time())
+                    node_rows = conn.execute(
+                        "SELECT * FROM nodes WHERE status = 'online'"
+                    ).fetchall()
+                    for node in node_rows:
+                        nid = node["id"]
+                        cpu_pct = float(node.get("cpu_usage_percent") or 0)
+                        mem_total = float(node.get("memory_total_gb") or 1)
+                        mem_used = float(node.get("memory_used_gb") or 0)
+                        memory_pct = min(100, mem_used / mem_total * 100) if mem_total > 0 else 0
+                        disk_total = float(node.get("disk_total_gb") or 1)
+                        disk_used = float(node.get("disk_used_gb") or 0)
+                        disk_pct = min(100, disk_used / disk_total * 100) if disk_total > 0 else 0
+                        gpus = conn.execute(
+                            "SELECT utilization, vram_gb, vram_used_mb FROM gpus WHERE node_id = %s",
+                            (nid,),
+                        ).fetchall()
+                        if gpus:
+                            gpu_avg_pct = sum(g["utilization"] for g in gpus) / len(gpus)
+                            gpu_avg_vram_pct = sum(
+                                (g["vram_used_mb"] / 1024 / g["vram_gb"] * 100) if g["vram_gb"] > 0 else 0
+                                for g in gpus
+                            ) / len(gpus)
+                        else:
+                            gpu_avg_pct = gpu_avg_vram_pct = 0
+                        temperature_c = int(node.get("cpu_temperature_c") or 0)
+                        conn.execute(
+                            """
+                            INSERT INTO node_metrics_snapshots
+                                (node_id, sampled_at, cpu_pct, memory_pct, disk_pct,
+                                 gpu_avg_pct, gpu_avg_vram_pct, temperature_c)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (nid, ts, cpu_pct, memory_pct, disk_pct,
+                             gpu_avg_pct, gpu_avg_vram_pct, temperature_c),
+                        )
+                    # 清理 7 天以上的旧数据
+                    cutoff = ts - 7 * 86400
+                    conn.execute(
+                        "DELETE FROM node_metrics_snapshots WHERE sampled_at < %s", (cutoff,)
+                    )
+            except Exception as exc:
+                import sys
+                print(f"[WARN] _metrics_sampling_loop: {exc!r}", file=sys.stderr, flush=True)
+            await asyncio.sleep(300)  # 5 分钟

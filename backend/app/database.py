@@ -666,6 +666,24 @@ def init_schema():
         )
         # 容器到期时间
         conn.execute("ALTER TABLE containers ADD COLUMN IF NOT EXISTS expires_at INTEGER NOT NULL DEFAULT 0")
+        # 节点指标历史（轻量监控）
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS node_metrics_snapshots (
+                id BIGSERIAL PRIMARY KEY,
+                node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                sampled_at INTEGER NOT NULL,
+                cpu_pct REAL NOT NULL DEFAULT 0,
+                memory_pct REAL NOT NULL DEFAULT 0,
+                disk_pct REAL NOT NULL DEFAULT 0,
+                gpu_avg_pct REAL NOT NULL DEFAULT 0,
+                gpu_avg_vram_pct REAL NOT NULL DEFAULT 0,
+                temperature_c INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS node_metrics_snapshots_node_time_idx "
+            "ON node_metrics_snapshots (node_id, sampled_at DESC)"
+        )
 
 def migrate_group_names(conn, ts: int):
     legacy_groups = conn.execute(

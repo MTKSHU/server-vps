@@ -600,6 +600,20 @@ export function getNodeHardware() {
   return request<NodeHardware[]>("/api/metrics/node-hardware");
 }
 
+export interface MetricsSnapshot {
+  sampled_at: number;
+  cpu_pct: number;
+  memory_pct: number;
+  disk_pct: number;
+  gpu_avg_pct: number;
+  gpu_avg_vram_pct: number;
+  temperature_c: number;
+}
+
+export function getNodeMetricsHistory(nodeId: number, hours: number) {
+  return request<MetricsSnapshot[]>(`/api/metrics/nodes/${nodeId}/history?hours=${hours}`);
+}
+
 export function getAgentReleases() {
   return request<AgentRelease[]>("/api/agent-releases");
 }
@@ -1067,8 +1081,8 @@ export interface RecentTask {
   finished_at: number;
 }
 
-export function getRecentTasks() {
-  return request<RecentTask[]>("/api/tasks/recent");
+export function getRecentTasks(page = 1, perPage = 20) {
+  return request<{ total: number; items: RecentTask[] }>(`/api/tasks/recent?page=${page}&per_page=${perPage}`);
 }
 
 export function runContainerSync(containerId: number, payload: {

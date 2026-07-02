@@ -11,6 +11,7 @@ import Profile from "../pages/Profile.vue";
 import PlatformSettings from "../pages/PlatformSettings.vue";
 import StorageCenter from "../pages/StorageCenter.vue";
 import Tasks from "../pages/Tasks.vue";
+import Monitoring from "../pages/Monitoring.vue";
 import Login from "../pages/Login.vue";
 import LoginCallback from "../pages/LoginCallback.vue";
 import Register from "../pages/Register.vue";
@@ -37,6 +38,7 @@ const router = createRouter({
         { path: "images", name: "images", component: Images, meta: { titleKey: "nav.images", admin: true } },
         { path: "storage", name: "storage", component: StorageCenter, meta: { titleKey: "nav.storage" } },
         { path: "tasks", name: "tasks", component: Tasks, meta: { titleKey: "nav.tasks" } },
+        { path: "monitoring", name: "monitoring", component: Monitoring, meta: { titleKey: "nav.monitoring", admin: true } },
         { path: "profile", name: "profile", component: Profile, meta: { titleKey: "nav.profile" } },
         { path: "settings", name: "settings", component: PlatformSettings, meta: { titleKey: "nav.settings", admin: true } },
         { path: "users", name: "users", component: Users, meta: { titleKey: "nav.users", admin: true } }

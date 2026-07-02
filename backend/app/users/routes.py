@@ -209,61 +209,81 @@ def register_user_routes(app, deps: dict[str, Any]):
             return {"task_ids": task_ids, "container_count": len(containers)}
 
     @app.get("/api/tasks/recent")
-    def recent_tasks():
-        """返回当前用户最近 50 条节点任务 + 同步任务（统一视图）。"""
+    def recent_tasks(page: int = 1, per_page: int = 20):
+        """返回全量任务历史（节点任务 + 同步任务），支持分页。"""
+        page = max(1, page)
+        per_page = max(1, min(per_page, 100))
+        offset = (page - 1) * per_page
         with db() as conn:
             user = current_user(conn)
-            is_admin = is_admin_user(user)
-            # 节点任务
-            if is_admin:
-                node_task_rows = conn.execute(
+            _is_admin = is_admin_user(user)
+
+            if _is_admin:
+                count_row = conn.execute(
                     """
-                    SELECT nt.id, 'node_task' AS kind, nt.container_id, c.name AS container_name,
-                           nt.task_type AS type, nt.status, nt.last_error AS error,
-                           nt.created_at, nt.updated_at, nt.finished_at
-                    FROM node_tasks nt
-                    LEFT JOIN containers c ON c.id = nt.container_id
-                    ORDER BY nt.created_at DESC LIMIT 50
+                    SELECT (SELECT COUNT(*) FROM node_tasks)
+                         + (SELECT COUNT(*) FROM data_sync_tasks) AS total
                     """
-                ).fetchall()
-                sync_task_rows = conn.execute(
+                ).fetchone()
+                total = count_row["total"] if count_row else 0
+                rows = conn.execute(
                     """
-                    SELECT dst.id, 'sync_task' AS kind, dst.container_id, c.name AS container_name,
-                           dst.task_type AS type, dst.status, '' AS error,
-                           dst.created_at, dst.updated_at, dst.finished_at
-                    FROM data_sync_tasks dst
-                    LEFT JOIN containers c ON c.id = dst.container_id
-                    ORDER BY dst.created_at DESC LIMIT 50
-                    """
+                    SELECT * FROM (
+                        SELECT nt.id, 'node_task' AS kind, nt.container_id,
+                               c.name AS container_name,
+                               nt.task_type AS type, nt.status, nt.last_error AS error,
+                               nt.created_at, nt.updated_at, nt.finished_at
+                        FROM node_tasks nt
+                        LEFT JOIN containers c ON c.id = nt.container_id
+                        UNION ALL
+                        SELECT dst.id, 'sync_task' AS kind, dst.container_id,
+                               c.name AS container_name,
+                               dst.task_type AS type, dst.status, '' AS error,
+                               dst.created_at, dst.updated_at, dst.finished_at
+                        FROM data_sync_tasks dst
+                        LEFT JOIN containers c ON c.id = dst.container_id
+                    ) t
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (per_page, offset),
                 ).fetchall()
             else:
-                node_task_rows = conn.execute(
+                uid = user["id"]
+                count_row = conn.execute(
                     """
-                    SELECT nt.id, 'node_task' AS kind, nt.container_id, c.name AS container_name,
-                           nt.task_type AS type, nt.status, nt.last_error AS error,
-                           nt.created_at, nt.updated_at, nt.finished_at
-                    FROM node_tasks nt
-                    JOIN containers c ON c.id = nt.container_id
-                    WHERE c.owner_id = %s
-                    ORDER BY nt.created_at DESC LIMIT 50
+                    SELECT (SELECT COUNT(*) FROM node_tasks nt JOIN containers c ON c.id=nt.container_id WHERE c.owner_id=%s)
+                         + (SELECT COUNT(*) FROM data_sync_tasks WHERE user_id=%s) AS total
                     """,
-                    (user["id"],),
-                ).fetchall()
-                sync_task_rows = conn.execute(
+                    (uid, uid),
+                ).fetchone()
+                total = count_row["total"] if count_row else 0
+                rows = conn.execute(
                     """
-                    SELECT dst.id, 'sync_task' AS kind, dst.container_id, c.name AS container_name,
-                           dst.task_type AS type, dst.status, '' AS error,
-                           dst.created_at, dst.updated_at, dst.finished_at
-                    FROM data_sync_tasks dst
-                    LEFT JOIN containers c ON c.id = dst.container_id
-                    WHERE dst.user_id = %s
-                    ORDER BY dst.created_at DESC LIMIT 50
+                    SELECT * FROM (
+                        SELECT nt.id, 'node_task' AS kind, nt.container_id,
+                               c.name AS container_name,
+                               nt.task_type AS type, nt.status, nt.last_error AS error,
+                               nt.created_at, nt.updated_at, nt.finished_at
+                        FROM node_tasks nt
+                        JOIN containers c ON c.id = nt.container_id
+                        WHERE c.owner_id = %s
+                        UNION ALL
+                        SELECT dst.id, 'sync_task' AS kind, dst.container_id,
+                               c.name AS container_name,
+                               dst.task_type AS type, dst.status, '' AS error,
+                               dst.created_at, dst.updated_at, dst.finished_at
+                        FROM data_sync_tasks dst
+                        LEFT JOIN containers c ON c.id = dst.container_id
+                        WHERE dst.user_id = %s
+                    ) t
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s OFFSET %s
                     """,
-                    (user["id"],),
+                    (uid, uid, per_page, offset),
                 ).fetchall()
-            combined = [dict(r) for r in node_task_rows] + [dict(r) for r in sync_task_rows]
-            combined.sort(key=lambda r: r["created_at"], reverse=True)
-            return combined[:100]
+
+            return {"total": total, "items": [dict(r) for r in rows]}
 
     @app.get("/api/me/api-tokens")
     def list_api_tokens():

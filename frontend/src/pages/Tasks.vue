@@ -1,35 +1,33 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Refresh } from "@element-plus/icons-vue";
 import { getRecentTasks, type RecentTask } from "../api/cluster";
 
 const { t } = useI18n();
 const loading = ref(false);
-const tasks = ref<RecentTask[]>([]);
+const items = ref<RecentTask[]>([]);
+const total = ref(0);
 const currentPage = ref(1);
 const pageSize = 20;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
-const activeTaskCount = computed(() =>
-  tasks.value.filter(r => ["pending", "claimed", "planned", "running", "verifying"].includes(r.status)).length
+const activeCount = computed(() =>
+  items.value.filter(r => ["pending", "claimed", "planned", "running", "verifying"].includes(r.status)).length
 );
-
-const pagedTasks = computed(() => {
-  const start = (currentPage.value - 1) * pageSize;
-  return tasks.value.slice(start, start + pageSize);
-});
 
 async function load() {
   loading.value = true;
   try {
-    tasks.value = await getRecentTasks();
-    // 刷新时若当前页超出范围则回到第一页
-    const maxPage = Math.max(1, Math.ceil(tasks.value.length / pageSize));
-    if (currentPage.value > maxPage) currentPage.value = 1;
+    const res = await getRecentTasks(currentPage.value, pageSize);
+    items.value = res.items;
+    total.value = res.total;
   } finally { loading.value = false; }
 }
+
+// 切页时重新拉取
+watch(currentPage, load);
 
 function formatTime(ts: number) {
   if (!ts) return "-";
@@ -65,7 +63,8 @@ function kindLabel(kind: string, type: string) {
 
 onMounted(() => {
   load();
-  timer = setInterval(() => { if (activeTaskCount.value > 0) load(); }, 5000);
+  // 仅在第一页有进行中任务时自动刷新（避免跨页切换时意外跳回）
+  timer = setInterval(() => { if (currentPage.value === 1 && activeCount.value > 0) load(); }, 5000);
 });
 onUnmounted(() => { if (timer) clearInterval(timer); });
 </script>
@@ -75,16 +74,16 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
     <el-card shadow="never">
       <template #header>
         <div style="display:flex;align-items:center;justify-content:space-between">
-          <strong>{{ t("nav.tasks") }}</strong>
+          <strong>{{ t("nav.tasks") }} <span v-if="total" style="font-weight:400;font-size:13px;color:var(--el-text-color-secondary)">（共 {{ total }} 条）</span></strong>
           <el-button :icon="Refresh" :loading="loading" size="small" @click="load">{{ t("common.refresh") }}</el-button>
         </div>
       </template>
 
-      <el-alert v-if="activeTaskCount > 0" type="info" :closable="false" style="margin-bottom:12px">
-        {{ activeTaskCount }} 个任务正在进行，每 5 秒自动刷新
+      <el-alert v-if="activeCount > 0 && currentPage === 1" type="info" :closable="false" style="margin-bottom:12px">
+        {{ activeCount }} 个任务正在进行，每 5 秒自动刷新
       </el-alert>
 
-      <el-table :data="pagedTasks" stripe size="small" v-loading="loading">
+      <el-table :data="items" stripe size="small" v-loading="loading">
         <el-table-column label="任务类型" min-width="160">
           <template #default="{ row }">{{ kindLabel(row.kind, row.type) }}</template>
         </el-table-column>
@@ -107,16 +106,16 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         </el-table-column>
       </el-table>
 
-      <div v-if="tasks.length > pageSize" style="margin-top:16px;display:flex;justify-content:flex-end">
+      <div v-if="total > pageSize" style="margin-top:16px;display:flex;justify-content:flex-end">
         <el-pagination
           v-model:current-page="currentPage"
           :page-size="pageSize"
-          :total="tasks.length"
+          :total="total"
           layout="total, prev, pager, next"
           background
         />
       </div>
-      <p v-if="!loading && tasks.length === 0" style="text-align:center;color:var(--el-text-color-placeholder);padding:24px 0;margin:0">暂无任务记录</p>
+      <p v-if="!loading && items.length === 0" style="text-align:center;color:var(--el-text-color-placeholder);padding:24px 0;margin:0">暂无任务记录</p>
     </el-card>
   </div>
 </template>
