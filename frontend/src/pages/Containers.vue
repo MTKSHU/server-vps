@@ -10,6 +10,7 @@ import {
   Delete,
   Download,
   FolderOpened,
+  Monitor,
   Plus,
   Position,
   Refresh,
@@ -336,6 +337,23 @@ function publicHost() {
 
 function sshPort(row: Container) {
   return row.ports.find((port) => port.protocol === "tcp" && port.container_port === 22);
+}
+
+// ── Web 服务（code-server / JupyterLab）─────────────────────────────────────
+const WEB_PORT_NAMES = new Set(["code-server", "jupyterlab", "web"]);
+
+// 返回容器所有已命名的 web 端口（可能多个）
+function webPorts(row: Container) {
+  return row.ports.filter((port) => port.protocol === "tcp" && WEB_PORT_NAMES.has(port.name));
+}
+
+// 路径含端口名称，避免多个 web 端口时的歧义
+function webUrl(row: Container, port: ContainerPort) {
+  return `${window.location.origin}/c/${row.name}/${port.name}/`;
+}
+
+function openWeb(row: Container, port: ContainerPort) {
+  window.open(webUrl(row, port), "_blank", "noopener,noreferrer");
 }
 
 function publicPort(port: ContainerPort) {
@@ -813,6 +831,11 @@ onBeforeUnmount(() => {
               <code v-if="sshPort(row) && nodeSshCommand(row, sshPort(row)!)" class="node-port-line">
                 {{ t("containers.node") }} {{ nodeSshCommand(row, sshPort(row)!) }}
               </code>
+              <a v-for="port in webPorts(row)" :key="port.id"
+                 :href="webUrl(row, port)" target="_blank" rel="noopener noreferrer"
+                 class="web-url-link" :class="{ 'web-url-link--offline': row.status !== 'running' }">
+                🌐 {{ port.name }} · {{ webUrl(row, port) }}
+              </a>
             </div>
           </template>
         </template>
@@ -828,6 +851,32 @@ onBeforeUnmount(() => {
               <el-button size="small" class="container-action-button" :icon="Setting" :disabled="lifecycleBusy(row)" @click="openResourceDialog(row)">{{ t("containers.configure") }}</el-button>
             </div>
             <div class="container-action-line">
+              <!-- 单个 web 端口：直接按钮；多个：下拉选择 -->
+              <el-button
+                v-if="webPorts(row).length === 1"
+                size="small"
+                class="container-action-button"
+                :icon="Monitor"
+                :disabled="row.status !== 'running'"
+                @click="openWeb(row, webPorts(row)[0])"
+              >Web</el-button>
+              <el-dropdown v-else-if="webPorts(row).length > 1" trigger="click">
+                <el-button
+                  size="small"
+                  class="container-action-button"
+                  :icon="Monitor"
+                  :disabled="row.status !== 'running'"
+                >Web</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="port in webPorts(row)"
+                      :key="port.id"
+                      @click="openWeb(row, port)"
+                    >{{ port.name }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
               <el-button size="small" class="container-action-button" :icon="Connection" :disabled="!accessReady(row)" @click="openShell(row)">Shell</el-button>
               <el-button size="small" class="container-action-button" :icon="Switch" @click="openSyncDialog(row)">{{ t("containers.sync") }}</el-button>
               <el-button v-if="isAdmin" size="small" class="container-action-button container-action-button-wide" :icon="Upload" @click="publishImage(row)">{{ t("containers.publishImage") }}</el-button>
@@ -1139,6 +1188,22 @@ onBeforeUnmount(() => {
 
 .node-port-line {
   color: var(--el-text-color-secondary);
+}
+
+.web-url-link {
+  color: var(--el-color-primary);
+  text-decoration: none;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.web-url-link:hover {
+  text-decoration: underline;
+}
+
+.web-url-link--offline {
+  color: var(--el-text-color-disabled);
+  pointer-events: none;
 }
 
 .sync-form {

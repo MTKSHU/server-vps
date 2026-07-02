@@ -1,16 +1,109 @@
+import asyncio
+import os
 import re
+import shlex
+import tempfile
 import time
 from typing import Any
 
+import asyncssh
 import httpx
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from psycopg.types.json import Jsonb
 
 from ..schemas import ImageInput
 from ..auth import require_admin
+from ..config import SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER
 
 _ubuntu_remotes_cache: dict[str, Any] = {"data": None, "expires": 0}
 _LXC_STREAMS_URL = "https://images.linuxcontainers.org/streams/v1/images.json"
+
+
+def _ssh_kwargs(node: dict) -> dict:
+    """从节点记录构建 asyncssh.connect 参数（复用平台 Sync SSH 密钥配置）。"""
+    host = str(node.get("sync_ip") or node.get("ip") or "").strip()
+    if not host:
+        raise HTTPException(status_code=400, detail=f"节点 {node.get('hostname')} 地址缺失")
+    try:
+        ssh_port = int(node.get("ssh_port") or SYNC_SSH_PORT)
+    except (TypeError, ValueError):
+        ssh_port = SYNC_SSH_PORT
+    kwargs: dict = dict(
+        host=host,
+        port=ssh_port,
+        username=str(node.get("ssh_user") or "").strip() or SYNC_SSH_USER,
+        known_hosts=None,
+    )
+    _cluster_key = os.path.join(
+        os.environ.get("AGENT_RELEASE_DIR", "/var/lib/cluster-agent-releases"),
+        ".cluster_node_key",
+    )
+    if SYNC_SSH_IDENTITY_FILE and os.path.isfile(SYNC_SSH_IDENTITY_FILE):
+        kwargs["client_keys"] = [SYNC_SSH_IDENTITY_FILE]
+    elif os.path.isfile(_cluster_key):
+        kwargs["client_keys"] = [_cluster_key]
+    return kwargs
+
+
+async def _ssh_copy_incus_image(source: dict, target: dict, alias: str) -> None:
+    """
+    通过管理端 SSH 通道，把 source 节点上的 Incus 镜像传输到 target 节点。
+
+    流程：
+      1. source: incus image export <alias> /tmp/xxx  → 生成 /tmp/xxx.tar.gz
+      2. SFTP 下载到管理端临时文件
+      3. source: 清理临时文件
+      4. SFTP 上传到 target 节点 /tmp/xxx.tar.gz
+      5. target: incus image import /tmp/xxx.tar.gz --alias <alias>
+      6. target: 清理临时文件
+
+    本函数作为 FastAPI BackgroundTask 运行，不阻塞 HTTP 请求。
+    """
+    safe = alias.replace("/", "-").replace(":", "-")
+    remote_base = f"/tmp/incus-dist-{safe}-{os.getpid()}"
+    remote_gz   = f"{remote_base}.tar.gz"
+    local_tmp: str | None = None
+
+    try:
+        # ── Step 1-3: export + download from source ───────────────────────
+        async with asyncssh.connect(**_ssh_kwargs(source)) as src:
+            result = await src.run(
+                f"incus image export {shlex.quote(alias)} {shlex.quote(remote_base)}",
+                check=True,
+            )
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tf:
+                local_tmp = tf.name
+            async with src.start_sftp_client() as sftp:
+                await sftp.get(remote_gz, local_tmp)
+            await src.run(f"rm -f {shlex.quote(remote_gz)}")
+
+        # ── Step 4-6: upload + import on target ───────────────────────────
+        async with asyncssh.connect(**_ssh_kwargs(target)) as tgt:
+            async with tgt.start_sftp_client() as sftp:
+                await sftp.put(local_tmp, remote_gz)
+            # 先删除同名别名（忽略错误），再导入
+            await tgt.run(
+                f"incus image delete {shlex.quote(alias)} 2>/dev/null || true; "
+                f"incus image import {shlex.quote(remote_gz)} --alias {shlex.quote(alias)}",
+                check=True,
+            )
+            await tgt.run(f"rm -f {shlex.quote(remote_gz)}")
+
+        print(
+            f"incus image copy {alias}: {source['hostname']} → {target['hostname']} OK",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"incus image copy {alias}: {source['hostname']} → {target['hostname']} FAILED: {exc}",
+            flush=True,
+        )
+    finally:
+        if local_tmp:
+            try:
+                os.unlink(local_tmp)
+            except OSError:
+                pass
 
 
 def public_image(row: dict[str, Any]) -> dict[str, Any]:
@@ -244,3 +337,104 @@ def register_image_routes(app, deps: dict[str, Any]):
                 task_ids.append(row["id"])
             audit(conn, "admin", "pull", f"remote_image:{incus_ref}", {"node_count": len(nodes)})
         return {"task_ids": task_ids, "node_count": len(nodes)}
+
+    @app.post("/api/image-catalog/delete-node-image", status_code=202)
+    def delete_node_image(body: dict):
+        require_admin()
+        node_id = body.get("node_id")
+        image_ref = (body.get("image_ref") or "").strip()
+        if not node_id or not image_ref:
+            raise HTTPException(status_code=400, detail="node_id 和 image_ref 不能为空")
+        with db() as conn:
+            node = conn.execute(
+                "SELECT id FROM nodes WHERE id = %s AND status = 'online'",
+                (node_id,),
+            ).fetchone()
+            if not node:
+                raise HTTPException(status_code=409, detail="目标节点不在线")
+            ts = now_ts()
+            row = conn.execute(
+                """
+                INSERT INTO node_tasks (node_id, container_id, data_sync_task_id, task_type, payload, status, available_at, created_at, updated_at)
+                VALUES (%s, NULL, NULL, 'incus_delete_image', %s, 'pending', 0, %s, %s)
+                RETURNING id
+                """,
+                (node_id, Jsonb({"image_ref": image_ref}), ts, ts),
+            ).fetchone()
+            audit(conn, "admin", "delete-node-image", f"node:{node_id}", {"image_ref": image_ref})
+        return {"task_id": row["id"]}
+
+    @app.post("/api/image-catalog/copy-local-image", status_code=202)
+    async def copy_local_image_to_node(body: dict, background_tasks: BackgroundTasks):
+        """
+        将本地自建 Incus 镜像从拥有该镜像的节点复制到目标节点。
+
+        与远程镜像（images:ubuntu/24.04）不同，本地镜像无法通过
+        incus image copy local:xxx 跨节点复制，需要走：
+          源节点 export → 管理端中转 → 目标节点 import
+        本接口找到一个拥有该镜像的在线节点作为来源，通过 SSH 完成传输，
+        操作在后台进行，立即返回。
+        """
+        require_admin()
+        target_node_id = body.get("target_node_id")
+        image_ref = (body.get("image_ref") or "").strip()
+        if not target_node_id or not image_ref:
+            raise HTTPException(status_code=400, detail="target_node_id 和 image_ref 不能为空")
+
+        # 去掉 "local:" 前缀，得到 Incus 内部别名
+        alias = image_ref.removeprefix("local:") if image_ref.startswith("local:") else image_ref
+
+        with db() as conn:
+            target = conn.execute(
+                "SELECT * FROM nodes WHERE id = %s AND status = 'online'",
+                (target_node_id,),
+            ).fetchone()
+            if not target:
+                raise HTTPException(status_code=409, detail="目标节点不在线")
+
+            # 在其他在线节点中找到持有该别名的来源节点
+            source = conn.execute(
+                """
+                SELECT DISTINCT n.*
+                FROM nodes n
+                JOIN node_incus_images nii ON nii.node_id = n.id
+                WHERE n.status = 'online'
+                  AND n.id != %s
+                  AND (
+                    nii.aliases = %s
+                    OR nii.aliases LIKE %s
+                    OR nii.aliases LIKE %s
+                    OR nii.aliases LIKE %s
+                  )
+                ORDER BY n.id
+                LIMIT 1
+                """,
+                (target_node_id, alias, f"{alias},%", f"%,{alias}", f"%,{alias},%"),
+            ).fetchone()
+            if not source:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"找不到拥有镜像 '{alias}' 的其他在线节点。"
+                        f"请先在某个计算节点上导入该镜像（例如用 build-incus-image.sh --node），"
+                        f"再尝试分发到其他节点。"
+                    ),
+                )
+            source_dict = dict(source)
+            target_dict = dict(target)
+            audit(conn, "admin", "copy-local-image", f"node:{target_node_id}",
+                  {"alias": alias, "source_node": source["hostname"]})
+
+        background_tasks.add_task(_ssh_copy_incus_image, source_dict, target_dict, alias)
+        msg = (
+            "镜像传输已在后台启动：" + source_dict["hostname"]
+            + " → " + target_dict["hostname"]
+            + "（" + alias + "）。传输完成后请刷新「节点本地镜像」页面确认。"
+        )
+        return {
+            "ok": True,
+            "alias": alias,
+            "source_node": source_dict["hostname"],
+            "target_node": target_dict["hostname"],
+            "message": msg,
+        }

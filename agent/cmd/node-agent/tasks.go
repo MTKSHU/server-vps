@@ -272,6 +272,20 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
 		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "incus_delete_image":
+		var payload IncusDeleteImagePayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		ref := strings.TrimSpace(payload.ImageRef)
+		if ref == "" {
+			return TaskResultRequest{OK: false, Status: "failed", Error: "image_ref is empty"}
+		}
+		output, err := runCommandCombined("incus", "image", "delete", ref)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: strings.TrimSpace(output)}
 	default:
 		return TaskResultRequest{OK: false, Status: "failed", Error: "unknown task type: " + task.Type}
 	}

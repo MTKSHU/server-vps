@@ -1,0 +1,15 @@
+[Unit]
+Description=JupyterLab
+After=network.target
+
+[Service]
+Type=simple
+# 以 root 身份运行初始化脚本（写入配置/token 文件）
+ExecStartPre=/usr/local/bin/jupyter-init.sh
+# 再以 ubuntu 用户启动 JupyterLab
+ExecStart=/usr/local/bin/jupyter-start.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

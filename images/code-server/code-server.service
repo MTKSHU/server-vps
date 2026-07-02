@@ -1,0 +1,17 @@
+[Unit]
+Description=code-server (VS Code in Browser)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+# + 前缀：ExecStartPre 始终以 root 运行（需要 chown / mkdir 等操作）
+ExecStartPre=+/usr/local/bin/code-server-init.sh
+ExecStart=/usr/bin/code-server --config /home/ubuntu/.config/code-server/config.yaml
+Restart=always
+RestartSec=5
+Environment=HOME=/home/ubuntu
+
+[Install]
+WantedBy=multi-user.target

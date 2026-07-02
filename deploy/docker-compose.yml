@@ -71,6 +71,7 @@ services:
     depends_on:
       - frontend
       - backend
+      - http-path-proxy
     ports:
       - "${HTTP_PORT:-80}:80"
     restart: unless-stopped
@@ -94,6 +95,32 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
+
+  # ── HTTP 路径代理（code-server / JupyterLab 等 Web 服务）─────────────────
+  # 将 /c/<container-name>/<port-name>/ 路由到对应容器的 Web 端口
+  # 使用普通 Docker 网络：nginx 通过服务名直接访问；出站连接计算节点经 Docker NAT 天然透传
+  http-path-proxy:
+    build:
+      context: ../backend
+    command: ["python", "-m", "app.http_path_proxy"]
+    environment:
+      # 直接访问后端服务（不经过 nginx）
+      ROUTER_BACKEND_URL: http://backend:8080
+      PORT_ROUTER_TOKEN: ${PORT_ROUTER_TOKEN:-}
+      PATH_PROXY_PORT: ${PATH_PROXY_PORT:-8890}
+      PATH_ROUTER_SYNC_INTERVAL: ${PATH_ROUTER_SYNC_INTERVAL:-5}
+      PATH_PREFIX: ${PATH_PREFIX:-/c/}
+    expose:
+      - "8890"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8890/', timeout=3)\" 2>/dev/null || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
 

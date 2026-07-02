@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ElMessage } from "element-plus";
 import { Select } from "@element-plus/icons-vue";
+import TasksPage from "./Tasks.vue";
 import { getPlatformSettings, updatePlatformSettings, type PlatformSettings } from "../api/cluster";
 
 const { t } = useI18n();
@@ -72,7 +73,9 @@ onMounted(load);
 </script>
 
 <template>
-  <div v-loading="loading" class="page-stack">
+  <el-tabs>
+    <el-tab-pane :label="t('settings.tabSettings')">
+      <div v-loading="loading" class="page-stack" style="margin-top:16px">
     <el-card shadow="never">
       <template #header><strong>{{ t("settings.authRegistration") }}</strong></template>
       <el-form :model="form" label-position="top" class="settings-grid">
@@ -201,9 +204,14 @@ onMounted(load);
     </el-card>
 
     <div class="settings-actions">
-      <el-button type="primary" :icon="Select" :loading="saving" @click="submit">{{ t("settings.saveSettings") }}</el-button>
+        <el-button type="primary" :icon="Select" :loading="saving" @click="submit">{{ t("settings.saveSettings") }}</el-button>
+      </div>
     </div>
-  </div>
+    </el-tab-pane>
+    <el-tab-pane :label="t('nav.tasks')">
+      <TasksPage />
+    </el-tab-pane>
+  </el-tabs>
 </template>
 
 <style scoped>

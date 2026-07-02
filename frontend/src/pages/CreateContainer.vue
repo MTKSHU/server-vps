@@ -337,6 +337,41 @@ watch(
     if (node) form.name = generateName(node.hostname);
   }
 );
+
+// ── 选择 code-server / jupyterlab 镜像时自动预填 Web 端口 ────────────────────
+const IMAGE_WEB_PRESETS: Record<string, { name: string; container_port: number }> = {
+  "code-server": { name: "code-server", container_port: 8080 },
+  jupyterlab:    { name: "jupyterlab",  container_port: 8888 },
+};
+
+function detectWebPreset(imageId: string) {
+  const lower = imageId.toLowerCase();
+  for (const [key, preset] of Object.entries(IMAGE_WEB_PRESETS)) {
+    if (lower.includes(key)) return preset;
+  }
+  return null;
+}
+
+watch(
+  () => form.image_id,
+  (newId) => {
+    if (!newId) return;
+    const preset = detectWebPreset(newId);
+
+    // 移除之前由本 watch 自动添加的 web 端口（保留用户手动添加的）
+    const allPresetNames = new Set(Object.values(IMAGE_WEB_PRESETS).map((p) => p.name));
+    ports.value = ports.value.filter((p) => !allPresetNames.has(p.name));
+
+    if (!preset) return;
+
+    // 确保 SSH 端口存在
+    if (!ports.value.some((p) => p.container_port === 22 && p.protocol === "tcp")) {
+      ports.value.push({ name: "ssh", port_type: "ssh", protocol: "tcp", container_port: 22 });
+    }
+    // 追加 web 端口
+    ports.value.push({ name: preset.name, port_type: "web", protocol: "tcp", container_port: preset.container_port });
+  }
+);
 </script>
 
 <template>

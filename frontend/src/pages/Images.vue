@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Close, Delete, Edit, Plus, Refresh, Select, Star, StarFilled, Upload } from "@element-plus/icons-vue";
 import {
-  deleteImage, deleteStorageImage, distributeStorageImage, getImageCatalog, getNodes, getStorageImages,
+  deleteImage, deleteNodeImage, copyLocalImage, deleteStorageImage, distributeStorageImage, getImageCatalog, getNodes, getStorageImages,
   getUserPreference, updateUserPreference,
   getUbuntuRemoteImages, pullImageToNode, saveImage,
   type Image, type IncusImage, type Node, type StorageImageFile, type UbuntuRemoteImage
@@ -115,16 +115,26 @@ async function removeStoredImage(row: StorageImageFile) {
 async function mountToNode(image: Image, nodeId: number) {
   try {
     if (isRemoteRef(image.incus_ref)) {
+      // 远程镜像（如 images:ubuntu/24.04）：直接让目标节点 incus image copy 拉取
       await pullImageToNode(image.incus_ref, nodeId);
       ElMessage.success(t("images.pullTaskSubmitted"));
     } else {
+      // 本地自建镜像（如 local:cluster/code-server）：
+      // 先看是否有已导出的存储文件，有则直接分发；
+      // 没有则通过管理端 SSH 在节点间 export→transfer→import
+      const alias = localAlias(image.incus_ref);
       const sf = storedImages.value.find(s =>
-        s.alias === image.incus_ref ||
-        s.aliases.split(",").map(a => a.trim()).includes(image.incus_ref)
+        s.alias === alias || s.alias === image.incus_ref ||
+        s.aliases.split(",").map(a => a.trim()).some(a => a === alias || a === image.incus_ref)
       );
-      if (!sf || sf.status !== "exported") { ElMessage.error(t("images.archiveNotFound")); return; }
-      await distributeStorageImage(sf.id, [nodeId]);
-      ElMessage.success(t("images.distributeTaskSubmitted"));
+      if (sf && sf.status === "exported") {
+        await distributeStorageImage(sf.id, [nodeId]);
+        ElMessage.success(t("images.distributeTaskSubmitted"));
+      } else {
+        // SSH pipeline：源节点 export → 管理端中转 → 目标节点 import
+        const result = await copyLocalImage(image.incus_ref, nodeId);
+        ElMessage.success(result.message || t("images.transferStarted"));
+      }
     }
     await load();
   } catch (e: any) { ElMessage.error(e?.message || t("images.operationFailed")); }
@@ -138,6 +148,123 @@ async function toggleFavorite(row: Image) {
   favoriteImageIds.value = Array.from(ids);
   await updateUserPreference("image_favorites", { image_ids: favoriteImageIds.value });
 }
+
+// ── 节点本地 Incus 镜像组（按 fingerprint 去重）────────────────────────────────
+interface NodeImageGroup {
+  fingerprint: string;
+  aliases: string;
+  description: string;
+  architecture: string;
+  updated_at: number;
+  nodes: Array<{ id: number; hostname: string; status: string }>;
+  primaryAlias: string;
+}
+
+const nodeImageGroups = computed<NodeImageGroup[]>(() => {
+  const groups = new Map<string, NodeImageGroup>();
+  for (const img of nodeImages.value) {
+    const nodeEntry = { id: img.node_id, hostname: img.node, status: img.node_status };
+    const existing = groups.get(img.fingerprint);
+    if (existing) {
+      if (!existing.nodes.some(n => n.id === img.node_id)) existing.nodes.push(nodeEntry);
+    } else {
+      const aliasList = (img.aliases || "").split(",").map(a => a.trim()).filter(Boolean);
+      const primaryAlias = aliasList[0] || img.fingerprint.slice(0, 12);
+      groups.set(img.fingerprint, {
+        fingerprint: img.fingerprint,
+        aliases: img.aliases,
+        description: img.description,
+        architecture: img.architecture,
+        updated_at: img.updated_at,
+        nodes: [nodeEntry],
+        primaryAlias,
+      });
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => a.primaryAlias.localeCompare(b.primaryAlias));
+});
+
+function isNodeImageRegistered(group: NodeImageGroup): boolean {
+  return images.value.some(
+    img => img.incus_ref === `local:${group.primaryAlias}` || img.incus_ref === group.primaryAlias
+  );
+}
+
+function registerFromNode(group: NodeImageGroup) {
+  const incusRef = `local:${group.primaryAlias}`;
+  const id = group.primaryAlias
+    .replace(/[^a-zA-Z0-9_.:-]/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  // 从已有节点推断 compatible_pools
+  const pools = [...new Set(
+    group.nodes
+      .map(n => computeNodes.value.find(cn => cn.id === n.id)?.driver_pool)
+      .filter((p): p is string => Boolean(p))
+  )].join(",");
+  editingId.value = "";
+  Object.assign(form, {
+    id,
+    name: group.description || group.primaryAlias,
+    incus_ref: incusRef,
+    cuda_major: 0,
+    compatible_pools: pools,
+    owner: "admin",
+    enabled: true,
+    preferred: true,
+  });
+  dialog.value = true;
+}
+
+// ── 节点本地镜像 ─ 移除 ───────────────────────────────────────────────────────
+async function removeFromNode(group: NodeImageGroup, node: { id: number; hostname: string; status: string }) {
+  try {
+    await ElMessageBox.confirm(
+      t("images.confirmRemoveFromNode", { node: node.hostname, alias: group.primaryAlias }),
+      t("images.removeFromNodeTitle"),
+      { type: "warning", confirmButtonText: t("images.remove"), cancelButtonText: t("common.cancel") }
+    );
+  } catch { return; }
+  try {
+    await deleteNodeImage(node.id, group.primaryAlias);
+    ElMessage.success(t("images.removeFromNodeSubmitted"));
+    await load();
+  } catch (e: any) {
+    ElMessage.error(e?.message || t("images.operationFailed"));
+  }
+}
+
+// ── 平台镜像 ─ 指纹检测 ─────────────────────────────────────────────────────
+function nodeImageFingerprint(nodeId: number, incus_ref: string): string {
+  const alias = localAlias(incus_ref);
+  const ni = nodeImages.value.find(img => {
+    if (img.node_id !== nodeId) return false;
+    return img.aliases.split(",").map(a => a.trim()).filter(Boolean)
+      .some(a => a === alias || a === incus_ref);
+  });
+  return ni?.fingerprint || "";
+}
+
+// 所有已同步节点中 updated_at 最新的指纹（编制时间最近）
+function latestFingerprint(image: Image): string {
+  const alias = localAlias(image.incus_ref);
+  const candidates = nodeImages.value
+    .filter(img =>
+      img.aliases.split(",").map(a => a.trim()).filter(Boolean)
+        .some(a => a === alias || a === image.incus_ref)
+    )
+    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  return candidates[0]?.fingerprint || "";
+}
+
+// 该节点的指纹是否与最新版本一致
+function isNodeFingerprintLatest(nodeId: number, image: Image): boolean {
+  const fp = nodeImageFingerprint(nodeId, image.incus_ref);
+  if (!fp) return true;
+  const latest = latestFingerprint(image);
+  return !latest || fp === latest;
+}
+
 onMounted(() => { load(); loadRemote(); });
 </script>
 
@@ -154,7 +281,20 @@ onMounted(() => { load(); loadRemote(); });
                 <div v-else style="padding:8px 24px;display:flex;flex-wrap:wrap;gap:8px">
                   <div v-for="n in computeNodes" :key="n.id" style="display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e4e7ed;border-radius:4px;background:#fafafa">
                     <span style="font-size:13px">{{ n.hostname }}</span>
-                    <el-tag v-if="nodeHasImage(n.id, row.incus_ref)" type="success" size="small">{{ t("images.synced") }}</el-tag>
+                    <template v-if="nodeHasImage(n.id, row.incus_ref)">
+                      <el-tag :type="isNodeFingerprintLatest(n.id, row) ? 'success' : 'warning'" size="small">
+                        {{ isNodeFingerprintLatest(n.id, row) ? t("images.synced") : t("images.outdated") }}
+                      </el-tag>
+                      <span style="font-size:11px;font-family:monospace;color:var(--el-text-color-secondary)" :title="nodeImageFingerprint(n.id, row.incus_ref)">
+                        {{ nodeImageFingerprint(n.id, row.incus_ref).slice(0, 8) }}
+                      </span>
+                      <el-button
+                        v-if="!isNodeFingerprintLatest(n.id, row)"
+                        size="small" type="warning" plain :icon="Refresh"
+                        @click="mountToNode(row, n.id)">
+                        {{ t("images.resync") }}
+                      </el-button>
+                    </template>
                     <el-button v-else size="small" type="primary" plain :icon="Upload" @click="mountToNode(row, n.id)">{{ t("images.sync") }}</el-button>
                   </div>
                 </div>
@@ -198,8 +338,45 @@ onMounted(() => { load(); loadRemote(); });
             <el-switch v-model="onlyMyStoredImages" :active-text="t('images.onlyMine')" :inactive-text="t('images.showAll')" />
           </div>
           <el-table :data="storedImagesForDisplay" stripe><el-table-column prop="alias" label="Alias"/><el-table-column prop="owner" :label="t('images.owner')" width="120"/><el-table-column prop="source_node" :label="t('images.sourceNode')" width="160"/><el-table-column prop="architecture" :label="t('images.architecture')" width="110"/><el-table-column prop="status" :label="t('images.status')" width="110"/><el-table-column :label="t('images.size')" width="120"><template #default="{row}">{{ Math.round(row.size_bytes/1024/1024) }} MB</template></el-table-column><el-table-column :label="t('images.actions')" width="160" fixed="right"><template #default="{row}"><el-button size="small" type="primary" :icon="Plus" @click="registerStored(row)">{{ t("images.register") }}</el-button><el-button size="small" type="danger" :icon="Delete" @click="removeStoredImage(row)">{{ t("images.remove") }}</el-button></template></el-table-column></el-table>
-        </el-tab-pane>
-        <el-tab-pane :label="t('images.remoteUbuntu')">
+        </el-tab-pane>        <el-tab-pane :label="t('images.nodeLocalImages')">
+          <div class="card-header">
+            <span style="font-size:13px;color:var(--el-text-color-secondary)">{{ t("images.nodeLocalImagesDesc") }}</span>
+            <el-button :icon="Refresh" @click="load">{{ t("common.refresh") }}</el-button>
+          </div>
+          <el-table :data="nodeImageGroups" stripe>
+            <el-table-column :label="t('images.alias')" min-width="200">
+              <template #default="{ row }">
+                <span style="font-family:monospace">{{ row.primaryAlias }}</span>
+                <el-tag v-if="isNodeImageRegistered(row)" type="success" size="small" style="margin-left:6px">{{ t("images.alreadyRegistered") }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="description" :label="t('images.description')" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="architecture" :label="t('images.architecture')" width="90" />
+            <el-table-column :label="t('images.availableNodes')" min-width="260">
+              <template #default="{ row }">
+                <div v-for="n in row.nodes" :key="n.id" style="display:inline-flex;align-items:center;gap:2px;margin:2px">
+                  <el-tag size="small">{{ n.hostname }}</el-tag>
+                  <el-button
+                    size="small" type="danger" :icon="Delete" link
+                    :title="t('images.removeFromNode')"
+                    @click.stop="removeFromNode(row, n)"
+                  />
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('images.fingerprint')" width="130">
+              <template #default="{ row }">
+                <span style="font-size:12px;font-family:monospace;color:var(--el-text-color-secondary)">{{ row.fingerprint.slice(0, 12) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('images.actions')" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" type="primary" :icon="Plus" @click="registerFromNode(row)">{{ t("images.register") }}</el-button>
+              </template>
+            </el-table-column>
+            <template #empty><el-empty :description="t('images.noNodeImages')" /></template>
+          </el-table>
+        </el-tab-pane>        <el-tab-pane :label="t('images.remoteUbuntu')">
           <div class="card-header">
             <div style="display:flex;gap:8px;align-items:center">
               <el-select v-model="remoteArch" style="width:110px" :placeholder="t('images.architecture')">

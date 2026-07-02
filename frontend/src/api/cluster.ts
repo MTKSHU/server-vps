@@ -700,6 +700,17 @@ export function pullImageToNode(incus_ref: string, node_id: number) {
   return postJson<{ task_ids: number[]; node_count: number }>("/api/image-catalog/pull-to-nodes", { incus_ref, node_id });
 }
 
+export function deleteNodeImage(node_id: number, image_ref: string) {
+  return postJson<{ task_id: number }>("/api/image-catalog/delete-node-image", { node_id, image_ref });
+}
+
+export function copyLocalImage(image_ref: string, target_node_id: number) {
+  return postJson<{ ok: boolean; alias: string; source_node: string; target_node: string; message: string }>(
+    "/api/image-catalog/copy-local-image",
+    { image_ref, target_node_id },
+  );
+}
+
 export function saveImage(payload: Partial<Image> & Pick<Image, "id" | "name" | "incus_ref">) {
   return postJson<Image>("/api/images", payload);
 }

@@ -208,6 +208,10 @@ type IncusImagePullPayload struct {
 	Alias    string `json:"alias"`
 }
 
+type IncusDeleteImagePayload struct {
+	ImageRef string `json:"image_ref"` // alias 或 fingerprint
+}
+
 type SshPubkeyInstallPayload struct {
 	Pubkey string `json:"pubkey"`
 }

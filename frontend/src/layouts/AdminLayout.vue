@@ -7,8 +7,6 @@ import {
   Gauge,
   LayoutDashboard,
   Layers,
-  ClipboardList,
-  Activity,
   HardDrive,
   LogOut,
   PanelLeftClose,
@@ -46,8 +44,6 @@ const items = computed(() => [
   { name: "containers", label: t("nav.containers"), icon: Cpu },
   ...(isAdmin.value ? [{ name: "images", label: t("nav.images"), icon: Layers }] : []),
   { name: "storage", label: t("nav.storage"), icon: HardDrive },
-  { name: "tasks", label: t("nav.tasks"), icon: ClipboardList },
-  ...(isAdmin.value ? [{ name: "monitoring", label: t("nav.monitoring"), icon: Activity }] : []),
   { name: "profile", label: t("nav.profile"), icon: User },
   ...(isAdmin.value ? [{ name: "settings", label: t("nav.settings"), icon: Settings }] : []),
   ...(isAdmin.value ? [{ name: "users", label: t("nav.users"), icon: Users }] : [])

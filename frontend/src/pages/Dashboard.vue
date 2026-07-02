@@ -3,9 +3,12 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Refresh } from "@element-plus/icons-vue";
 import StatCard from "../components/StatCard.vue";
+import MonitoringPage from "./Monitoring.vue";
+import { hasAdminAccess } from "../auth";
 import { getGpus, getNodeHardware, getSummary, type Gpu, type NodeHardware, type Summary } from "../api/cluster";
 
 const { t } = useI18n();
+const isAdmin = computed(() => hasAdminAccess());
 const SPARKLINE_MAX = 30; // 保留最近 30 个采样点（2s 间隔 = 1 分钟历史）
 
 const loading = ref(false);
@@ -237,7 +240,9 @@ onUnmounted(() => {
     </div>
 
     <!-- 节点实时监控图表卡片 -->
-    <el-card shadow="never">
+    <el-tabs>
+      <el-tab-pane :label="t('dashboard.realtimeMonitor')">
+        <el-card shadow="never">
       <template #header>
         <div class="card-header">
           <strong>{{ t("dashboard.realtimeMonitor") }}</strong>
@@ -361,7 +366,12 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-    </el-card>
+        </el-card>
+      </el-tab-pane>
+      <el-tab-pane v-if="isAdmin" :label="t('nav.monitoring')">
+        <MonitoringPage />
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
