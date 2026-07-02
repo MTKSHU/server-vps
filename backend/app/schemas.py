@@ -440,6 +440,68 @@ class NodeTaskOut(BaseModel):
     updated_at: int
 
 
+class SyncProgressOut(BaseModel):
+    phase: str | None = None
+    pct: int | None = None
+    bytes_done: int | None = None
+    bytes_total: int | None = None
+    rate: str | None = None
+    current_file: str | None = None
+
+
+class DataSyncTaskOut(BaseModel):
+    """GET /api/containers/{id}/sync-tasks 响应元素。"""
+    id: int
+    task_type: str
+    user_id: int | None = None
+    resource_id: int | None = None
+    source_node_id: int | None = None
+    target_node_id: int | None = None
+    container_id: int | None = None
+    source_path: str = ""
+    target_path: str = ""
+    status: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+    progress: SyncProgressOut | None = None
+    created_at: int
+    updated_at: int
+    finished_at: int = 0
+    last_error: str = ""
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageOut(BaseModel):
+    """GET /api/images 响应元素。"""
+    id: str
+    name: str
+    cuda_major: int = 0
+    compatible_pools: str = ""
+    incus_ref: str = ""
+    enabled: bool = True
+    preferred: bool = False
+    owner: str = "admin"
+    created_at: int
+    updated_at: int
+
+
+class IncusImageOut(BaseModel):
+    """节点本地 Incus 镜像条目。"""
+    node_id: int
+    node: str
+    node_status: str = ""
+    fingerprint: str = ""
+    aliases: str = ""
+    description: str = ""
+    architecture: str = ""
+    updated_at: int = 0
+
+
+class ImageCatalogOut(BaseModel):
+    """GET /api/image-catalog 响应体。"""
+    images: list[ImageOut] = Field(default_factory=list)
+    incus_images: list[IncusImageOut] = Field(default_factory=list)
+
+
 class HealthResponse(BaseModel):
     """GET /api/health 响应体。"""
     ok: bool

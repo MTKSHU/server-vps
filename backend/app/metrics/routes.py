@@ -57,12 +57,13 @@ def register_metrics_routes(app, deps: dict[str, Any]):
                 "memory_total_gb": memory_total,
                 "disk_used_gb": disk_used,
                 "disk_total_gb": disk_total,
-                "alerts": _build_alerts(conn, all_nodes),
+                "alerts": _build_alerts(conn, all_nodes, all_containers),
             }
 
-    def _build_alerts(conn, all_nodes: list) -> list[dict]:
+    def _build_alerts(conn, all_nodes: list, all_containers: list) -> list[dict]:
         alerts = []
-        stale_cutoff = int(time.time()) - 300  # 5 分钟无心跳视为真正离线
+        now = int(time.time())
+        stale_cutoff = now - 300  # 5 分钟无心跳视为真正离线
 
         # 1. 节点离线（stale/offline 状态）
         for node in all_nodes:
@@ -103,6 +104,37 @@ def register_metrics_routes(app, deps: dict[str, Any]):
                 })
         except Exception:
             pass  # 表不存在时静默跳过
+
+        # 4. 集群内存压力（在线节点总使用率 > 90%）
+        online_nodes = [n for n in all_nodes if n["status"] == "online"]
+        total_mem = sum(n.get("memory_total_gb", 0) for n in online_nodes)
+        used_mem = sum(n.get("memory_used_gb", 0) for n in online_nodes)
+        if total_mem > 0 and used_mem / total_mem > 0.90:
+            pct = int(used_mem / total_mem * 100)
+            alerts.append({
+                "level": "warning",
+                "type": "memory_pressure",
+                "message": f"集群内存使用率 {pct}%（{int(used_mem)} / {int(total_mem)} GB），建议释放资源",
+                "node_id": None,
+            })
+
+        # 5. GPU 长期空转（有 GPU 分配但容器已停止超过 24 小时）
+        gpu_idle_cutoff = now - 86400
+        idle = [
+            c for c in all_containers
+            if c["status"] == "stopped"
+            and c.get("gpus")
+            and (c.get("updated_at") or 0) < gpu_idle_cutoff
+        ]
+        if idle:
+            names = "、".join(c["name"] for c in idle[:3])
+            suffix = f" 等共 {len(idle)} 个" if len(idle) > 3 else ""
+            alerts.append({
+                "level": "warning",
+                "type": "gpu_idle",
+                "message": f"容器 {names}{suffix} 已停止超过 24 小时，仍占用 GPU，建议删除或释放",
+                "node_id": None,
+            })
 
         return alerts
 

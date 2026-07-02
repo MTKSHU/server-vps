@@ -432,7 +432,7 @@ def register_container_routes(app, deps: dict[str, Any]):
     async def start_container_sync_scheduler():
         asyncio.create_task(scheduled_container_sync_loop())
 
-    from ..schemas import ContainerOut
+    from ..schemas import ContainerOut, DataSyncTaskOut
 
     @app.get("/api/containers", response_model=list[ContainerOut])
     def containers():
@@ -612,15 +612,15 @@ def register_container_routes(app, deps: dict[str, Any]):
             audit(conn, user["username"], operation, f"container:{container_id}", {"name": container["name"]})
             return next(item for item in list_containers(conn) if item["id"] == container_id)
 
-    @app.post("/api/containers/{container_id}/start")
+    @app.post("/api/containers/{container_id}/start", response_model=ContainerOut)
     def start_container(container_id: int):
         return enqueue_container_lifecycle(container_id, "start", "starting")
 
-    @app.post("/api/containers/{container_id}/stop")
+    @app.post("/api/containers/{container_id}/stop", response_model=ContainerOut)
     def stop_container(container_id: int):
         return enqueue_container_lifecycle(container_id, "stop", "stopping")
 
-    @app.post("/api/containers/{container_id}/restart")
+    @app.post("/api/containers/{container_id}/restart", response_model=ContainerOut)
     def restart_container(container_id: int):
         return enqueue_container_lifecycle(container_id, "restart", "restarting")
 
@@ -899,7 +899,7 @@ def register_container_routes(app, deps: dict[str, Any]):
             require_container_access(user, container)
             return public_task(task)
 
-    @app.get("/api/containers/{container_id}/sync-tasks")
+    @app.get("/api/containers/{container_id}/sync-tasks", response_model=list[DataSyncTaskOut])
     def container_sync_tasks(container_id: int):
         with db() as conn:
             user = current_user(conn)

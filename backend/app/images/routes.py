@@ -54,13 +54,15 @@ def register_image_routes(app, deps: dict[str, Any]):
     now_ts = deps["now_ts"]
     audit = deps["audit"]
 
-    @app.get("/api/images")
+    from ..schemas import ImageCatalogOut, ImageOut
+
+    @app.get("/api/images", response_model=list[ImageOut])
     def images():
         with db() as conn:
             rows = conn.execute("SELECT * FROM images WHERE enabled = TRUE ORDER BY preferred DESC, name").fetchall()
             return [public_image(row) for row in rows]
 
-    @app.get("/api/image-catalog")
+    @app.get("/api/image-catalog", response_model=ImageCatalogOut)
     def image_catalog():
         require_admin()
         with db() as conn:
