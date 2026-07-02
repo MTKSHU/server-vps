@@ -7,15 +7,28 @@ import { getRecentTasks, type RecentTask } from "../api/cluster";
 const { t } = useI18n();
 const loading = ref(false);
 const tasks = ref<RecentTask[]>([]);
+const currentPage = ref(1);
+const pageSize = 20;
+
 let timer: ReturnType<typeof setInterval> | null = null;
 
 const activeTaskCount = computed(() =>
   tasks.value.filter(r => ["pending", "claimed", "planned", "running", "verifying"].includes(r.status)).length
 );
 
+const pagedTasks = computed(() => {
+  const start = (currentPage.value - 1) * pageSize;
+  return tasks.value.slice(start, start + pageSize);
+});
+
 async function load() {
   loading.value = true;
-  try { tasks.value = await getRecentTasks(); } finally { loading.value = false; }
+  try {
+    tasks.value = await getRecentTasks();
+    // 刷新时若当前页超出范围则回到第一页
+    const maxPage = Math.max(1, Math.ceil(tasks.value.length / pageSize));
+    if (currentPage.value > maxPage) currentPage.value = 1;
+  } finally { loading.value = false; }
 }
 
 function formatTime(ts: number) {
@@ -71,11 +84,9 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
         {{ activeTaskCount }} 个任务正在进行，每 5 秒自动刷新
       </el-alert>
 
-      <el-table :data="tasks" stripe size="small" v-loading="loading">
+      <el-table :data="pagedTasks" stripe size="small" v-loading="loading">
         <el-table-column label="任务类型" min-width="160">
-          <template #default="{ row }">
-            <span>{{ kindLabel(row.kind, row.type) }}</span>
-          </template>
+          <template #default="{ row }">{{ kindLabel(row.kind, row.type) }}</template>
         </el-table-column>
         <el-table-column label="容器" prop="container_name" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.container_name || "-" }}</template>
@@ -95,6 +106,17 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
           <template #default="{ row }">{{ row.finished_at ? formatTime(row.finished_at) : "-" }}</template>
         </el-table-column>
       </el-table>
+
+      <div v-if="tasks.length > pageSize" style="margin-top:16px;display:flex;justify-content:flex-end">
+        <el-pagination
+          v-model:current-page="currentPage"
+          :page-size="pageSize"
+          :total="tasks.length"
+          layout="total, prev, pager, next"
+          background
+        />
+      </div>
+      <p v-if="!loading && tasks.length === 0" style="text-align:center;color:var(--el-text-color-placeholder);padding:24px 0;margin:0">暂无任务记录</p>
     </el-card>
   </div>
 </template>
