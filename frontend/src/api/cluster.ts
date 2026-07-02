@@ -1081,8 +1081,9 @@ export interface RecentTask {
   finished_at: number;
 }
 
-export function getRecentTasks(page = 1, perPage = 20) {
-  return request<{ total: number; items: RecentTask[] }>(`/api/tasks/recent?page=${page}&per_page=${perPage}`);
+export function getRecentTasks(page = 1, perPage = 20, statusGroup = "") {
+  const q = statusGroup ? `&status_group=${encodeURIComponent(statusGroup)}` : "";
+  return request<{ total: number; items: RecentTask[] }>(`/api/tasks/recent?page=${page}&per_page=${perPage}${q}`);
 }
 
 export function runContainerSync(containerId: number, payload: {

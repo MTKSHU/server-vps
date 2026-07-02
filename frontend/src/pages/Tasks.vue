@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Refresh } from "@element-plus/icons-vue";
 import { getRecentTasks, type RecentTask } from "../api/cluster";
@@ -10,23 +10,32 @@ const items = ref<RecentTask[]>([]);
 const total = ref(0);
 const currentPage = ref(1);
 const pageSize = 20;
+const statusGroup = ref("");   // "" | "active" | "failed" | "succeeded"
+
+const STATUS_OPTIONS = [
+  { label: "全部",   value: "",          type: "" },
+  { label: "进行中", value: "active",    type: "warning" },
+  { label: "失败",   value: "failed",    type: "danger" },
+  { label: "成功",   value: "succeeded", type: "success" },
+] as const;
 
 let timer: ReturnType<typeof setInterval> | null = null;
-
-const activeCount = computed(() =>
-  items.value.filter(r => ["pending", "claimed", "planned", "running", "verifying"].includes(r.status)).length
-);
 
 async function load() {
   loading.value = true;
   try {
-    const res = await getRecentTasks(currentPage.value, pageSize);
+    const res = await getRecentTasks(currentPage.value, pageSize, statusGroup.value);
     items.value = res.items;
     total.value = res.total;
   } finally { loading.value = false; }
 }
 
-// 切页时重新拉取
+function onFilterChange(val: string) {
+  statusGroup.value = val;
+  currentPage.value = 1;
+  load();
+}
+
 watch(currentPage, load);
 
 function formatTime(ts: number) {
@@ -61,10 +70,18 @@ function kindLabel(kind: string, type: string) {
   return map[type] || type;
 }
 
+const activeCount = ref(0);
+
 onMounted(() => {
   load();
-  // 仅在第一页有进行中任务时自动刷新（避免跨页切换时意外跳回）
-  timer = setInterval(() => { if (currentPage.value === 1 && activeCount.value > 0) load(); }, 5000);
+  timer = setInterval(async () => {
+    if (currentPage.value === 1 || statusGroup.value === "active") {
+      // 有进行中任务时才自动刷新；通过不带筛选单独查一下数量
+      const snap = await getRecentTasks(1, 1, "active").catch(() => ({ total: 0, items: [] }));
+      activeCount.value = snap.total;
+      if (snap.total > 0) load();
+    }
+  }, 5000);
 });
 onUnmounted(() => { if (timer) clearInterval(timer); });
 </script>
@@ -73,13 +90,24 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
   <div class="page-stack">
     <el-card shadow="never">
       <template #header>
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <strong>{{ t("nav.tasks") }} <span v-if="total" style="font-weight:400;font-size:13px;color:var(--el-text-color-secondary)">（共 {{ total }} 条）</span></strong>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <strong>{{ t("nav.tasks") }}</strong>
+          <span v-if="total" style="font-size:13px;color:var(--el-text-color-secondary)">（共 {{ total }} 条）</span>
+          <!-- 状态筛选 -->
+          <el-button-group size="small" style="margin-left:4px">
+            <el-button
+              v-for="opt in STATUS_OPTIONS"
+              :key="opt.value"
+              :type="statusGroup === opt.value ? (opt.type || 'primary') : ''"
+              @click="onFilterChange(opt.value)"
+            >{{ opt.label }}</el-button>
+          </el-button-group>
+          <span style="flex:1" />
           <el-button :icon="Refresh" :loading="loading" size="small" @click="load">{{ t("common.refresh") }}</el-button>
         </div>
       </template>
 
-      <el-alert v-if="activeCount > 0 && currentPage === 1" type="info" :closable="false" style="margin-bottom:12px">
+      <el-alert v-if="activeCount > 0" type="info" :closable="false" style="margin-bottom:12px">
         {{ activeCount }} 个任务正在进行，每 5 秒自动刷新
       </el-alert>
 

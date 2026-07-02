@@ -209,80 +209,83 @@ def register_user_routes(app, deps: dict[str, Any]):
             return {"task_ids": task_ids, "container_count": len(containers)}
 
     @app.get("/api/tasks/recent")
-    def recent_tasks(page: int = 1, per_page: int = 20):
-        """返回全量任务历史（节点任务 + 同步任务），支持分页。"""
+    def recent_tasks(page: int = 1, per_page: int = 20, status_group: str = ""):
+        """返回全量任务历史（节点任务 + 同步任务），支持分页与状态分组筛选。
+        status_group: '' = 全部 | 'active' = 进行中 | 'failed' = 失败 | 'succeeded' = 成功
+        """
         page = max(1, page)
         per_page = max(1, min(per_page, 100))
         offset = (page - 1) * per_page
+
+        # 根据状态分组生成 WHERE 子句和参数
+        _STATUS_GROUPS: dict[str, list[str]] = {
+            "active":    ["pending", "claimed", "planned", "running", "verifying"],
+            "failed":    ["failed"],
+            "succeeded": ["succeeded"],
+        }
+        statuses = _STATUS_GROUPS.get(status_group, [])
+        status_filter = "AND status = ANY(%s::text[])" if statuses else ""
+
         with db() as conn:
             user = current_user(conn)
             _is_admin = is_admin_user(user)
 
+            def _build_sql(base_count_sql: str, base_count_params: tuple,
+                           base_data_sql: str, base_data_params: tuple):
+                if statuses:
+                    count_sql = f"SELECT COUNT(*) AS total FROM ({base_count_sql}) t WHERE t.status = ANY(%s::text[])"
+                    count_params = base_count_params + (statuses,)
+                    data_sql = f"SELECT * FROM ({base_data_sql}) t WHERE t.status = ANY(%s::text[]) ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s"
+                    data_params = base_data_params + (statuses, per_page, offset)
+                else:
+                    count_sql = f"SELECT COUNT(*) AS total FROM ({base_count_sql}) t"
+                    count_params = base_count_params
+                    data_sql = f"SELECT * FROM ({base_data_sql}) t ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s"
+                    data_params = base_data_params + (per_page, offset)
+                return count_sql, count_params, data_sql, data_params
+
+            _UNION_ADMIN = """
+                SELECT nt.id, 'node_task' AS kind, nt.container_id,
+                       c.name AS container_name,
+                       nt.task_type AS type, nt.status, nt.last_error AS error,
+                       nt.created_at, nt.updated_at, nt.finished_at
+                FROM node_tasks nt LEFT JOIN containers c ON c.id = nt.container_id
+                UNION ALL
+                SELECT dst.id, 'sync_task' AS kind, dst.container_id,
+                       c.name AS container_name,
+                       dst.task_type AS type, dst.status, '' AS error,
+                       dst.created_at, dst.updated_at, dst.finished_at
+                FROM data_sync_tasks dst LEFT JOIN containers c ON c.id = dst.container_id
+            """
+
             if _is_admin:
-                count_row = conn.execute(
-                    """
-                    SELECT (SELECT COUNT(*) FROM node_tasks)
-                         + (SELECT COUNT(*) FROM data_sync_tasks) AS total
-                    """
-                ).fetchone()
-                total = count_row["total"] if count_row else 0
-                rows = conn.execute(
-                    """
-                    SELECT * FROM (
-                        SELECT nt.id, 'node_task' AS kind, nt.container_id,
-                               c.name AS container_name,
-                               nt.task_type AS type, nt.status, nt.last_error AS error,
-                               nt.created_at, nt.updated_at, nt.finished_at
-                        FROM node_tasks nt
-                        LEFT JOIN containers c ON c.id = nt.container_id
-                        UNION ALL
-                        SELECT dst.id, 'sync_task' AS kind, dst.container_id,
-                               c.name AS container_name,
-                               dst.task_type AS type, dst.status, '' AS error,
-                               dst.created_at, dst.updated_at, dst.finished_at
-                        FROM data_sync_tasks dst
-                        LEFT JOIN containers c ON c.id = dst.container_id
-                    ) t
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (per_page, offset),
-                ).fetchall()
+                count_sql, count_params, data_sql, data_params = _build_sql(
+                    _UNION_ADMIN, (), _UNION_ADMIN, ()
+                )
             else:
                 uid = user["id"]
-                count_row = conn.execute(
-                    """
-                    SELECT (SELECT COUNT(*) FROM node_tasks nt JOIN containers c ON c.id=nt.container_id WHERE c.owner_id=%s)
-                         + (SELECT COUNT(*) FROM data_sync_tasks WHERE user_id=%s) AS total
-                    """,
-                    (uid, uid),
-                ).fetchone()
-                total = count_row["total"] if count_row else 0
-                rows = conn.execute(
-                    """
-                    SELECT * FROM (
-                        SELECT nt.id, 'node_task' AS kind, nt.container_id,
-                               c.name AS container_name,
-                               nt.task_type AS type, nt.status, nt.last_error AS error,
-                               nt.created_at, nt.updated_at, nt.finished_at
-                        FROM node_tasks nt
-                        JOIN containers c ON c.id = nt.container_id
-                        WHERE c.owner_id = %s
-                        UNION ALL
-                        SELECT dst.id, 'sync_task' AS kind, dst.container_id,
-                               c.name AS container_name,
-                               dst.task_type AS type, dst.status, '' AS error,
-                               dst.created_at, dst.updated_at, dst.finished_at
-                        FROM data_sync_tasks dst
-                        LEFT JOIN containers c ON c.id = dst.container_id
-                        WHERE dst.user_id = %s
-                    ) t
-                    ORDER BY created_at DESC, id DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (uid, uid, per_page, offset),
-                ).fetchall()
+                _UNION_USER = """
+                    SELECT nt.id, 'node_task' AS kind, nt.container_id,
+                           c.name AS container_name,
+                           nt.task_type AS type, nt.status, nt.last_error AS error,
+                           nt.created_at, nt.updated_at, nt.finished_at
+                    FROM node_tasks nt JOIN containers c ON c.id = nt.container_id
+                    WHERE c.owner_id = %s
+                    UNION ALL
+                    SELECT dst.id, 'sync_task' AS kind, dst.container_id,
+                           c.name AS container_name,
+                           dst.task_type AS type, dst.status, '' AS error,
+                           dst.created_at, dst.updated_at, dst.finished_at
+                    FROM data_sync_tasks dst LEFT JOIN containers c ON c.id = dst.container_id
+                    WHERE dst.user_id = %s
+                """
+                count_sql, count_params, data_sql, data_params = _build_sql(
+                    _UNION_USER, (uid, uid), _UNION_USER, (uid, uid)
+                )
 
+            count_row = conn.execute(count_sql, count_params).fetchone()
+            total = count_row["total"] if count_row else 0
+            rows = conn.execute(data_sql, data_params).fetchall()
             return {"total": total, "items": [dict(r) for r in rows]}
 
     @app.get("/api/me/api-tokens")
