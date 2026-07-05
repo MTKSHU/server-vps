@@ -7,7 +7,7 @@ import type { components } from "./schema";
 // Run `npm run gen-api` to regenerate after backend changes.
 // NOTE: Response types (Container, Node, User, …) are NOT auto-generated because
 // the backend returns plain dicts without Pydantic response_model annotations.
-export type NodeConfigInput     = components["schemas"]["NodeConfigInput"];
+type NodeConfigInput     = components["schemas"]["NodeConfigInput"];
 // Fields with server-side defaults (@default in OpenAPI) are made optional so
 // callers don't have to supply them when the default is acceptable.
 export type ContainerCreateInput = Omit<
@@ -19,11 +19,6 @@ export type ContainerCreateInput = Omit<
   ssh_key?: string;
 };
 export type ContainerSyncRuleInput = components["schemas"]["ContainerSyncRuleInput"];
-export type ContainerSyncInput  = components["schemas"]["ContainerSyncInput"];
-export type ImageCreateInput    = components["schemas"]["ImageInput"];
-export type UserCreateInput     = components["schemas"]["UserUpsertInput"];
-export type SshKeyCreateInput   = components["schemas"]["SshKeyInput"];
-export type PasswordChangeInput = components["schemas"]["PasswordChangeInput"];
 
 // ── SSO 统一认证 ──────────────────────────────────────────────────────────────
 export interface SSOProvider {
@@ -534,7 +529,7 @@ export interface StorageImageFile {
   updated_at: number;
 }
 
-export interface StorageImageInventory {
+interface StorageImageInventory {
   node_id: number;
   node: string;
   node_type: "storage" | "mixed" | string;
@@ -1026,41 +1021,11 @@ export function triggerResourceSyncAllNodes(resourceId: number) {
   return postJson<{ tasks: ContainerTask[]; node_count: number }>(`/api/storage/resources/${resourceId}/sync-to-all-nodes`, {});
 }
 
-export function containerSyncAndMountResource(containerId: number, resourceId: number) {
-  return postJson<ContainerTask>(`/api/containers/${containerId}/sync-resource/${resourceId}`, {});
-}
-
-export interface NodeCachedResourceItem {
-  id: number;
-  resource_type: "dataset" | "huggingface_model" | "pytorch_model";
-  name: string;
-  version: string;
-  mount_path: string;
-  readonly: boolean;
-  local_path: string;
-}
-
-export function getNodeCachedResources(nodeId: number) {
-  return request<NodeCachedResourceItem[]>(`/api/containers/node-cached-resources?node_id=${nodeId}`);
-}
-
-export function getContainerNodeCachedResources(containerId: number) {
-  return request<NodeCachedResourceItem[]>(`/api/containers/${containerId}/node-cached-resources`);
-}
-
-export function mountContainerNodeCache(containerId: number, resourceIds: number[]) {
-  return postJson<ContainerTask>(`/api/containers/${containerId}/mount-node-cache`, { resource_ids: resourceIds });
-}
-
 export function syncContainerNodeCache(containerId: number, resourceIds: number[]) {
   return postJson<{ tasks: ContainerTask[]; submitted_count: number; skipped_resource_ids: number[] }>(
     `/api/containers/${containerId}/sync-node-cache`,
     { resource_ids: resourceIds },
   );
-}
-
-export function applyContainerNodeCache(containerId: number) {
-  return postJson<ContainerTask>(`/api/containers/${containerId}/apply-node-cache`, {});
 }
 
 export function clearResourceCache(nodeId: number, resourceId: number) {

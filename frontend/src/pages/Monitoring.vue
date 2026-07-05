@@ -13,12 +13,12 @@ const snapshots = ref<MetricsSnapshot[]>([]);
 const histLoading = ref(false);
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-const hoursOptions = [
-  { label: "1 小时", value: 1 },
-  { label: "6 小时", value: 6 },
-  { label: "24 小时", value: 24 },
-  { label: "7 天", value: 168 },
-];
+const hoursOptions = computed(() => [
+  { label: t("monitoring.hours1"), value: 1 },
+  { label: t("monitoring.hours6"), value: 6 },
+  { label: t("monitoring.hours24"), value: 24 },
+  { label: t("monitoring.days7"), value: 168 },
+]);
 
 const selectedNode = computed(() => nodes.value.find(n => n.id === selectedNodeId.value) ?? null);
 
@@ -74,13 +74,13 @@ function xTicks(data: MetricsSnapshot[], count = 5) {
   return data.filter((_, i) => i % step === 0 || i === data.length - 1);
 }
 
-interface ChartSpec { key: keyof MetricsSnapshot; label: string; unit: string }
+interface ChartSpec { key: keyof MetricsSnapshot; labelKey: string; unit: string }
 const charts: ChartSpec[] = [
-  { key: "cpu_pct", label: "CPU 使用率", unit: "%" },
-  { key: "memory_pct", label: "内存使用率", unit: "%" },
-  { key: "disk_pct", label: "磁盘使用率", unit: "%" },
-  { key: "gpu_avg_pct", label: "GPU 平均利用率", unit: "%" },
-  { key: "gpu_avg_vram_pct", label: "GPU 平均显存占用", unit: "%" },
+  { key: "cpu_pct", labelKey: "monitoring.cpuUsage", unit: "%" },
+  { key: "memory_pct", labelKey: "monitoring.memoryUsage", unit: "%" },
+  { key: "disk_pct", labelKey: "monitoring.diskUsage", unit: "%" },
+  { key: "gpu_avg_pct", labelKey: "monitoring.gpuAvgUsage", unit: "%" },
+  { key: "gpu_avg_vram_pct", labelKey: "monitoring.gpuAvgVram", unit: "%" },
 ];
 
 onMounted(() => {
@@ -95,7 +95,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
     <el-card shadow="never">
       <template #header>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <strong>节点监控历史</strong>
+          <strong>{{ t("monitoring.title") }}</strong>
           <el-select v-model="selectedNodeId" size="small" style="width:180px" @change="onNodeChange">
             <el-option v-for="n in nodes" :key="n.id" :label="n.hostname" :value="n.id">
               <span>{{ n.hostname }}</span>
@@ -107,20 +107,20 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
           </el-select>
           <el-button :icon="Refresh" :loading="histLoading || loading" size="small" @click="loadHistory">{{ t("common.refresh") }}</el-button>
           <span v-if="snapshots.length" style="font-size:12px;color:var(--el-text-color-secondary)">
-            {{ snapshots.length }} 个采样点（每 5 分钟一次）
+            {{ t("monitoring.samplePoints", { count: snapshots.length }) }}
           </span>
         </div>
       </template>
 
       <div v-if="!snapshots.length && !histLoading" style="text-align:center;padding:40px;color:var(--el-text-color-placeholder)">
-        <p>暂无历史数据。后台每 5 分钟采集一次，启动后请等待首次采样。</p>
-        <p v-if="selectedNode?.status !== 'online'" style="color:var(--el-color-warning)">所选节点当前不在线，只显示已存档数据。</p>
+        <p>{{ t("monitoring.noData") }}</p>
+        <p v-if="selectedNode?.status !== 'online'" style="color:var(--el-color-warning)">{{ t("monitoring.offlineHint") }}</p>
       </div>
 
       <div v-loading="histLoading" class="charts-grid">
         <div v-for="chart in charts" :key="chart.key" class="chart-card">
           <div class="chart-header">
-            <span class="chart-title">{{ chart.label }}</span>
+            <span class="chart-title">{{ t(chart.labelKey) }}</span>
             <span class="chart-current" :style="{ color: color(Number(snapshots[snapshots.length - 1]?.[chart.key] ?? 0)) }">
               {{ snapshots.length ? Number(snapshots[snapshots.length - 1]![chart.key]).toFixed(1) + chart.unit : '-' }}
             </span>
@@ -146,7 +146,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); });
                 stroke-linecap="round"
               />
             </template>
-            <text v-else x="200" y="35" text-anchor="middle" font-size="11" fill="var(--el-text-color-placeholder)">数据不足</text>
+            <text v-else x="200" y="35" text-anchor="middle" font-size="11" fill="var(--el-text-color-placeholder)">{{ t("monitoring.insufficientData") }}</text>
           </svg>
           <!-- X 轴时间标签 -->
           <div v-if="snapshots.length >= 2" class="chart-xticks">
