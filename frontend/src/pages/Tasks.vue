@@ -13,10 +13,10 @@ const pageSize = 20;
 const statusGroup = ref("");   // "" | "active" | "failed" | "succeeded"
 
 const STATUS_OPTIONS = [
-  { label: "全部",   value: "",          type: "" },
-  { label: "进行中", value: "active",    type: "warning" },
-  { label: "失败",   value: "failed",    type: "danger" },
-  { label: "成功",   value: "succeeded", type: "success" },
+  { key: "taskCenter.statusAll", value: "", type: "" },
+  { key: "taskCenter.statusActive", value: "active", type: "warning" },
+  { key: "taskCenter.statusFailed", value: "failed", type: "danger" },
+  { key: "taskCenter.statusSucceeded", value: "succeeded", type: "success" },
 ] as const;
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -51,23 +51,27 @@ function statusType(status: string) {
 }
 
 function kindLabel(kind: string, type: string) {
-  if (kind === "sync_task") return `同步 · ${type === "user_home_sync" ? "家目录" : "共享资源"}`;
+  if (kind === "sync_task") {
+    return type === "user_home_sync"
+      ? t("taskCenter.kindSyncUserHome")
+      : t("taskCenter.kindSyncShared");
+  }
   const map: Record<string, string> = {
-    incus_create_container: "创建容器",
-    incus_start_container: "启动容器",
-    incus_stop_container: "停止容器",
-    incus_restart_container: "重启容器",
-    incus_delete_container: "删除容器",
-    incus_sync_ssh_keys: "同步 SSH 密钥",
-    incus_sync_ports: "同步端口",
-    container_data_sync: "数据同步",
-    scan_user_directory: "扫描目录",
-    scan_shared_resource: "扫描共享资源",
-    verify_shared_resource: "校验共享资源",
-    ensure_user_zfs_dataset: "初始化存储 Dataset",
-    remove_user_zfs_dataset: "移除存储 Dataset",
+    incus_create_container: "taskCenter.kindCreateContainer",
+    incus_start_container: "taskCenter.kindStartContainer",
+    incus_stop_container: "taskCenter.kindStopContainer",
+    incus_restart_container: "taskCenter.kindRestartContainer",
+    incus_delete_container: "taskCenter.kindDeleteContainer",
+    incus_sync_ssh_keys: "taskCenter.kindSyncSshKeys",
+    incus_sync_ports: "taskCenter.kindSyncPorts",
+    container_data_sync: "taskCenter.kindDataSync",
+    scan_user_directory: "taskCenter.kindScanDirectory",
+    scan_shared_resource: "taskCenter.kindScanSharedResource",
+    verify_shared_resource: "taskCenter.kindVerifySharedResource",
+    ensure_user_zfs_dataset: "taskCenter.kindEnsureDataset",
+    remove_user_zfs_dataset: "taskCenter.kindRemoveDataset",
   };
-  return map[type] || type;
+  return map[type] ? t(map[type]) : type;
 }
 
 const activeCount = ref(0);
@@ -92,7 +96,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
       <template #header>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <strong>{{ t("nav.tasks") }}</strong>
-          <span v-if="total" style="font-size:13px;color:var(--el-text-color-secondary)">（共 {{ total }} 条）</span>
+          <span v-if="total" style="font-size:13px;color:var(--el-text-color-secondary)">{{ t("taskCenter.total", { total }) }}</span>
           <!-- 状态筛选 -->
           <el-button-group size="small" style="margin-left:4px">
             <el-button
@@ -100,7 +104,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
               :key="opt.value"
               :type="statusGroup === opt.value ? (opt.type || 'primary') : ''"
               @click="onFilterChange(opt.value)"
-            >{{ opt.label }}</el-button>
+            >{{ t(opt.key) }}</el-button>
           </el-button-group>
           <span style="flex:1" />
           <el-button :icon="Refresh" :loading="loading" size="small" @click="load">{{ t("common.refresh") }}</el-button>
@@ -108,28 +112,28 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
       </template>
 
       <el-alert v-if="activeCount > 0" type="info" :closable="false" style="margin-bottom:12px">
-        {{ activeCount }} 个任务正在进行，每 5 秒自动刷新
+        {{ t("taskCenter.activeRefreshing", { count: activeCount }) }}
       </el-alert>
 
       <el-table :data="items" stripe size="small" v-loading="loading">
-        <el-table-column label="任务类型" min-width="160">
+        <el-table-column :label="t('taskCenter.taskType')" min-width="160">
           <template #default="{ row }">{{ kindLabel(row.kind, row.type) }}</template>
         </el-table-column>
-        <el-table-column label="容器" prop="container_name" min-width="130" show-overflow-tooltip>
+        <el-table-column :label="t('taskCenter.container')" prop="container_name" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">{{ row.container_name || "-" }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column :label="t('taskCenter.status')" width="110">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="错误" prop="error" min-width="180" show-overflow-tooltip>
+        <el-table-column :label="t('taskCenter.error')" prop="error" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.error || "-" }}</template>
         </el-table-column>
-        <el-table-column label="创建时间" width="168">
+        <el-table-column :label="t('taskCenter.createdAt')" width="168">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="完成时间" width="168">
+        <el-table-column :label="t('taskCenter.finishedAt')" width="168">
           <template #default="{ row }">{{ row.finished_at ? formatTime(row.finished_at) : "-" }}</template>
         </el-table-column>
       </el-table>
@@ -143,7 +147,7 @@ onUnmounted(() => { if (timer) clearInterval(timer); });
           background
         />
       </div>
-      <p v-if="!loading && items.length === 0" style="text-align:center;color:var(--el-text-color-placeholder);padding:24px 0;margin:0">暂无任务记录</p>
+      <p v-if="!loading && items.length === 0" style="text-align:center;color:var(--el-text-color-placeholder);padding:24px 0;margin:0">{{ t("taskCenter.empty") }}</p>
     </el-card>
   </div>
 </template>

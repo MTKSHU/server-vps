@@ -59,7 +59,6 @@ def register_image_routes(app, deps: dict[str, Any]):
     find_node_incus_image = deps["find_node_incus_image"]
     incus_image_import_payload = deps["incus_image_import_payload"]
     incus_image_push_payload = deps["incus_image_push_payload"]
-    node_has_incus_image = deps["node_has_incus_image"]
 
     from ..schemas import ImageCatalogOut, ImageOut
 
