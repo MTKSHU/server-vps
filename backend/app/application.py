@@ -36,6 +36,7 @@ from .storage.services import (
     ensure_user_zfs_dataset_task,
     find_node_incus_image,
     incus_image_import_payload,
+    incus_image_push_payload,
     node_has_incus_image,
     public_storage_image_file,
     remove_user_workspace_volume_task,
@@ -211,7 +212,18 @@ def create_app() -> FastAPI:
         },
     )
     register_agent_update_routes(app, {"db": db, "now_ts": now_ts, "audit": audit, "verify_agent_node": verify_agent_node})
-    register_image_routes(app, {"db": db, "now_ts": now_ts, "audit": audit})
+    register_image_routes(app, {
+        "db": db,
+        "now_ts": now_ts,
+        "audit": audit,
+        "enqueue_node_task": enqueue_node_task,
+        "storage_root_for_node": storage_root_for_node,
+        "storage_image_base_name": storage_image_base_name,
+        "find_node_incus_image": find_node_incus_image,
+        "incus_image_import_payload": incus_image_import_payload,
+        "incus_image_push_payload": incus_image_push_payload,
+        "node_has_incus_image": node_has_incus_image,
+    })
     register_data_routes(
         app,
         {
@@ -322,6 +334,9 @@ def create_app() -> FastAPI:
             "verify_agent_node": verify_agent_node,
             "upsert_node": upsert_node,
             "enqueue_node_task": enqueue_node_task,
+            "storage_root_for_node": storage_root_for_node,
+            "incus_image_import_payload": incus_image_import_payload,
+            "node_has_incus_image": node_has_incus_image,
         },
     )
     return app

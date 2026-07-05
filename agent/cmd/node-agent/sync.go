@@ -406,7 +406,8 @@ func attemptDirectContainerSync(payload DataSyncPayload, onProgress func(SyncPro
 		}
 		hostKeyPath := f.Name()
 		defer os.Remove(hostKeyPath)
-		if _, err := f.WriteString(key); err != nil {
+		// OpenSSH requires PEM key to end with newline
+		if _, err := f.WriteString(key + "\n"); err != nil {
 			f.Close()
 			return "", fmt.Errorf("write temp key file: %w", err)
 		}
@@ -588,7 +589,8 @@ func prepareSyncEndpoint(endpoint DataSyncSSHEndpoint) (DataSyncSSHEndpoint, str
 	if err != nil {
 		return endpoint, "", fmt.Errorf("create temp key file: %w", err)
 	}
-	if _, err := f.WriteString(key); err != nil {
+	// OpenSSH requires PEM key to end with newline; TrimSpace removes it, so add it back
+	if _, err := f.WriteString(key + "\n"); err != nil {
 		f.Close()
 		return endpoint, "", fmt.Errorf("write temp key file: %w", err)
 	}

@@ -164,6 +164,18 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
 		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "incus_image_push_to_storage":
+		// 将计算节点导出的镜像文件 rsync 推送到存储节点。
+		// 使用 DataSyncPayload.TargetEndpoint 指向存储节点的 SSH 信息。
+		var payload DataSyncPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeDataSync(payload, args.dataPath, nil)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
 	case "incus_image_cleanup":
 		var payload IncusImageCleanupPayload
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -323,8 +335,9 @@ var slowTaskSem = make(chan struct{}, 1)
 var slowTaskTypes = map[string]bool{
 	"container_data_sync":     true, // rsync 跨节点数据同步，通常 1–10+ 分钟
 	"incus_image_pull":        true, // 从远端拉取镜像，可能数十分钟
-	"incus_image_export":      true, // 将镜像导出到磁盘，分钟级
-	"incus_image_import":      true, // 从磁盘导入镜像，分钟级
+	"incus_image_export":          true, // 将镜像导出到磁盘，分钟级
+	"incus_image_import":          true, // 从磁盘导入镜像，分钟级
+	"incus_image_push_to_storage": true, // 将镜像文件推送到存储节点，分钟级
 	"incus_publish_container": true, // 将容器压缩为镜像（+ 可选导出），分钟级
 	"scan_user_directory":     true, // du/find 扫描用户目录，大数据集时分钟级
 	"scan_shared_resource":    true, // 共享资源扫描，分钟级

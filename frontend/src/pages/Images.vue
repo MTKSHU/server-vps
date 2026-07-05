@@ -28,7 +28,7 @@ const dialog = ref(false);
 const editingId = ref("");
 const form = reactive({ id:"", name:"", incus_ref:"", cuda_major:0, compatible_pools:"", owner:"admin", enabled:true, preferred:true });
 
-function isRemoteRef(ref: string) { return ref.includes(":") && ref.split(":").slice(1).join(":").includes("/"); }
+function isRemoteRef(ref: string) { return ref.includes(":") && !ref.startsWith("local:") && ref.split(":").slice(1).join(":").includes("/"); }
 function localAlias(ref: string) { return ref.includes(":") ? ref.split(":").slice(1).join(":") : ref; }
 function nodeHasImage(nodeId: number, incus_ref: string): boolean {
   const alias = localAlias(incus_ref);
@@ -234,6 +234,26 @@ async function removeFromNode(group: NodeImageGroup, node: { id: number; hostnam
   }
 }
 
+// ── 节点本地镜像 ─ 分发到其他节点 ───────────────────────────────────────────────
+async function distributeNodeImageToNode(group: NodeImageGroup, nodeId: number) {
+  const alias = group.primaryAlias;
+  const incusRef = `local:${alias}`;
+  try {
+    const sf = storedImages.value.find(s =>
+      s.alias === alias || s.alias === incusRef ||
+      s.aliases.split(",").map(a => a.trim()).some(a => a === alias || a === incusRef)
+    );
+    if (sf && sf.status === "exported") {
+      await distributeStorageImage(sf.id, [nodeId]);
+      ElMessage.success(t("images.distributeTaskSubmitted"));
+    } else {
+      const result = await copyLocalImage(incusRef, nodeId);
+      ElMessage.success(result.message || t("images.transferStarted"));
+    }
+    await load();
+  } catch (e: any) { ElMessage.error(e?.message || t("images.operationFailed")); }
+}
+
 // ── 平台镜像 ─ 指纹检测 ─────────────────────────────────────────────────────
 function nodeImageFingerprint(nodeId: number, incus_ref: string): string {
   const alias = localAlias(incus_ref);
@@ -344,6 +364,18 @@ onMounted(() => { load(); loadRemote(); });
             <el-button :icon="Refresh" @click="load">{{ t("common.refresh") }}</el-button>
           </div>
           <el-table :data="nodeImageGroups" stripe>
+            <el-table-column type="expand">
+              <template #default="{ row }">
+                <div v-if="computeNodes.length === 0" style="padding:12px 24px;color:#999">{{ t("images.noOnlineComputeNodes") }}</div>
+                <div v-else style="padding:8px 24px;display:flex;flex-wrap:wrap;gap:8px">
+                  <div v-for="n in computeNodes" :key="n.id" style="display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e4e7ed;border-radius:4px;background:#fafafa">
+                    <span style="font-size:13px">{{ n.hostname }}</span>
+                    <el-tag v-if="row.nodes.some((rn: any) => rn.id === n.id)" type="success" size="small">{{ t("images.synced") }}</el-tag>
+                    <el-button v-else size="small" type="primary" plain :icon="Upload" @click="distributeNodeImageToNode(row, n.id)">{{ t("images.sync") }}</el-button>
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column :label="t('images.alias')" min-width="200">
               <template #default="{ row }">
                 <span style="font-family:monospace">{{ row.primaryAlias }}</span>

@@ -1,10 +1,27 @@
+import os
 from typing import Any
 
 import re
 
 from fastapi import HTTPException
 
-from ..config import SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER
+from ..config import AGENT_RELEASE_DIR, SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER
+
+
+def _read_sync_private_key() -> str:
+    """读取集群同步 SSH 私钥内容。优先 SYNC_SSH_IDENTITY_FILE，次选 agent 自管理密钥。"""
+    candidates = []
+    if SYNC_SSH_IDENTITY_FILE:
+        candidates.append(SYNC_SSH_IDENTITY_FILE)
+    candidates.append(os.path.join(AGENT_RELEASE_DIR, ".cluster_node_key"))
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    return f.read()
+            except OSError:
+                continue
+    return ""
 
 
 def is_remote_incus_ref(image_ref: str) -> bool:
@@ -437,8 +454,47 @@ def incus_image_import_payload(
             "host": sync_ip or source_node["ip"],
             "port": sync_port or SYNC_SSH_PORT,
             "user": source_node.get("ssh_user") or SYNC_SSH_USER,
-            "identity_file": SYNC_SSH_IDENTITY_FILE,
+            "private_key": _read_sync_private_key(),  # 传密钥内容而非路径，节点上路径可能不同
         },
+    }
+
+
+def incus_image_push_payload(
+    source_compute_node: dict[str, Any],
+    storage_node: dict[str, Any],
+    compute_export_dir: str,
+    storage_export_dir: str,
+    base_name: str,
+    storage_image_file_id: int,
+    distribute_to_node_ids: list[int],
+) -> dict[str, Any]:
+    """构建 incus_image_push_to_storage 任务的 payload。
+
+    Agent 将此视为 DataSyncPayload（本地 source_path → 远端 TargetEndpoint:target_path）。
+    额外字段（storage_image_file_id 等）由 agent 忽略，供管理端回调使用。
+    """
+    sync_ip = str(storage_node.get("sync_ip") or "").strip()
+    sync_port = int(storage_node.get("sync_ssh_port") or 0)
+    return {
+        # DataSyncPayload 字段（agent 使用）
+        "source_node_id": source_compute_node["id"],
+        "target_node_id": storage_node["id"],
+        "source_path": compute_export_dir,
+        "target_path": storage_export_dir,
+        "delete": True,
+        "target_endpoint": {
+            "hostname": storage_node["hostname"],
+            "host": sync_ip or storage_node["ip"],
+            "port": sync_port or SYNC_SSH_PORT,
+            "user": storage_node.get("ssh_user") or SYNC_SSH_USER,
+            "private_key": _read_sync_private_key(),
+        },
+        # 管理端回调元数据（agent 忽略）
+        "storage_image_file_id": storage_image_file_id,
+        "compute_node_id": source_compute_node["id"],
+        "compute_export_dir": compute_export_dir,
+        "base_name": base_name,
+        "distribute_to_node_ids": distribute_to_node_ids,
     }
 
 

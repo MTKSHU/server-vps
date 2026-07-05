@@ -33,6 +33,9 @@ def register_agent_routes(app, deps: dict[str, Any]):
     verify_agent_node = deps["verify_agent_node"]
     upsert_node = deps["upsert_node"]
     enqueue_node_task = deps["enqueue_node_task"]
+    storage_root_for_node = deps["storage_root_for_node"]
+    incus_image_import_payload = deps["incus_image_import_payload"]
+    node_has_incus_image = deps["node_has_incus_image"]
 
     def cleanup_container_sync_key(conn, task):
         payload = task["payload"] if isinstance(task["payload"], dict) else {}
@@ -437,6 +440,7 @@ def register_agent_routes(app, deps: dict[str, Any]):
                 if task["task_type"] == "incus_image_export":
                     task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
                     storage_image_file_id = int(task_payload.get("storage_image_file_id") or 0)
+                    push_to_storage = task_payload.get("push_to_storage") or {}
                     result_detail: dict[str, Any] = {}
                     if payload.output.strip():
                         try:
@@ -445,7 +449,18 @@ def register_agent_routes(app, deps: dict[str, Any]):
                                 result_detail = parsed
                         except json.JSONDecodeError:
                             result_detail = {}
-                    if storage_image_file_id:
+                    if push_to_storage:
+                        # 导出完成但文件还在计算节点，下发推送任务将其迁移到存储节点
+                        # storage_image_files 状态保持 'pending'，待推送完成后再更新
+                        enqueue_node_task(
+                            conn,
+                            task["node_id"],  # 计算节点执行推送
+                            None,
+                            "incus_image_push_to_storage",
+                            push_to_storage,
+                        )
+                    elif storage_image_file_id:
+                        # 常规导出（直接落存储节点），标记为已导出
                         conn.execute(
                             """
                             UPDATE storage_image_files
@@ -463,6 +478,108 @@ def register_agent_routes(app, deps: dict[str, Any]):
                                 storage_image_file_id,
                             ),
                         )
+                        # export 任务携带 distribute_to_node_ids 时自动下发 import 任务
+                        distribute_to = [
+                            int(nid) for nid in (task_payload.get("distribute_to_node_ids") or [])
+                            if nid
+                        ]
+                        if distribute_to:
+                            sf = conn.execute(
+                                "SELECT * FROM storage_image_files WHERE id = %s",
+                                (storage_image_file_id,),
+                            ).fetchone()
+                            src_node = conn.execute(
+                                "SELECT * FROM nodes WHERE id = %s",
+                                (sf["source_node_id"],),
+                            ).fetchone() if sf else None
+                            if sf and src_node:
+                                aliases_list = [
+                                    a.strip() for a in (sf["aliases"] or "").split(",") if a.strip()
+                                ]
+                                import_alias = aliases_list[0] if aliases_list else sf["fingerprint"][:16]
+                                for tgt_id in distribute_to:
+                                    tgt_node = conn.execute(
+                                        "SELECT * FROM nodes WHERE id = %s AND status = 'online'",
+                                        (tgt_id,),
+                                    ).fetchone()
+                                    if not tgt_node:
+                                        continue
+                                    if node_has_incus_image(conn, tgt_id, import_alias):
+                                        continue
+                                    tgt_root = storage_root_for_node(conn, tgt_id)
+                                    enqueue_node_task(
+                                        conn,
+                                        tgt_id,
+                                        None,
+                                        "incus_image_import",
+                                        incus_image_import_payload(
+                                            dict(sf),
+                                            dict(src_node),
+                                            dict(tgt_node),
+                                            f"{tgt_root}/incus-images/import-cache/{sf['base_name']}",
+                                            import_alias,
+                                        ),
+                                    )
+                if task["task_type"] == "incus_image_push_to_storage":
+                    # 推送完成：更新 storage_image_files 状态，清理计算节点临时文件，下发 import
+                    push_payload = task["payload"] if isinstance(task["payload"], dict) else {}
+                    storage_image_file_id = int(push_payload.get("storage_image_file_id") or 0)
+                    compute_node_id = int(push_payload.get("compute_node_id") or 0)
+                    compute_export_dir = (push_payload.get("compute_export_dir") or "").strip()
+                    base_name = (push_payload.get("base_name") or "").strip()
+                    distribute_to = [
+                        int(nid) for nid in (push_payload.get("distribute_to_node_ids") or []) if nid
+                    ]
+                    if storage_image_file_id:
+                        conn.execute(
+                            """
+                            UPDATE storage_image_files
+                            SET status = 'exported',
+                                last_error = '',
+                                exported_at = %s,
+                                updated_at = %s
+                            WHERE id = %s
+                            """,
+                            (ts, ts, storage_image_file_id),
+                        )
+                    # 清理计算节点上的临时导出目录
+                    if compute_node_id and compute_export_dir and base_name:
+                        try:
+                            enqueue_node_task(
+                                conn, compute_node_id, None, "incus_image_cleanup",
+                                {"export_dir": compute_export_dir, "base_name": base_name, "fingerprint": ""},
+                            )
+                        except Exception:
+                            pass
+                    # 下发 import 任务到目标节点（从存储节点拉取）
+                    if distribute_to and storage_image_file_id:
+                        sf = conn.execute(
+                            "SELECT * FROM storage_image_files WHERE id = %s",
+                            (storage_image_file_id,),
+                        ).fetchone()
+                        src_node = conn.execute(
+                            "SELECT * FROM nodes WHERE id = %s", (sf["source_node_id"],)
+                        ).fetchone() if sf else None
+                        if sf and src_node:
+                            aliases_list = [a.strip() for a in (sf["aliases"] or "").split(",") if a.strip()]
+                            import_alias = aliases_list[0] if aliases_list else sf["fingerprint"][:16]
+                            for tgt_id in distribute_to:
+                                tgt_node = conn.execute(
+                                    "SELECT * FROM nodes WHERE id = %s AND status = 'online'", (tgt_id,)
+                                ).fetchone()
+                                if not tgt_node:
+                                    continue
+                                if node_has_incus_image(conn, tgt_id, import_alias):
+                                    continue
+                                tgt_root = storage_root_for_node(conn, tgt_id)
+                                enqueue_node_task(
+                                    conn, tgt_id, None, "incus_image_import",
+                                    incus_image_import_payload(
+                                        dict(sf), dict(src_node), dict(tgt_node),
+                                        f"{tgt_root}/incus-images/import-cache/{sf['base_name']}",
+                                        import_alias,
+                                    ),
+                                )
                 if task["task_type"] == "incus_publish_container":
                     task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
                     storage_image_file_id = int(task_payload.get("storage_image_file_id") or 0)
@@ -780,6 +897,18 @@ def register_agent_routes(app, deps: dict[str, Any]):
                 if task["task_type"] == "incus_image_export":
                     task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
                     storage_image_file_id = int(task_payload.get("storage_image_file_id") or 0)
+                    if storage_image_file_id:
+                        conn.execute(
+                            """
+                            UPDATE storage_image_files
+                            SET status = 'failed', last_error = %s, updated_at = %s
+                            WHERE id = %s
+                            """,
+                            (error, ts, storage_image_file_id),
+                        )
+                if task["task_type"] == "incus_image_push_to_storage":
+                    push_payload = task["payload"] if isinstance(task["payload"], dict) else {}
+                    storage_image_file_id = int(push_payload.get("storage_image_file_id") or 0)
                     if storage_image_file_id:
                         conn.execute(
                             """
