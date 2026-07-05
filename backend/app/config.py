@@ -22,6 +22,12 @@ AGENT_RELEASE_MAX_MB = int(os.environ.get("AGENT_RELEASE_MAX_MB", "100"))
 # AGENT_SOURCE_HOST_PATH: 宿主机上 agent 源码目录（挂载到编译容器的 /src）
 AGENT_SOURCE_HOST_PATH = os.environ.get("AGENT_SOURCE_HOST_PATH", "")
 
+# Agent 文件 API（node-agent 内置 HTTP 文件列表服务，替代 SSH ls 实现毫秒级响应）
+# NODE_AGENT_FILES_PORT: agent 监听端口，需与 CLUSTER_AGENT_FILES_PORT 一致（默认 8082）
+# NODE_AGENT_TOKEN: 调用 agent HTTP API 的 Bearer token，设为与 CLUSTER_NODE_TOKEN 相同的值
+NODE_AGENT_FILES_PORT = int(os.environ.get("NODE_AGENT_FILES_PORT", "8082"))
+NODE_AGENT_TOKEN = os.environ.get("NODE_AGENT_TOKEN", "")
+
 # Root disk size (/) for every container - fixed, not user-configurable
 CONTAINER_ROOT_DISK_GB = int(os.environ.get("CONTAINER_ROOT_DISK_GB", "50"))
 

@@ -140,6 +140,8 @@ class NodeConfigInput(BaseModel):
     # 数据同步专用地址/端口；为空或 0 时回退到节点上报 ip / ssh_port
     sync_ip: str = ""
     sync_ssh_port: int = 0
+    # 公开资源本地缓存根目录；为空时自动使用节点数据盘根目录下的 shared-cache 子目录
+    resource_cache_base: str = ""
 
     @field_validator("sync_ip")
     @classmethod
@@ -238,6 +240,14 @@ class ContainerSyncRuleInput(BaseModel):
     interval_minutes: int = 1440
     enabled: bool = True
     conflict_policy: Literal["overwrite", "skip"] = "overwrite"
+
+
+class ContainerNodeCacheMountInput(BaseModel):
+    resource_ids: list[int] = Field(default_factory=list)
+
+
+class ContainerNodeCacheSyncInput(BaseModel):
+    resource_ids: list[int] = Field(default_factory=list)
 
 
 class UserPreferenceInput(BaseModel):
@@ -600,6 +610,7 @@ class NodeOut(BaseModel):
     ssh_port: int = 22
     sync_ip: str = ""
     sync_ssh_port: int = 0
+    resource_cache_base: str = ""
     cpu_model: str = ""
     cpu_total: int = 0
     cpu_cores: int = 0

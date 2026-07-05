@@ -23,6 +23,7 @@ from .containers.services import (
 )
 from .core import audit, current_user, db, hash_token, now_ts, validate_platform_path
 from .data.routes import register_data_routes
+from .data.routes import start_data_background_tasks
 from .database import init_schema
 from .images.routes import register_image_routes
 from .internal.routes import register_internal_routes
@@ -44,6 +45,7 @@ from .storage.services import (
     select_storage_node_for_path,
     storage_image_base_name,
     storage_root_for_node,
+    enqueue_resource_sync_task,
 )
 from .users.routes import register_user_routes
 
@@ -106,6 +108,7 @@ def create_app() -> FastAPI:
                     print(f"[WARN] session cleanup error: {exc!r}", file=sys.stderr, flush=True)
         asyncio.create_task(_session_cleanup_loop())
         asyncio.create_task(_webhook_alert_loop())
+        start_data_background_tasks()
 
     async def _webhook_alert_loop():
         """每 60 秒检查告警，有新告警时向 webhook_url POST 通知（best-effort）。"""
@@ -280,6 +283,9 @@ def create_app() -> FastAPI:
                 now_ts,
                 enqueue_node_task,
             ),
+            "enqueue_resource_sync_task": lambda conn, node_id, resource_id, container_id=None: enqueue_resource_sync_task(
+                conn, node_id, resource_id, now_ts, enqueue_node_task, container_id=container_id
+            ),
         },
     )
     register_container_routes(
@@ -295,7 +301,14 @@ def create_app() -> FastAPI:
             "normalize_port_payload": normalize_port_payload,
             "add_container_port": add_container_port,
             "select_node_and_gpus": select_node_and_gpus,
-            "build_data_mounts": build_data_mounts,
+            "build_data_mounts": lambda conn, user, ssh_username, target_node_id=None, selected_resources=None: build_data_mounts(
+                conn,
+                user,
+                ssh_username,
+                target_node_id,
+                selected_resources,
+                enqueue_resource_sync_fn=lambda c, nid, rid: enqueue_resource_sync_task(c, nid, rid, now_ts, enqueue_node_task),
+            ),
             "enqueue_incus_image_import_task": lambda conn, node, container_id, image_ref: enqueue_incus_image_import_task(
                 conn,
                 node,
@@ -312,6 +325,9 @@ def create_app() -> FastAPI:
             "select_storage_node_for_path": select_storage_node_for_path,
             "storage_root_for_node": storage_root_for_node,
             "storage_image_base_name": storage_image_base_name,
+            "enqueue_resource_sync_task": lambda conn, node_id, resource_id, container_id=None: enqueue_resource_sync_task(
+                conn, node_id, resource_id, now_ts, enqueue_node_task, container_id=container_id
+            ),
         },
     )
     register_metrics_routes(

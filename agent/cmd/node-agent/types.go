@@ -339,3 +339,30 @@ type RemoveSyncPubkeyPayload struct {
 	KeyID     string `json:"key_id"`
 	PublicKey string `json:"public_key"`
 }
+
+type SyncSharedResourcePayload struct {
+	ResourceID       int    `json:"resource_id"`
+	SourceHost       string `json:"source_host"`
+	SourcePort       int    `json:"source_port"`
+	SourceUser       string `json:"source_user"`
+	SourcePath       string `json:"source_path"`
+	SourcePrivateKey string `json:"source_private_key"`
+	LocalCachePath   string `json:"local_cache_path"`
+}
+
+// MountUpdate 描述一条资源挂载的更新指令
+type MountUpdate struct {
+	// OldTarget 是容器内旧挂载点（可能与 NewTarget 不同）
+	OldTarget string `json:"old_target"`
+	// NewSource 是宏机上新的本地路径
+	NewSource string `json:"new_source"`
+	// NewTarget 是容器内新挂载点
+	NewTarget string `json:"new_target"`
+	Readonly  bool   `json:"readonly"`
+}
+
+type ApplyResourceMountsPayload struct {
+	ContainerID  int           `json:"container_id"`
+	Name         string        `json:"name"`
+	MountUpdates []MountUpdate `json:"mount_updates"`
+}

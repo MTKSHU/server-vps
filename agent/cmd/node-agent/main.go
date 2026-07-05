@@ -21,6 +21,7 @@ type cliArgs struct {
 	dataPath         string
 	incusStoragePool string
 	taskPollInterval int
+	filesPort        int
 }
 
 func main() {
@@ -36,6 +37,7 @@ func main() {
 	flag.StringVar(&args.dataPath, "data-path", "/", "managed storage root for host directory mounts")
 	flag.StringVar(&args.incusStoragePool, "incus-storage-pool", "", "Incus storage pool for disk capacity reporting and new containers")
 	flag.IntVar(&args.taskPollInterval, "task-poll-interval", 5, "task polling interval in seconds between heartbeats")
+	flag.IntVar(&args.filesPort, "files-port", defaultAgentFilesPort, "port for the files HTTP API (0 to disable)")
 	flag.Parse()
 	if *version {
 		fmt.Println(agentVersion)
@@ -73,6 +75,11 @@ func main() {
 	}
 	if args.taskPollInterval < 1 {
 		args.taskPollInterval = 1
+	}
+	if os.Getenv("CLUSTER_AGENT_FILES_PORT") != "" {
+		if value, err := strconv.Atoi(os.Getenv("CLUSTER_AGENT_FILES_PORT")); err == nil {
+			args.filesPort = value
+		}
 	}
 
 	if args.server == "" || args.token == "" {
@@ -115,6 +122,11 @@ func main() {
 
 	// daemon 模式：心跳与任务执行解耦到独立 goroutine。
 	// 长时任务（如 container_data_sync）只阻塞任务 goroutine，心跳不受影响。
+
+	// daemon 模式下启动文件列表 HTTP 服务，供后端直接查询目录而无需 SSH
+	if args.filesPort > 0 {
+		startAgentFilesServer(args.token, args.dataPath, args.filesPort)
+	}
 
 	// 先同步发送第一次心跳，直到成功为止，以获得 hostname。
 	var hostname string

@@ -2365,6 +2365,11 @@ export interface components {
              * @default 0
              */
             sync_ssh_port: number;
+            /**
+             * Resource Cache Base
+             * @default
+             */
+            resource_cache_base: string;
         };
         /** NodeRegistration */
         NodeRegistration: {

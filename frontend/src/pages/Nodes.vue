@@ -102,7 +102,8 @@ const configForm = reactive<NodeConfigPayload>({
   ssh_user: "root",
   ssh_port: 22,
   sync_ip: "",
-  sync_ssh_port: 0
+  sync_ssh_port: 0,
+  resource_cache_base: "",
 });
 const labelText = ref("");
 const currentTs = ref(Math.floor(Date.now() / 1000));
@@ -379,7 +380,8 @@ function openConfig(row: Node) {
     ssh_user: row.ssh_user || "root",
     ssh_port: row.ssh_port || 22,
     sync_ip: row.sync_ip || "",
-    sync_ssh_port: row.sync_ssh_port || 0
+    sync_ssh_port: row.sync_ssh_port || 0,
+    resource_cache_base: row.resource_cache_base || "",
   });
   labelText.value = (row.labels || []).join(", ");
   getNodeSshPubkey().then((res) => { sshPubkey.value = res.pubkey; }).catch(() => {});
@@ -718,6 +720,15 @@ onUnmounted(() => {
           <el-input-number v-model="configForm.sync_ssh_port" :min="0" :max="65535" />
           <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">
             {{ t("nodes.syncSshPortHint") }}
+          </div>
+        </el-form-item>
+        <el-form-item
+          v-if="editingNode?.node_type !== 'storage'"
+          :label="t('nodes.resourceCacheBase')"
+        >
+          <el-input v-model="configForm.resource_cache_base" :placeholder="t('nodes.resourceCacheBasePlaceholder')" />
+          <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">
+            {{ t("nodes.resourceCacheBaseHint") }}
           </div>
         </el-form-item>
         <el-form-item :label="t('nodes.platformSshKey')" class="wide">

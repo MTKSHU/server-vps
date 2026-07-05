@@ -35,9 +35,10 @@ import {
   deleteContainerPort,
   deleteContainerSyncRule,
   getContainers,
+  getSharedResources,
   getContainerSyncRules,
   getContainerSyncTasks,
-  getSharedResources,
+  syncContainerNodeCache,
   runContainerSync,
   runContainerSyncRule,
   saveContainerSyncRule,
@@ -68,9 +69,11 @@ const editingPort = ref<ContainerPort | null>(null);
 const syncDialogVisible = ref(false);
 const syncLoading = ref(false);
 const syncSubmitting = ref(false);
+const publicResources = ref<SharedResource[]>([]);
+const selectedNodeCacheDatasetIds = ref<number[]>([]);
+const selectedNodeCacheModelIds = ref<number[]>([]);
 const syncRules = ref<ContainerSyncRule[]>([]);
 const syncTasks = ref<DataSyncTask[]>([]);
-const sharedResources = ref<SharedResource[]>([]);
 
 // ── 列设置 ──────────────────────────────
 const columnPreferenceKey = "containers.visible_columns";
@@ -478,23 +481,24 @@ function syncProgressText(row: DataSyncTask): string {
   return parts.join("  ");
 }
 
-function resourceOptions(type: "dataset" | "model" | "user_file") {
-  return sharedResources.value.filter((item) => type === "dataset" ? item.resource_type === "dataset" : item.resource_type !== "dataset");
-}
+const cachedDatasets = computed(() => publicResources.value.filter((item) => item.resource_type === "dataset" && item.enabled));
+const cachedModels = computed(() => publicResources.value.filter((item) => item.resource_type !== "dataset" && item.enabled));
 
 async function openSyncDialog(row: Container) {
   selectedContainer.value = row;
   syncDialogVisible.value = true;
+  selectedNodeCacheDatasetIds.value = [];
+  selectedNodeCacheModelIds.value = [];
   syncLoading.value = true;
   try {
-    const [rules, tasks, resources] = await Promise.all([
+      const [rules, tasks, resources] = await Promise.all([
       getContainerSyncRules(row.id),
       getContainerSyncTasks(row.id),
-      getSharedResources(),
+        getSharedResources(),
     ]);
     syncRules.value = rules;
     syncTasks.value = tasks;
-    sharedResources.value = resources;
+      publicResources.value = resources;
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "加载同步数据失败");
   } finally {
@@ -527,33 +531,14 @@ watch([syncDialogVisible, syncTasks], ([visible, tasks]) => {
 });
 onBeforeUnmount(stopSyncPolling);
 
-// 公开数据集/模型下载到容器时，不需要选择存储目录，直接根目录同步
-watch(() => syncDownloadForm.storage_type, (newVal) => {
-  if (newVal !== "user_file") {
-    syncDownloadForm.storage_relative_path = "";
-    // 重置容器路径，切换类型后重新选资源时再更新
-    syncDownloadForm.container_path = "/workspace";
-    syncDownloadForm.resource_id = undefined;
-  }
-});
-
-// 选择公开资源后自动设置容器路径为 /workspace/{资源名称}
-watch(() => syncDownloadForm.resource_id, (newId) => {
-  if (!newId || syncDownloadForm.storage_type === "user_file") return;
-  const resource = sharedResources.value.find((r) => r.id === newId);
-  if (resource) {
-    syncDownloadForm.container_path = "/workspace/" + resource.name;
-  }
-});
-
 async function submitDownloadSync() {
   if (!selectedContainer.value) return;
   syncSubmitting.value = true;
   try {
     await runContainerSync(selectedContainer.value.id, {
       direction: "storage_to_container",
-      storage_type: syncDownloadForm.storage_type,
-      resource_id: syncDownloadForm.storage_type === "user_file" ? null : syncDownloadForm.resource_id || null,
+      storage_type: "user_file",
+      resource_id: null,
       storage_relative_path: syncDownloadForm.storage_relative_path,
       container_path: syncDownloadForm.container_path,
       conflict_policy: syncDownloadForm.conflict_policy,
@@ -562,6 +547,24 @@ async function submitDownloadSync() {
     await refreshSyncData();
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "提交失败");
+  } finally {
+    syncSubmitting.value = false;
+  }
+}
+
+async function submitNodeCacheMount(resourceIds: number[]) {
+  if (!selectedContainer.value) return;
+  if (!resourceIds.length) {
+    ElMessage.warning("请先选择至少一个公开资源");
+    return;
+  }
+  syncSubmitting.value = true;
+  try {
+    const result = await syncContainerNodeCache(selectedContainer.value.id, resourceIds);
+    ElMessage.success(t("containers.syncNodeCacheSubmitted", { count: result.submitted_count }));
+    await refreshSyncData();
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : t("containers.syncNodeCacheFailed"));
   } finally {
     syncSubmitting.value = false;
   }
@@ -993,50 +996,59 @@ onBeforeUnmount(() => {
 
 	  <el-dialog v-model="syncDialogVisible" :title="t('containers.syncSettings', { name: selectedContainer?.name || '' })" width="920px">
 	    <div v-loading="syncLoading">
-	      <el-tabs>
-	        <el-tab-pane :label="t('containers.downloadToContainer')">
-	          <el-form :model="syncDownloadForm" label-position="top" class="sync-form">
-	            <el-form-item :label="t('containers.storageType')">
-	              <el-segmented
-	                v-model="syncDownloadForm.storage_type"
-	                :options="[
-	                  { label: t('containers.myFiles'), value: 'user_file' },
-	                  { label: t('containers.publicDataset'), value: 'dataset' },
-	                  { label: t('containers.publicModel'), value: 'model' }
-	                ]"
-	              />
-	            </el-form-item>
-	            <el-form-item v-if="syncDownloadForm.storage_type !== 'user_file'" :label="t('containers.datasetModel')">
-	              <el-select v-model="syncDownloadForm.resource_id" filterable style="width:100%" :placeholder="t('containers.choosePublicResource')">
-	                <el-option
-	                  v-for="resource in resourceOptions(syncDownloadForm.storage_type)"
-	                  :key="resource.id"
-	                  :label="`${resource.name}:${resource.version}`"
-	                  :value="resource.id"
-	                />
-	              </el-select>
-	            </el-form-item>
-            <el-form-item v-if="syncDownloadForm.storage_type === 'user_file'" :label="t('containers.storagePath')">
-              <div class="path-picker-row">
-                <el-input v-model="syncDownloadForm.storage_relative_path" :placeholder="t('containers.relativeRootPlaceholder')" />
-                <el-button :icon="FolderOpened" @click="openStorageDirPicker('download_storage')">{{ t("containers.browse") }}</el-button>
-              </div>
-            </el-form-item>
-            <el-form-item v-if="syncDownloadForm.storage_type !== 'user_file'" :label="t('containers.saveToContainerPath')">
-              <el-input v-model="syncDownloadForm.container_path" placeholder="/workspace" />
-            </el-form-item>
-            <el-form-item v-if="syncDownloadForm.storage_type === 'user_file'" :label="t('containers.saveToContainerPath')">
-              <el-input v-model="syncDownloadForm.container_path" placeholder="/workspace/data" />
-            </el-form-item>
-	            <el-form-item :label="t('containers.conflictPolicy')">
-	              <el-radio-group v-model="syncDownloadForm.conflict_policy">
-	                <el-radio value="overwrite">{{ t("containers.overwrite") }}</el-radio>
-	                <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
-	              </el-radio-group>
-	            </el-form-item>
-	            <el-button type="primary" :icon="Download" :loading="syncSubmitting" @click="submitDownloadSync">{{ t("containers.runDownload") }}</el-button>
-	          </el-form>
-	        </el-tab-pane>
+        <el-tabs>
+          <el-tab-pane :label="t('containers.downloadToContainer')">
+            <el-form :model="syncDownloadForm" label-position="top" class="sync-form">
+              <el-form-item :label="t('containers.storagePath')">
+                <div class="path-picker-row">
+                  <el-input v-model="syncDownloadForm.storage_relative_path" :placeholder="t('containers.relativeRootPlaceholder')" />
+                  <el-button :icon="FolderOpened" @click="openStorageDirPicker('download_storage')">{{ t("containers.browse") }}</el-button>
+                </div>
+              </el-form-item>
+              <el-form-item :label="t('containers.saveToContainerPath')">
+                <el-input v-model="syncDownloadForm.container_path" placeholder="/workspace/data" />
+              </el-form-item>
+              <el-form-item :label="t('containers.conflictPolicy')">
+                <el-radio-group v-model="syncDownloadForm.conflict_policy">
+                  <el-radio value="overwrite">{{ t("containers.overwrite") }}</el-radio>
+                  <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              <el-button type="primary" :icon="Download" :loading="syncSubmitting" @click="submitDownloadSync">{{ t("containers.runDownload") }}</el-button>
+            </el-form>
+          </el-tab-pane>
+          <el-tab-pane :label="t('containers.localPublicDatasetMount')">
+            <el-form label-position="top" class="sync-form">
+              <el-form-item :label="t('containers.datasetModel')">
+                <el-select v-model="selectedNodeCacheDatasetIds" multiple filterable collapse-tags collapse-tags-tooltip style="width:100%" :placeholder="t('containers.choosePublicResource')">
+                  <el-option
+                    v-for="resource in cachedDatasets"
+                    :key="resource.id"
+                    :label="`${resource.name}:${resource.version}`"
+                    :value="resource.id"
+                  />
+                </el-select>
+                  <small class="field-hint">{{ t('containers.syncToCurrentNodeHint', { node: selectedContainer?.node || '-' }) }}</small>
+              </el-form-item>
+                <el-button type="primary" :icon="RefreshRight" :loading="syncSubmitting" @click="submitNodeCacheMount(selectedNodeCacheDatasetIds)">{{ t("containers.syncSelectedResources") }}</el-button>
+            </el-form>
+          </el-tab-pane>
+          <el-tab-pane :label="t('containers.localPublicModelMount')">
+            <el-form label-position="top" class="sync-form">
+              <el-form-item :label="t('containers.datasetModel')">
+                <el-select v-model="selectedNodeCacheModelIds" multiple filterable collapse-tags collapse-tags-tooltip style="width:100%" :placeholder="t('containers.choosePublicResource')">
+                  <el-option
+                    v-for="resource in cachedModels"
+                    :key="resource.id"
+                    :label="`${resource.name}:${resource.version}`"
+                    :value="resource.id"
+                  />
+                </el-select>
+                  <small class="field-hint">{{ t('containers.syncToCurrentNodeHint', { node: selectedContainer?.node || '-' }) }}</small>
+              </el-form-item>
+                <el-button type="primary" :icon="RefreshRight" :loading="syncSubmitting" @click="submitNodeCacheMount(selectedNodeCacheModelIds)">{{ t("containers.syncSelectedResources") }}</el-button>
+            </el-form>
+          </el-tab-pane>
 	        <el-tab-pane :label="t('containers.uploadToMyFiles')">
 	          <el-form :model="syncUploadForm" label-position="top" class="sync-form">
 	            <el-form-item :label="t('containers.containerPath')">

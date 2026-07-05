@@ -298,6 +298,26 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
 		return TaskResultRequest{OK: true, Status: "succeeded", Output: strings.TrimSpace(output)}
+	case "sync_shared_resource":
+		var payload SyncSharedResourcePayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeSyncSharedResource(payload)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "apply_resource_mounts":
+		var payload ApplyResourceMountsPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeApplyResourceMounts(payload, args.dataPath)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
 	default:
 		return TaskResultRequest{OK: false, Status: "failed", Error: "unknown task type: " + task.Type}
 	}
@@ -338,6 +358,7 @@ var slowTaskTypes = map[string]bool{
 	"incus_image_export":          true, // 将镜像导出到磁盘，分钟级
 	"incus_image_import":          true, // 从磁盘导入镜像，分钟级
 	"incus_image_push_to_storage": true, // 将镜像文件推送到存储节点，分钟级
+	"sync_shared_resource":        true, // 从存储节点拉取公共资源到本地缓存，分钟–小时级
 	"incus_publish_container": true, // 将容器压缩为镜像（+ 可选导出），分钟级
 	"scan_user_directory":     true, // du/find 扫描用户目录，大数据集时分钟级
 	"scan_shared_resource":    true, // 共享资源扫描，分钟级

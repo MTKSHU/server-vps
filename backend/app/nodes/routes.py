@@ -120,6 +120,15 @@ def normalize_node_config(payload: NodeConfigInput) -> NodeConfigInput:
     payload.sync_ip = payload.sync_ip.strip()
     if payload.sync_ssh_port < 0 or payload.sync_ssh_port > 65535:
         raise HTTPException(status_code=400, detail="同步 SSH 端口必须在 0-65535 之间")
+    payload.resource_cache_base = payload.resource_cache_base.strip()
+    if payload.resource_cache_base:
+        rcb = payload.resource_cache_base
+        if not rcb.startswith("/"):
+            raise HTTPException(status_code=400, detail="资源缓存目录必须是绝对路径")
+        if "\x00" in rcb or "/../" in rcb or rcb.endswith("/.."):
+            raise HTTPException(status_code=400, detail="资源缓存目录不合法")
+        if len(rcb) > 240:
+            raise HTTPException(status_code=400, detail="资源缓存目录路径过长")
     return payload
 
 
@@ -204,7 +213,8 @@ def register_node_routes(app, deps: dict[str, Any]):
                     ssh_user = %s,
                     ssh_port = %s,
                     sync_ip = %s,
-                    sync_ssh_port = %s
+                    sync_ssh_port = %s,
+                    resource_cache_base = %s
                 WHERE id = %s
                 RETURNING *
                 """,
@@ -231,6 +241,7 @@ def register_node_routes(app, deps: dict[str, Any]):
                     payload.ssh_port,
                     payload.sync_ip,
                     payload.sync_ssh_port,
+                    payload.resource_cache_base,
                     node_id,
                 ),
             ).fetchone()

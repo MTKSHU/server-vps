@@ -32,6 +32,7 @@ def register_storage_routes(app, deps: dict[str, Any]):
     ensure_user_zfs_dataset_task = deps.get("ensure_user_zfs_dataset_task")
     remove_user_zfs_dataset_task = deps.get("remove_user_zfs_dataset_task")
     remove_user_workspace_volume_task = deps.get("remove_user_workspace_volume_task")
+    enqueue_resource_sync_task = deps.get("enqueue_resource_sync_task")
 
     class RemoveWorkspaceVolumeInput(BaseModel):
         confirm_username: str = ""
@@ -218,7 +219,7 @@ def register_storage_routes(app, deps: dict[str, Any]):
             return {"task": public_task(task) if task else None}
 
     @app.get("/api/storage/workspace-volumes")
-    async def workspace_volumes():
+    async def workspace_volumes(fetch_disk_usage: bool = False):
         require_admin()
         with db() as conn:
             rows = [dict(row) for row in conn.execute(
@@ -238,9 +239,14 @@ def register_storage_routes(app, deps: dict[str, Any]):
                 ORDER BY n.hostname, u.username
                 """
             ).fetchall()]
-        used_values = await asyncio.gather(*(workspace_volume_used_gb(row) for row in rows))
-        for row, used_gb in zip(rows, used_values):
-            row["used_gb"] = used_gb
+        if fetch_disk_usage:
+            used_values = await asyncio.gather(*(workspace_volume_used_gb(row) for row in rows))
+            for row, used_gb in zip(rows, used_values):
+                row["used_gb"] = used_gb
+        else:
+            for row in rows:
+                row["used_gb"] = None
+        for row in rows:
             row.pop("ip", None)
             row.pop("ssh_user", None)
             row.pop("ssh_port", None)
@@ -407,6 +413,9 @@ def register_storage_routes(app, deps: dict[str, Any]):
                 if node_has_incus_image(conn, node["id"], alias) or node_has_incus_image(conn, node["id"], image_file["fingerprint"]):
                     continue
                 target_root = storage_root_for_node(conn, node["id"])
+                _rcb = str(node.get("resource_cache_base") or "").strip()
+                if _rcb:
+                    target_root = _rcb.rstrip("/")
                 task = enqueue_node_task(
                     conn,
                     node["id"],
@@ -423,3 +432,82 @@ def register_storage_routes(app, deps: dict[str, Any]):
                 tasks.append(public_task(task))
             audit(conn, "admin", "distribute", f"storage-image:{image_file_id}", {"task_count": len(tasks)})
             return {"tasks": tasks}
+
+    @app.get("/api/storage/resource-cache")
+    def list_resource_cache():
+        """管理员查询全量节点资源缓存状态矩阵。"""
+        require_admin()
+        with db() as conn:
+            rows = conn.execute(
+                """
+                SELECT nrc.node_id, nrc.resource_id, nrc.status, nrc.local_path,
+                       nrc.synced_at, nrc.size_bytes, nrc.error, nrc.updated_at,
+                       n.hostname, n.status AS node_status,
+                       sr.name AS resource_name, sr.resource_type, sr.version
+                FROM node_resource_cache nrc
+                JOIN nodes n ON n.id = nrc.node_id
+                JOIN shared_resources sr ON sr.id = nrc.resource_id
+                ORDER BY n.hostname, sr.resource_type, sr.name
+                """
+            ).fetchall()
+            return rows
+
+    @app.post("/api/storage/resources/{resource_id}/sync-to-node/{node_id}", status_code=202)
+    def trigger_resource_sync(resource_id: int, node_id: int):
+        """管理员手动触发将指定资源同步到指定节点。"""
+        if enqueue_resource_sync_task is None:
+            raise HTTPException(status_code=503, detail="同步服务未配置")
+        require_admin()
+        with db() as conn:
+            task = enqueue_resource_sync_task(conn, node_id, resource_id)
+            if task is None:
+                raise HTTPException(status_code=409, detail="同步任务已在进行中，或节点/资源不可用")
+            return public_task(task)
+
+    @app.post("/api/storage/resources/{resource_id}/sync-to-all-nodes", status_code=202)
+    def trigger_resource_sync_all_nodes(resource_id: int):
+        """管理员手动触发将指定资源同步到所有在线可调度计算节点。"""
+        if enqueue_resource_sync_task is None:
+            raise HTTPException(status_code=503, detail="同步服务未配置")
+        require_admin()
+        with db() as conn:
+            resource = conn.execute(
+                "SELECT id FROM shared_resources WHERE id = %s AND enabled = TRUE",
+                (resource_id,),
+            ).fetchone()
+            if not resource:
+                raise HTTPException(status_code=404, detail="公开数据集/模型不存在")
+
+            nodes = conn.execute(
+                """
+                SELECT id FROM nodes
+                WHERE status = 'online'
+                  AND schedulable = TRUE
+                  AND maintenance = FALSE
+                  AND node_type IN ('compute', 'mixed')
+                ORDER BY id
+                """
+            ).fetchall()
+            if not nodes:
+                raise HTTPException(status_code=400, detail="没有在线可调度的计算节点")
+
+            tasks = []
+            for row in nodes:
+                task = enqueue_resource_sync_task(conn, row["id"], resource_id)
+                if task is not None:
+                    tasks.append(public_task(task))
+            if not tasks:
+                raise HTTPException(status_code=409, detail="所有节点都已有进行中的同步任务，或节点/资源不可用")
+            return {"tasks": tasks, "node_count": len(tasks)}
+
+    @app.delete("/api/storage/resource-cache/{node_id}/{resource_id}", status_code=204)
+    def clear_resource_cache(node_id: int, resource_id: int):
+        """管理员清除节点本地缓存记录（不删除节点上的实际文件）。"""
+        require_admin()
+        with db() as conn:
+            deleted = conn.execute(
+                "DELETE FROM node_resource_cache WHERE node_id = %s AND resource_id = %s RETURNING id",
+                (node_id, resource_id),
+            ).fetchone()
+            if not deleted:
+                raise HTTPException(status_code=404, detail="缓存记录不存在")

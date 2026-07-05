@@ -106,6 +106,20 @@ def init_schema():
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS requested_by BIGINT REFERENCES users(id) ON DELETE SET NULL;
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS upload_name TEXT NOT NULL DEFAULT '';
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+            CREATE TABLE IF NOT EXISTS node_resource_cache (
+                id BIGSERIAL PRIMARY KEY,
+                node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                resource_id BIGINT NOT NULL REFERENCES shared_resources(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                local_path TEXT NOT NULL DEFAULT '',
+                synced_at INTEGER NOT NULL DEFAULT 0,
+                size_bytes BIGINT NOT NULL DEFAULT 0,
+                error TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (node_id, resource_id),
+                CONSTRAINT node_resource_cache_status_check CHECK (status IN ('pending', 'syncing', 'ready', 'failed'))
+            );
             CREATE TABLE IF NOT EXISTS nodes (
                 id BIGSERIAL PRIMARY KEY,
                 hostname TEXT NOT NULL UNIQUE,
@@ -531,6 +545,20 @@ def init_schema():
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS ssh_port INTEGER NOT NULL DEFAULT 22")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS sync_ip TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS sync_ssh_port INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS resource_cache_base TEXT NOT NULL DEFAULT ''")
+        # 将已有公开资源的 mount_path 标准化为 /datasets/{name} 和 /models/{name}
+        conn.execute("""
+            UPDATE shared_resources
+            SET mount_path = '/datasets/' || name
+            WHERE resource_type = 'dataset'
+              AND mount_path NOT LIKE '/datasets/%'
+        """)
+        conn.execute("""
+            UPDATE shared_resources
+            SET mount_path = '/models/' || name
+            WHERE resource_type != 'dataset'
+              AND mount_path NOT LIKE '/models/%'
+        """)
         conn.execute("ALTER TABLE shared_resources DROP CONSTRAINT IF EXISTS shared_resources_resource_type_name_key")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS shared_resources_resource_version_idx ON shared_resources (resource_type, name, version)"

@@ -39,10 +39,14 @@ from fastapi import File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
 
+import httpx
+
 from ..config import (
     HF_HTTPS_PROXY,
     HF_STAGING_DIR,
     MAX_UPLOAD_MB,
+    NODE_AGENT_FILES_PORT,
+    NODE_AGENT_TOKEN,
     SYNC_SSH_IDENTITY_FILE,
     SYNC_SSH_PORT,
     SYNC_SSH_USER,
@@ -543,6 +547,93 @@ def _cached_zfs_usage(node_id: int, dataset_name: str) -> int | None:
 
 def _store_zfs_usage(node_id: int, dataset_name: str, size_bytes: int) -> None:
     _zfs_usage_cache[(node_id, dataset_name)] = (time.monotonic() + _ZFS_USAGE_TTL, size_bytes)
+
+
+# ---------------------------------------------------------------------------
+# Agent HTTP 文件列表 API
+#
+# node-agent 内置了 GET /api/files/ls 端点，可直接读取本地文件系统，
+# 无需 SSH，响应时间 < 10ms（LAN 内）。仅当 NODE_AGENT_TOKEN 已配置且
+# 节点运行了新版 agent（支持 --files-port）时生效；否则自动回退到 SSH。
+# ---------------------------------------------------------------------------
+_agent_http_client: httpx.AsyncClient | None = None
+_agent_http_lock = asyncio.Lock()
+
+
+async def _get_agent_http_client() -> httpx.AsyncClient:
+    global _agent_http_client
+    if _agent_http_client is None or _agent_http_client.is_closed:
+        async with _agent_http_lock:
+            if _agent_http_client is None or _agent_http_client.is_closed:
+                _agent_http_client = httpx.AsyncClient(timeout=5.0)
+    return _agent_http_client
+
+
+async def _list_via_agent_http(
+    node: dict[str, Any],
+    absolute_path: str,
+    root_path: str,
+    limit: int = 500,
+    zfs_dataset: str = "",
+) -> dict[str, Any] | None:
+    """通过 agent HTTP API 列出目录，比 SSH ls 快约 10x。
+    失败（agent 不可用或版本过旧）时返回 None，由调用方回退到 SSH。
+    """
+    if not NODE_AGENT_TOKEN:
+        return None
+    node_ip = str(node.get("ip") or "").strip()
+    if not node_ip:
+        return None
+    params: dict[str, Any] = {"path": absolute_path, "root": root_path, "limit": limit}
+    if zfs_dataset:
+        params["zfs_dataset"] = zfs_dataset
+    url = f"http://{node_ip}:{NODE_AGENT_FILES_PORT}/api/files/ls"
+    try:
+        client = await _get_agent_http_client()
+        resp = await client.get(url, params=params, headers={"Authorization": f"Bearer {NODE_AGENT_TOKEN}"})
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# SSH 连接池预热 / 保活
+#
+# 后端启动时对所有活跃存储节点主动建立 SSH 连接，消除首次访问的冷启动延迟。
+# 每 50 秒运行一次 keep-alive（SSH 默认 60s 超时），防止连接被中间设备断开。
+# ---------------------------------------------------------------------------
+async def _ssh_warmup_loop() -> None:
+    import sys
+    # 启动后稍等几秒，待 DB 连接就绪，然后立即预热一次，之后每 50 秒保活
+    await asyncio.sleep(5)
+    while True:
+        try:
+            with dep("db")() as conn:
+                nodes = conn.execute(
+                    """
+                    SELECT DISTINCT n.* FROM nodes n
+                    JOIN user_storage_datasets usd ON usd.node_id = n.id
+                    WHERE n.status = 'online'
+                    """
+                ).fetchall()
+            for node in nodes:
+                try:
+                    await asyncio.wait_for(
+                        _with_pooled_ssh(dict(node), lambda ssh: ssh.run("true", check=False)),
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            print(f"[WARN] SSH warmup error: {exc!r}", file=sys.stderr, flush=True)
+        await asyncio.sleep(50)
+
+
+def start_data_background_tasks() -> None:
+    """在 FastAPI startup 事件中调用，启动数据模块后台任务。"""
+    asyncio.create_task(_ssh_warmup_loop())
 
 
 async def _upload_entries_incremental(
@@ -1288,7 +1379,7 @@ def register_data_routes(app, deps: dict[str, Any]):
 
     @app.get("/api/storage/users/{user_id}/files/live")
     async def user_directory_live(user_id: int, relative_path: str = ""):
-        """即时 SSH 到存储节点执行 ls -la，毫秒级返回文件列表，无需预扫描"""
+        """即时返回文件列表：优先通过 agent HTTP API（< 10ms），回退到 SSH ls。"""
         relative_path = normalize_relative_directory(relative_path)
         dataset_name = ""
         with db() as conn:
@@ -1306,6 +1397,36 @@ def register_data_routes(app, deps: dict[str, Any]):
 
         node_id = int(node["id"])
 
+        # ── 优先：agent HTTP API（无 SSH 开销，毫秒级响应）──────────────────────
+        # 仅在根目录且 ZFS 缓存未命中时才传入 dataset_name 让 agent 查询
+        zfs_for_agent = ""
+        if not relative_path and dataset_name:
+            cached = _cached_zfs_usage(node_id, dataset_name)
+            if cached is None:
+                zfs_for_agent = dataset_name
+        agent_result = await _list_via_agent_http(node, absolute_path, root_path, zfs_dataset=zfs_for_agent)
+        if agent_result is not None:
+            size_bytes = agent_result.get("size_bytes", 0)
+            # 更新 ZFS 用量缓存（若 agent 已查询过）
+            if not relative_path and dataset_name and zfs_for_agent:
+                _store_zfs_usage(node_id, dataset_name, size_bytes)
+            elif not relative_path and dataset_name:
+                cached = _cached_zfs_usage(node_id, dataset_name)
+                if cached is not None:
+                    size_bytes = cached
+            return {
+                "user_id": user_id,
+                "relative_path": relative_path,
+                "status": agent_result.get("status", "ready"),
+                "file_count": agent_result.get("file_count", 0),
+                "size_bytes": size_bytes,
+                "entries": agent_result.get("entries", []),
+                "truncated": agent_result.get("truncated", False),
+                "error": agent_result.get("error", ""),
+                "scanned_at": int(time.time()),
+            }
+
+        # ── 回退：SSH ls -la（兼容无 agent HTTP 的旧节点）──────────────────────
         async def _run(ssh) -> dict[str, Any]:
             # ls -la --time-style=+%s 输出: drwxr-xr-x 2 root root 4096 1719876543 dirname
             result = await ssh.run(
@@ -1910,10 +2031,11 @@ def register_data_routes(app, deps: dict[str, Any]):
             hf_endpoint = settings["hf_endpoint"] if settings["hf_endpoint_enabled"] == "1" else ""
             if payload.resource_type == "dataset":
                 base = settings["dataset_base_path"].rstrip("/")
+                mount_path = f"/datasets/{name}"
             else:
                 base = settings["model_base_path"].rstrip("/")
+                mount_path = f"/models/{name}"
             platform_path = f"{base}/{name}/{version}"
-            mount_path = f"{base}/{name}"
             node = select_storage_node_for_path(conn, platform_path)
             if not node:
                 raise HTTPException(status_code=400, detail="没有在线存储节点")

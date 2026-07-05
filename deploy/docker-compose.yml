@@ -39,6 +39,10 @@ services:
       NO_PROXY: ${NO_PROXY:-}
       # 用于通过 Docker 编译 agent 二进制文件
       AGENT_SOURCE_HOST_PATH: ${AGENT_SOURCE_HOST_PATH:-/mnt/data/apps/server-vps/agent}
+      # Agent HTTP 文件 API 鉴权 token（设为与 CLUSTER_NODE_TOKEN 相同的值即可）
+      # 配置后后端会优先用 HTTP 调 agent 列目录（< 5ms），无需 SSH 冷启动
+      NODE_AGENT_TOKEN: ${NODE_AGENT_TOKEN:-}
+      NODE_AGENT_FILES_PORT: ${NODE_AGENT_FILES_PORT:-8082}
     depends_on:
       postgres:
         condition: service_healthy

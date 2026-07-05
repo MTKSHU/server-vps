@@ -13,8 +13,11 @@ import {
   previewSharedResourceFile, previewUserFile,
   ensureAllUserStorageDatasets, ensureUserStorageDataset, removeUserStorageDataset, removeUserWorkspaceVolume,
   updateSharedResourceInfo, updateStorageSettings, uploadUserFiles, verifySharedResource,
+  getResourceCacheMatrix, triggerResourceSync, clearResourceCache,
+  triggerResourceSyncAllNodes,
   type SharedResource, type SharedResourcePreview, type StorageSettings, type StorageVolume, type UserDataPolicy,
-  type UserDirectoryEntry, type UserDirectoryScan, type UserStorageDataset, type UserWorkspaceVolume
+  type UserDirectoryEntry, type UserDirectoryScan, type UserStorageDataset, type UserWorkspaceVolume,
+  type NodeResourceCache,
 } from "../api/cluster";
 import { authToken, authUser, hasAdminAccess } from "../auth";
 
@@ -30,6 +33,12 @@ const zfsEnsuring = ref(false);
 const zfsBusyUserIds = ref<number[]>([]);
 const workspaceLoading = ref(false);
 const workspaceBusyKeys = ref<string[]>([]);
+const cacheMatrix = ref<NodeResourceCache[]>([]);
+const cacheLoading = ref(false);
+const cacheBusyKeys = ref<string[]>([]);
+const cacheLoaded = ref(false);
+const cacheStatusFilter = ref("");
+const cacheNodeFilter = ref("");
 const policy = ref<UserDataPolicy | null>(null);
 const directory = ref<UserDirectoryScan | null>(null);
 const homeDirectory = ref<UserDirectoryScan | null>(null);
@@ -37,6 +46,7 @@ const currentPath = ref("");
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const folderInputRef = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
+const dirLoading = ref(false);
 const uploadProgress = reactive({ loaded: 0, total: 0, percent: 0 });
 const storageQuotaGb = ref(0);
 const activeTab = ref(typeof route.query.tab === "string" ? route.query.tab : "files");
@@ -258,14 +268,17 @@ async function loadUserDatasets() {
   userDatasets.value = await getUserStorageDatasets();
 }
 
-async function loadWorkspaceVolumes() {
+async function loadWorkspaceVolumes(fetchDiskUsage = false) {
   if (!isAdmin.value) return;
   workspaceLoading.value = true;
   try {
-    workspaceVolumes.value = await getUserWorkspaceVolumes();
+    workspaceVolumes.value = await getUserWorkspaceVolumes(fetchDiskUsage);
   } finally {
     workspaceLoading.value = false;
   }
+}
+async function refreshWorkspaceVolumesDiskUsage() {
+  await loadWorkspaceVolumes(true);
 }
 async function ensureZfsDataset(row: UserStorageDataset) {
   zfsBusyUserIds.value.push(row.user_id);
@@ -348,6 +361,67 @@ function zfsBusy(row: UserStorageDataset) {
   return zfsBusyUserIds.value.includes(row.user_id);
 }
 
+function cacheKey(nodeId: number, resourceId: number) { return `${nodeId}:${resourceId}`; }
+function cacheBusy(row: NodeResourceCache) { return cacheBusyKeys.value.includes(cacheKey(row.node_id, row.resource_id)); }
+function cacheStatusType(status: string) {
+  if (status === "ready") return "success";
+  if (status === "syncing") return "warning";
+  if (status === "pending") return "info";
+  if (status === "failed") return "danger";
+  return "info";
+}
+const cacheNodeOptions = computed(() => [...new Set(cacheMatrix.value.map((r) => r.hostname))].sort());
+const filteredCacheMatrix = computed(() => {
+  let list = cacheMatrix.value;
+  if (cacheStatusFilter.value) list = list.filter((r) => r.status === cacheStatusFilter.value);
+  if (cacheNodeFilter.value) list = list.filter((r) => r.hostname === cacheNodeFilter.value);
+  return list;
+});
+async function loadCacheMatrix() {
+  cacheLoading.value = true;
+  try {
+    cacheMatrix.value = await getResourceCacheMatrix();
+    cacheLoaded.value = true;
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "加载节点缓存失败");
+  } finally {
+    cacheLoading.value = false;
+  }
+}
+async function triggerCacheSync(row: NodeResourceCache) {
+  cacheBusyKeys.value.push(cacheKey(row.node_id, row.resource_id));
+  try {
+    await triggerResourceSync(row.resource_id, row.node_id);
+    ElMessage.success("同步任务已提交");
+    await loadCacheMatrix();
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "触发同步失败");
+  } finally {
+    cacheBusyKeys.value = cacheBusyKeys.value.filter((k) => k !== cacheKey(row.node_id, row.resource_id));
+  }
+}
+async function clearCacheRecord(row: NodeResourceCache) {
+  try {
+    await ElMessageBox.confirm(
+      `确认清除节点「${row.hostname}」上「${row.resource_name}」的缓存记录？此操作仅删除数据库记录，不会删除节点上的实际文件。`,
+      "清除缓存记录",
+      { type: "warning", confirmButtonText: "清除", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+  cacheBusyKeys.value.push(cacheKey(row.node_id, row.resource_id));
+  try {
+    await clearResourceCache(row.node_id, row.resource_id);
+    cacheMatrix.value = cacheMatrix.value.filter((r) => !(r.node_id === row.node_id && r.resource_id === row.resource_id));
+    ElMessage.success("缓存记录已清除");
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "清除缓存失败");
+  } finally {
+    cacheBusyKeys.value = cacheBusyKeys.value.filter((k) => k !== cacheKey(row.node_id, row.resource_id));
+  }
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -369,9 +443,10 @@ async function load() {
         const cached = await getUserDirectory(currentUserId.value, currentPath.value);
         if (cached && cached.status !== "unknown") { directory.value = cached; if (!currentPath.value) homeDirectory.value = cached; }
       } catch { /* 无缓存则忽略，交给 live-ls */ }
+      dirLoading.value = true;
       void loadDirectory().then(() => {
         if (directory.value?.status === "unknown" || (directory.value?.status === "ready" && directory.value.entries.length === 0 && directory.value.error)) void refreshDirectory();
-      }).catch(() => { /* 静默 */ });
+      }).catch(() => { /* 静默 */ }).finally(() => { dirLoading.value = false; });
     }
     await Promise.all([loadUserDatasets(), loadWorkspaceVolumes()]);
   } catch (err) {
@@ -463,6 +538,15 @@ async function removeResource(row: SharedResource) {
     await deleteSharedResource(row.id); ElMessage.success("已删除"); await load();
   } catch (err) {
     if (err !== "cancel") ElMessage.error(err instanceof Error ? err.message : "删除失败");
+  }
+}
+
+async function syncResourceToComputeNodes(row: SharedResource) {
+  try {
+    const result = await triggerResourceSyncAllNodes(row.id);
+    ElMessage.success(`已提交 ${result.node_count} 个节点同步任务`);
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "同步任务提交失败");
   }
 }
 async function openResourceBrowser(row: SharedResource) {
@@ -565,8 +649,21 @@ async function refreshDirectory() {
   for (let i = 0; i < 15; i += 1) { await new Promise((resolve) => setTimeout(resolve, 1000)); await loadDirectory(true); if (directory.value?.status !== "scanning") break; }
   if (currentPath.value) await loadHomeUsage();
 }
-async function enter(name: string) { currentPath.value = [currentPath.value, name].filter(Boolean).join("/"); await loadDirectory(); if (directory.value?.status === "unknown" || (directory.value?.status === "ready" && directory.value.entries.length === 0 && directory.value.error)) await refreshDirectory(); }
-async function up() { currentPath.value = currentPath.value.split("/").slice(0, -1).join("/"); await loadDirectory(); }
+async function enter(name: string) {
+  dirLoading.value = true;
+  try {
+    currentPath.value = [currentPath.value, name].filter(Boolean).join("/");
+    await loadDirectory();
+    if (directory.value?.status === "unknown" || (directory.value?.status === "ready" && directory.value.entries.length === 0 && directory.value.error)) await refreshDirectory();
+  } finally { dirLoading.value = false; }
+}
+async function up() {
+  dirLoading.value = true;
+  try {
+    currentPath.value = currentPath.value.split("/").slice(0, -1).join("/");
+    await loadDirectory();
+  } finally { dirLoading.value = false; }
+}
 async function previewMyFile(row: UserDirectoryEntry) {
   if (!currentUserId.value || row.type !== "file") return;
   previewVisible.value = true;
@@ -736,6 +833,9 @@ watch(activeTab, (tab) => {
       ElMessage.error(error instanceof Error ? error.message : "节点用户数据卷加载失败");
     });
   }
+  if (tab === "node-cache" && !cacheLoaded.value) {
+    void loadCacheMatrix();
+  }
 });
 watch(() => route.query, (query) => {
   if (typeof query.tab === "string") activeTab.value = query.tab;
@@ -879,10 +979,13 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('storage.actions')" width="260">
+            <el-table-column :label="t('storage.actions')" width="320">
               <template #default="{row}">
                 <el-tooltip :content="t('storage.viewFiles')" placement="top" :show-after="300">
                   <el-button size="small" :icon="FolderOpened" @click="openResourceBrowser(row)" />
+                </el-tooltip>
+                <el-tooltip v-if="isAdmin" :content="t('storage.syncToComputeNodes')" placement="top" :show-after="300">
+                  <el-button size="small" type="primary" :icon="RefreshRight" @click="syncResourceToComputeNodes(row)" />
                 </el-tooltip>
                 <el-tooltip v-if="isAdmin" :content="t('common.edit')" placement="top" :show-after="300">
                   <el-button size="small" :icon="Edit" @click="editResource(row)" />
@@ -945,10 +1048,13 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('storage.actions')" width="260">
+            <el-table-column :label="t('storage.actions')" width="320">
               <template #default="{row}">
                 <el-tooltip :content="t('storage.viewFiles')" placement="top" :show-after="300">
                   <el-button size="small" :icon="FolderOpened" @click="openResourceBrowser(row)" />
+                </el-tooltip>
+                <el-tooltip v-if="isAdmin" :content="t('storage.syncToComputeNodes')" placement="top" :show-after="300">
+                  <el-button size="small" type="primary" :icon="RefreshRight" @click="syncResourceToComputeNodes(row)" />
                 </el-tooltip>
                 <el-tooltip v-if="isAdmin" :content="t('common.edit')" placement="top" :show-after="300">
                   <el-button size="small" :icon="Edit" @click="editResource(row)" />
@@ -1008,7 +1114,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
               </el-tooltip>
             </div>
           </div>
-          <el-table :data="userBrowseEntriesPaged" stripe>
+          <el-table v-loading="dirLoading" :data="userBrowseEntriesPaged" stripe>
             <el-table-column :label="t('storage.name')">
               <template #default="{row}">
                 <el-button v-if="row._virtual === 'parent'" link type="primary" @click="up">{{ t("storage.parent") }}</el-button>
@@ -1110,7 +1216,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
               <small class="field-hint">{{ t("storage.workspaceVolumesHint") }}</small>
             </div>
             <el-tooltip :content="t('storage.refreshStatus')" placement="top" :show-after="300">
-              <el-button :icon="Refresh" :loading="workspaceLoading" @click="loadWorkspaceVolumes" />
+              <el-button :icon="Refresh" :loading="workspaceLoading" @click="refreshWorkspaceVolumesDiskUsage" />
             </el-tooltip>
           </div>
           <el-table :data="workspaceVolumes" stripe>
@@ -1121,7 +1227,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
               <template #default="{row}">{{ row.quota_gb ? `${row.quota_gb} GB` : t("storage.unlimited") }}</template>
             </el-table-column>
             <el-table-column :label="t('storage.used')" width="110">
-              <template #default="{row}">{{ row.used_gb == null ? '-' : gbValue(row.used_gb) }}</template>
+              <template #default="{row}">{{ row.used_gb == null ? '–' : gbValue(row.used_gb) }}</template>
             </el-table-column>
             <el-table-column :label="t('storage.containers')" width="120">
               <template #default="{row}">{{ row.active_container_count }}</template>
@@ -1152,6 +1258,81 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                     @click="removeWorkspaceVolumeAction(row)"
                   />
                 </el-tooltip>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+        <el-tab-pane v-if="isAdmin" :label="t('storage.nodeCache')" name="node-cache">
+          <div class="card-header" style="margin-bottom:12px">
+            <div>
+              <strong>{{ t("storage.nodeCacheTitle") }}</strong>
+              <small class="field-hint">{{ t("storage.nodeCacheHint") }}</small>
+            </div>
+            <el-tooltip :content="t('storage.refreshStatus')" placement="top" :show-after="300">
+              <el-button :icon="Refresh" :loading="cacheLoading" @click="loadCacheMatrix" />
+            </el-tooltip>
+          </div>
+          <div class="table-toolbar res-toolbar" style="margin-bottom:12px">
+            <el-select v-model="cacheStatusFilter" :placeholder="t('storage.filterByStatus')" clearable style="width:160px">
+              <el-option value="ready" :label="t('storage.cacheStatus') + ': ready'" />
+              <el-option value="syncing" :label="t('storage.cacheStatus') + ': syncing'" />
+              <el-option value="pending" :label="t('storage.cacheStatus') + ': pending'" />
+              <el-option value="failed" :label="t('storage.cacheStatus') + ': failed'" />
+            </el-select>
+            <el-select v-model="cacheNodeFilter" :placeholder="t('storage.filterByNode')" clearable style="width:180px">
+              <el-option v-for="h in cacheNodeOptions" :key="h" :label="h" :value="h" />
+            </el-select>
+            <span class="toolbar-spacer" />
+            <span style="color:var(--muted);font-size:12px">{{ filteredCacheMatrix.length }} / {{ cacheMatrix.length }} 条记录</span>
+          </div>
+          <el-table v-loading="cacheLoading" :data="filteredCacheMatrix" stripe>
+            <el-table-column :label="t('storage.node')" prop="hostname" width="160" show-overflow-tooltip />
+            <el-table-column :label="t('storage.resource')" min-width="200" show-overflow-tooltip>
+              <template #default="{row}">{{ row.resource_name }}<small style="color:var(--muted);margin-left:6px">{{ row.version }}</small></template>
+            </el-table-column>
+            <el-table-column :label="t('storage.source')" width="120">
+              <template #default="{row}"><el-tag size="small" effect="plain">{{ row.resource_type === 'dataset' ? t('storage.datasets').replace('公开','').trim() : 'Model' }}</el-tag></template>
+            </el-table-column>
+            <el-table-column :label="t('storage.cacheStatus')" width="120">
+              <template #default="{row}">
+                <el-tooltip v-if="row.status === 'failed' && row.error" :content="row.error" placement="top" :show-after="300">
+                  <el-tag :type="cacheStatusType(row.status)" size="small" style="cursor:help">{{ row.status }}</el-tag>
+                </el-tooltip>
+                <el-tag v-else :type="cacheStatusType(row.status)" size="small">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('storage.size')" width="110">
+              <template #default="{row}">{{ row.size_bytes != null ? bytes(row.size_bytes) : '-' }}</template>
+            </el-table-column>
+            <el-table-column :label="t('storage.localPath')" min-width="220" show-overflow-tooltip>
+              <template #default="{row}"><span style="font-size:12px;color:var(--muted)">{{ row.local_path || '-' }}</span></template>
+            </el-table-column>
+            <el-table-column :label="t('storage.cachedAt')" width="180">
+              <template #default="{row}">{{ formatTime(row.synced_at ?? 0) }}</template>
+            </el-table-column>
+            <el-table-column :label="t('storage.actions')" width="130" fixed="right">
+              <template #default="{row}">
+                <div style="display:flex;gap:8px">
+                  <el-tooltip :content="t('storage.triggerSync')" placement="top" :show-after="300">
+                    <el-button
+                      size="small"
+                      :icon="Refresh"
+                      :loading="cacheBusy(row)"
+                      :disabled="row.status === 'syncing'"
+                      @click="triggerCacheSync(row)"
+                    />
+                  </el-tooltip>
+                  <el-tooltip :content="t('storage.clearCache')" placement="top" :show-after="300">
+                    <el-button
+                      size="small"
+                      type="danger"
+                      :icon="Delete"
+                      :loading="cacheBusy(row)"
+                      :disabled="row.status === 'syncing'"
+                      @click="clearCacheRecord(row)"
+                    />
+                  </el-tooltip>
+                </div>
               </template>
             </el-table-column>
           </el-table>

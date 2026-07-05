@@ -11,7 +11,7 @@ import {
   getUserPreference,
   type Gpu,
   type Image,
-  type Node
+  type Node,
 } from "../api/cluster";
 import { hasAdminAccess } from "../auth";
 
@@ -53,6 +53,14 @@ const form = reactive({
 const selectedImage = computed(() => images.value.find((image) => image.id === form.image_id));
 const selectedNode = computed(() => nodes.value.find((node) => node.id === form.node_id));
 const isAdmin = computed(() => hasAdminAccess());
+
+const orderedNodes = computed(() => {
+  if (isAdmin.value) return nodes.value;
+  const allowed = new Set(myAllowedNodeIds.value || []);
+  const prioritized = nodes.value.filter((node) => allowed.has(node.id));
+  const rest = nodes.value.filter((node) => !allowed.has(node.id));
+  return [...prioritized, ...rest];
+});
 
 function freeCpuCores(node: Node) {
   return Math.max(0, node.cpu_total - node.cpu_used);
@@ -228,7 +236,7 @@ async function load() {
     getImages(),
     getNodes(),
     getMe(),
-    getUserPreference<{ image_ids?: string[] }>("image_favorites").catch(() => ({ value: { image_ids: [] } }))
+    getUserPreference<{ image_ids?: string[] }>("image_favorites").catch(() => ({ value: { image_ids: [] } })),
   ]);
   const favoriteIds = new Set(Array.isArray(favorites.value?.image_ids) ? favorites.value.image_ids : []);
   images.value = [...imageRows].sort((a, b) => {
@@ -294,7 +302,8 @@ async function submit() {
       gpu_count: form.gpu_ids.length,
       gpu_ids: form.gpu_ids,
       ssh_username: form.ssh_username,
-      ports: expandedPorts()
+      ports: expandedPorts(),
+      resources: [],
     });
     ElMessage.success("容器已创建");
     if (props.embedded) {
@@ -378,18 +387,10 @@ watch(
   <el-card shadow="never">
     <template #header><strong>创建 GPU Linux 容器</strong></template>
     <el-form :model="form" label-position="top" class="form-grid">
-      <el-form-item label="容器名称">
-        <el-input v-model="form.name" />
-      </el-form-item>
-      <el-form-item label="镜像">
-        <el-select v-model="form.image_id">
-          <el-option v-for="image in images" :key="image.id" :label="image.name" :value="image.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item v-if="isAdmin" label="节点">
+      <el-form-item label="节点">
         <el-select v-model="form.node_id" filterable>
           <el-option
-            v-for="node in nodes"
+            v-for="node in orderedNodes"
             :key="node.id"
             :label="`${node.hostname} · ${node.driver_pool}`"
             :value="node.id"
@@ -398,6 +399,14 @@ watch(
         </el-select>
         <small v-if="nodeSummary" class="field-hint">{{ nodeSummary }}</small>
         <small v-if="selectedNode?.cuda_driver_api_version" class="field-hint">最大支持 CUDA {{ selectedNode.cuda_driver_api_version }}</small>
+      </el-form-item>
+      <el-form-item label="镜像">
+        <el-select v-model="form.image_id">
+          <el-option v-for="image in images" :key="image.id" :label="image.name" :value="image.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="容器名称">
+        <el-input v-model="form.name" />
       </el-form-item>
       <el-form-item label="CPU 核数">
         <el-input-number v-model="form.cpu_cores" :min="1" :max="maxCpuCores" />

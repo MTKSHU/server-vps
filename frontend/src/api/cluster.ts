@@ -171,6 +171,7 @@ export interface Node {
   ssh_port: number;
   sync_ip: string;
   sync_ssh_port: number;
+  resource_cache_base: string;
   cpu_model: string;
   cpu_total: number;
   cpu_cores: number;
@@ -937,8 +938,9 @@ export function removeUserStorageDataset(userId: number) {
   return request<{ task: ContainerTask | null }>(`/api/storage/user-datasets/${userId}`, { method: "DELETE" });
 }
 
-export function getUserWorkspaceVolumes() {
-  return request<UserWorkspaceVolume[]>("/api/storage/workspace-volumes");
+export function getUserWorkspaceVolumes(fetchDiskUsage = false) {
+  const url = fetchDiskUsage ? "/api/storage/workspace-volumes?fetch_disk_usage=true" : "/api/storage/workspace-volumes";
+  return request<UserWorkspaceVolume[]>(url);
 }
 
 export function removeUserWorkspaceVolume(nodeId: number, userId: number, confirmVolumeName: string) {
@@ -994,6 +996,75 @@ export function distributeStorageImage(id: number, target_node_ids: number[] = [
 
 export function deleteStorageImage(id: number) {
   return request<void>(`/api/storage/images/${id}`, { method: "DELETE" });
+}
+
+export interface NodeResourceCache {
+  node_id: number;
+  resource_id: number;
+  status: "pending" | "syncing" | "ready" | "failed";
+  local_path: string | null;
+  synced_at: number | null;
+  size_bytes: number | null;
+  error: string | null;
+  updated_at: number;
+  hostname: string;
+  node_status: string;
+  resource_name: string;
+  resource_type: string;
+  version: string;
+}
+
+export function getResourceCacheMatrix() {
+  return request<NodeResourceCache[]>("/api/storage/resource-cache");
+}
+
+export function triggerResourceSync(resourceId: number, nodeId: number) {
+  return postJson<ContainerTask>(`/api/storage/resources/${resourceId}/sync-to-node/${nodeId}`, {});
+}
+
+export function triggerResourceSyncAllNodes(resourceId: number) {
+  return postJson<{ tasks: ContainerTask[]; node_count: number }>(`/api/storage/resources/${resourceId}/sync-to-all-nodes`, {});
+}
+
+export function containerSyncAndMountResource(containerId: number, resourceId: number) {
+  return postJson<ContainerTask>(`/api/containers/${containerId}/sync-resource/${resourceId}`, {});
+}
+
+export interface NodeCachedResourceItem {
+  id: number;
+  resource_type: "dataset" | "huggingface_model" | "pytorch_model";
+  name: string;
+  version: string;
+  mount_path: string;
+  readonly: boolean;
+  local_path: string;
+}
+
+export function getNodeCachedResources(nodeId: number) {
+  return request<NodeCachedResourceItem[]>(`/api/containers/node-cached-resources?node_id=${nodeId}`);
+}
+
+export function getContainerNodeCachedResources(containerId: number) {
+  return request<NodeCachedResourceItem[]>(`/api/containers/${containerId}/node-cached-resources`);
+}
+
+export function mountContainerNodeCache(containerId: number, resourceIds: number[]) {
+  return postJson<ContainerTask>(`/api/containers/${containerId}/mount-node-cache`, { resource_ids: resourceIds });
+}
+
+export function syncContainerNodeCache(containerId: number, resourceIds: number[]) {
+  return postJson<{ tasks: ContainerTask[]; submitted_count: number; skipped_resource_ids: number[] }>(
+    `/api/containers/${containerId}/sync-node-cache`,
+    { resource_ids: resourceIds },
+  );
+}
+
+export function applyContainerNodeCache(containerId: number) {
+  return postJson<ContainerTask>(`/api/containers/${containerId}/apply-node-cache`, {});
+}
+
+export function clearResourceCache(nodeId: number, resourceId: number) {
+  return request<void>(`/api/storage/resource-cache/${nodeId}/${resourceId}`, { method: "DELETE" });
 }
 
 export function getJoinTokens() {

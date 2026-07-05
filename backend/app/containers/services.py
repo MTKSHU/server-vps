@@ -123,6 +123,7 @@ def build_data_mounts(
     ssh_username: str,
     target_node_id: int | None = None,
     selected_resources: list[Any] | None = None,
+    enqueue_resource_sync_fn=None,
 ) -> list[str]:
     mounts = []
     if selected_resources:
@@ -141,5 +142,25 @@ def build_data_mounts(
             default_mount = resource["mount_path"]
             mount_path = validate_mount_path(selection.mount_path) if selection and selection.mount_path else default_mount
             suffix = ":ro" if resource["readonly"] else ""
-            mounts.append(f"{resource['source_path']}:{mount_path}{suffix}")
+
+            # 检查目标节点的本地缓存
+            source = resource["source_path"]
+            if target_node_id:
+                cache = conn.execute(
+                    "SELECT status, local_path FROM node_resource_cache"
+                    " WHERE node_id = %s AND resource_id = %s",
+                    (target_node_id, resource["id"]),
+                ).fetchone()
+                if cache and cache["status"] == "ready" and cache["local_path"]:
+                    # 本地缓存就绪，直接使用本地路径
+                    source = cache["local_path"]
+                elif enqueue_resource_sync_fn is not None:
+                    # 首次或失败：fallback 到存储节点路径，
+                    # 同时异步触发后台同步，下次创建自动切换本地缓存
+                    try:
+                        enqueue_resource_sync_fn(conn, target_node_id, resource["id"])
+                    except Exception:
+                        pass
+
+            mounts.append(f"{source}:{mount_path}{suffix}")
     return mounts

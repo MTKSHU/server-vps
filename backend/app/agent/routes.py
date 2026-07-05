@@ -7,7 +7,6 @@ import asyncssh
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from ..auth import authenticate_token, is_admin_user, websocket_token
 from psycopg.types.json import Jsonb
-
 from ..schemas import AgentTaskClaim, AgentTaskProgress, AgentTaskResult, NodeRegistration
 from ..nodes.routes import _get_or_create_ssh_key
 from ..agent.tasks import signal_node_task_done
@@ -701,6 +700,112 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     resource_id = int(task_payload.get("resource_id") or 0)
                     if resource_id:
                         conn.execute("UPDATE shared_resources SET request_status='ready',check_status='unknown',check_error='',updated_at=%s WHERE id=%s", (ts, resource_id))
+                if task["task_type"] == "sync_shared_resource":
+                    task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
+                    resource_id = int(task_payload.get("resource_id") or 0)
+                    local_cache_path = str(task_payload.get("local_cache_path") or "")
+                    if resource_id and local_cache_path:
+                        conn.execute(
+                            """
+                            UPDATE node_resource_cache
+                            SET status = 'ready',
+                                local_path = %s,
+                                synced_at = %s,
+                                error = '',
+                                updated_at = %s
+                            WHERE node_id = %s AND resource_id = %s
+                            """,
+                            (local_cache_path, ts, ts, task["node_id"], resource_id),
+                        )
+                        # 同步完成后自动将该节点上所有安装了此资源的容器热更新节点挂载
+                        resource_row = conn.execute(
+                            "SELECT source_path, mount_path FROM shared_resources WHERE id = %s",
+                            (resource_id,),
+                        ).fetchone()
+                        if resource_row:
+                            old_source = resource_row["source_path"]
+                            new_mount_path = resource_row["mount_path"]  # 当前（已标准化的）容器挂载点
+                            containers_on_node = conn.execute(
+                                "SELECT id, name, mounts FROM containers"
+                                " WHERE node_id = %s AND status IN ('running', 'stopped')",
+                                (task["node_id"],),
+                            ).fetchall()
+                            # 已处理容器 id 集合，避免同一容器处理两次
+                            handled_ids: set[int] = set()
+                            for ctr in containers_on_node:
+                                cur_mounts = list(ctr.get("mounts") or [])
+                                new_mounts = []
+                                mount_updates = []
+                                changed = False
+                                for m in cur_mounts:
+                                    readonly = m.endswith(":ro")
+                                    core = m[:-3] if readonly else m
+                                    parts = core.split(":", 1)
+                                    src = parts[0]
+                                    mpt = parts[1] if len(parts) == 2 else src
+                                    # 匹配：源路径是存储节点路径，或挂载目标已经是本资源的容器挂载点
+                                    # 后者涵盖了"上次同步已使用本地缓存路径"的情况，避免重复追加挂载条目
+                                    if src == old_source or mpt == new_mount_path:
+                                        sfx = ":ro" if readonly else ""
+                                        new_mounts.append(f"{local_cache_path}:{new_mount_path}{sfx}")
+                                        mount_updates.append({
+                                            "old_target": mpt,
+                                            "new_source": local_cache_path,
+                                            "new_target": new_mount_path,
+                                            "readonly": readonly,
+                                        })
+                                        changed = True
+                                    else:
+                                        new_mounts.append(m)
+                                if changed:
+                                    conn.execute(
+                                        "UPDATE containers SET mounts = %s, updated_at = %s WHERE id = %s",
+                                        (Jsonb(new_mounts), ts, ctr["id"]),
+                                    )
+                                    enqueue_node_task(
+                                        conn, task["node_id"], ctr["id"],
+                                        "apply_resource_mounts",
+                                        {"container_id": ctr["id"], "name": ctr["name"], "mount_updates": mount_updates},
+                                    )
+                                    handled_ids.add(ctr["id"])
+                            # 若本次同步关联了特定容器，且该容器尚无此资源挂载，主动添加
+                            specific_ctr_id = task.get("container_id")
+                            if specific_ctr_id and specific_ctr_id not in handled_ids:
+                                specific_ctr = conn.execute(
+                                    "SELECT id, name, mounts, status FROM containers WHERE id = %s",
+                                    (specific_ctr_id,),
+                                ).fetchone()
+                                if specific_ctr and specific_ctr["status"] in ("running", "stopped"):
+                                    existing_mounts = list(specific_ctr.get("mounts") or [])
+                                    # 防止重复追加：检查容器挂载列表中是否已有以 new_mount_path 为目标的条目
+                                    def _mount_target(mount_str: str) -> str:
+                                        ro = mount_str.endswith(":ro")
+                                        c = mount_str[:-3] if ro else mount_str
+                                        p = c.split(":", 1)
+                                        return p[1] if len(p) == 2 else p[0]
+                                    existing_targets = {_mount_target(m) for m in existing_mounts}
+                                    if new_mount_path not in existing_targets:
+                                        new_mounts_for_ctr = existing_mounts + [
+                                            f"{local_cache_path}:{new_mount_path}:ro"
+                                        ]
+                                        conn.execute(
+                                            "UPDATE containers SET mounts = %s, updated_at = %s WHERE id = %s",
+                                            (Jsonb(new_mounts_for_ctr), ts, specific_ctr_id),
+                                        )
+                                    enqueue_node_task(
+                                        conn, task["node_id"], specific_ctr_id,
+                                        "apply_resource_mounts",
+                                        {
+                                            "container_id": specific_ctr_id,
+                                            "name": specific_ctr["name"],
+                                            "mount_updates": [{
+                                                "old_target": "",
+                                                "new_source": local_cache_path,
+                                                "new_target": new_mount_path,
+                                                "readonly": True,
+                                            }],
+                                        },
+                                    )
                 if task["task_type"] == "scan_user_directory":
                     task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
                     result_detail: dict[str, Any] = {}
@@ -984,6 +1089,18 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     resource_id = int(task_payload.get("resource_id") or 0)
                     if resource_id:
                         conn.execute("UPDATE shared_resources SET request_status='failed',check_status='failed',check_error=%s,updated_at=%s WHERE id=%s", (error, ts, resource_id))
+                if task["task_type"] == "sync_shared_resource":
+                    task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
+                    resource_id = int(task_payload.get("resource_id") or 0)
+                    if resource_id:
+                        conn.execute(
+                            """
+                            UPDATE node_resource_cache
+                            SET status = 'failed', error = %s, updated_at = %s
+                            WHERE node_id = %s AND resource_id = %s
+                            """,
+                            (error[:2000], ts, task["node_id"], resource_id),
+                        )
                 if task["task_type"] == "scan_user_directory":
                     task_payload = task["payload"] if isinstance(task["payload"], dict) else {}
                     user_id = int(task_payload.get("user_id") or 0)

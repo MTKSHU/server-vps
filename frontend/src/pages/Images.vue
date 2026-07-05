@@ -47,6 +47,12 @@ const displayedRemoteImages = computed(() =>
   )
 );
 const favoriteImages = computed(() => images.value.filter(image => favoriteImageIds.value.includes(image.id)));
+// compatible_pools 与 el-select(multiple) 的双向绑定辅助
+const poolsArray = computed({
+  get: () => form.compatible_pools.split(",").map(s => s.trim()).filter(Boolean),
+  set: (arr: string[]) => { form.compatible_pools = arr.join(","); },
+});
+const availableDriverPools = computed(() => [...new Set(computeNodes.value.map(n => n.driver_pool).filter(Boolean))].sort());
 const storedImagesForDisplay = computed(() => {
   if (!onlyMyStoredImages.value) return storedImages.value;
   return storedImages.value.filter(row => row.owner_id === authUser.value?.id || row.owner === authUser.value?.username);
@@ -444,6 +450,6 @@ onMounted(() => { load(); loadRemote(); });
         </el-tab-pane>
       </el-tabs>
     </el-card>
-    <el-dialog v-model="dialog" :title="editingId?t('images.editPlatformImage'):t('images.registerPlatformImage')" width="680px"><el-form :model="form" label-position="top" class="form-grid"><el-form-item :label="t('images.imageId')"><el-input v-model="form.id" :disabled="Boolean(editingId)"/></el-form-item><el-form-item :label="t('images.displayName')"><el-input v-model="form.name"/></el-form-item><el-form-item label="Incus alias / fingerprint"><el-input v-model="form.incus_ref"/></el-form-item><el-form-item :label="t('images.cudaMajor')"><el-input-number v-model="form.cuda_major" :min="0"/></el-form-item><el-form-item :label="t('images.visibleInCreate')"><el-switch v-model="form.enabled"/></el-form-item><el-form-item :label="t('images.preferred')"><el-switch v-model="form.preferred"/></el-form-item></el-form><template #footer><el-button :icon="Close" @click="dialog=false">{{ t("common.cancel") }}</el-button><el-button type="primary" :icon="Select" @click="submit">{{ t("common.save") }}</el-button></template></el-dialog>
+    <el-dialog v-model="dialog" :title="editingId?t('images.editPlatformImage'):t('images.registerPlatformImage')" width="680px"><el-form :model="form" label-position="top" class="form-grid"><el-form-item :label="t('images.imageId')"><el-input v-model="form.id" :disabled="Boolean(editingId)"/></el-form-item><el-form-item :label="t('images.displayName')"><el-input v-model="form.name"/></el-form-item><el-form-item label="Incus alias / fingerprint"><el-input v-model="form.incus_ref"/></el-form-item><el-form-item :label="t('images.cudaMajor')"><el-input-number v-model="form.cuda_major" :min="0"/></el-form-item><el-form-item :label="t('images.compatiblePools')" class="wide"><el-select v-model="poolsArray" multiple filterable allow-create default-first-option style="width:100%" :placeholder="t('images.compatiblePools')"><el-option v-for="pool in availableDriverPools" :key="pool" :label="pool" :value="pool"/></el-select><div style="margin-top:4px;color:var(--muted);font-size:12px">{{ t('images.compatiblePoolsHint') }}</div></el-form-item><el-form-item :label="t('images.visibleInCreate')"><el-switch v-model="form.enabled"/></el-form-item><el-form-item :label="t('images.preferred')"><el-switch v-model="form.preferred"/></el-form-item></el-form><template #footer><el-button :icon="Close" @click="dialog=false">{{ t("common.cancel") }}</el-button><el-button type="primary" :icon="Select" @click="submit">{{ t("common.save") }}</el-button></template></el-dialog>
   </div>
 </template>

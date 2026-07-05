@@ -16,6 +16,8 @@ from ..agent.tasks import get_node_task_event, release_node_task_event, signal_n
 from ..schemas import (
     ContainerCreate,
     ContainerDeleteRequest,
+    ContainerNodeCacheSyncInput,
+    ContainerNodeCacheMountInput,
     ContainerExecCreate,
     ContainerPortInput,
     ContainerPublishImageInput,
@@ -37,7 +39,6 @@ def register_container_routes(app, deps: dict[str, Any]):
     normalize_port_payload = deps["normalize_port_payload"]
     add_container_port = deps["add_container_port"]
     select_node_and_gpus = deps["select_node_and_gpus"]
-    build_data_mounts = deps["build_data_mounts"]
     enqueue_incus_image_import_task = deps["enqueue_incus_image_import_task"]
     enqueue_node_task = deps["enqueue_node_task"]
     public_task = deps["public_task"]
@@ -47,6 +48,7 @@ def register_container_routes(app, deps: dict[str, Any]):
     select_storage_node_for_path = deps["select_storage_node_for_path"]
     storage_root_for_node = deps["storage_root_for_node"]
     storage_image_base_name = deps["storage_image_base_name"]
+    enqueue_resource_sync_task = deps.get("enqueue_resource_sync_task")
 
     def require_container_access(user, container):
         if not is_admin_user(user) and container["owner_id"] != user["id"]:
@@ -535,6 +537,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not image:
                 raise HTTPException(status_code=400, detail="镜像不存在")
             allowed_node_ids = allowed_node_ids_for_user(conn, user)
+            if payload.node_id is not None and allowed_node_ids is not None and payload.node_id not in allowed_node_ids:
+                raise HTTPException(status_code=403, detail="当前用户不可使用该节点")
             node, selected_gpus, schedule_reasons = select_node_and_gpus(conn, image, payload, allowed_node_ids)
             if not node:
                 detail = "没有满足资源、GPU 型号或镜像兼容性的节点"
@@ -571,14 +575,31 @@ def register_container_routes(app, deps: dict[str, Any]):
                 """,
                 (user["id"], node["id"], workspace_volume_name, workspace_gb, ts, ts),
             )
-            generated_mounts = build_data_mounts(
-                conn,
-                user,
-                payload.ssh_username,
-                node["id"],
-                payload.resources,
-            )
-            mounts = payload.mounts or generated_mounts
+            node_cache_base = str(node.get("resource_cache_base") or "").strip()
+            if not node_cache_base:
+                node_cache_base = f"{storage_root_for_node(conn, node['id']).rstrip('/')}/shared-cache"
+            node_cache_base = node_cache_base.rstrip("/")
+            auto_cache_mounts = [
+                f"{node_cache_base}/datasets:/datasets:ro",
+                f"{node_cache_base}/models:/models:ro",
+            ]
+
+            mounts = list(payload.mounts or [])
+
+            existing_targets: set[str] = set()
+            for mount_str in mounts:
+                readonly = mount_str.endswith(":ro")
+                core = mount_str[:-3] if readonly else mount_str
+                parts = core.split(":", 1)
+                target = parts[1] if len(parts) == 2 else parts[0]
+                existing_targets.add(target)
+            for mount_str in auto_cache_mounts:
+                core = mount_str[:-3] if mount_str.endswith(":ro") else mount_str
+                parts = core.split(":", 1)
+                target = parts[1] if len(parts) == 2 else parts[0]
+                if target not in existing_targets:
+                    mounts.append(mount_str)
+                    existing_targets.add(target)
             container = conn.execute(
                 """
                 INSERT INTO containers (
@@ -995,6 +1016,33 @@ def register_container_routes(app, deps: dict[str, Any]):
             audit(conn, user["username"], "sync", f"container:{container_id}", {"direction": payload.direction, "sync_task_id": sync_task["id"]})
             return {"sync_task": public_sync_task(sync_task), "node_task": public_task(node_task)}
 
+    @app.get("/api/containers/node-cached-resources")
+    def list_node_cached_resources(node_id: int):
+        with db() as conn:
+            user = current_user(conn)
+            node = conn.execute("SELECT id FROM nodes WHERE id = %s", (node_id,)).fetchone()
+            if not node:
+                raise HTTPException(status_code=404, detail="节点不存在")
+            if not is_admin_user(user):
+                allowed_node_ids = allowed_node_ids_for_user(conn, user)
+                if allowed_node_ids is not None and node_id not in allowed_node_ids:
+                    raise HTTPException(status_code=403, detail="当前用户不可使用该节点")
+            rows = conn.execute(
+                """
+                SELECT sr.id, sr.resource_type, sr.name, sr.version, sr.mount_path,
+                       sr.readonly, nrc.local_path
+                FROM node_resource_cache nrc
+                JOIN shared_resources sr ON sr.id = nrc.resource_id
+                WHERE nrc.node_id = %s
+                  AND nrc.status = 'ready'
+                  AND COALESCE(nrc.local_path, '') != ''
+                  AND sr.enabled = TRUE
+                ORDER BY sr.resource_type, sr.name, sr.version
+                """,
+                (node_id,),
+            ).fetchall()
+            return rows
+
     @app.get("/api/containers/{container_id}/sync-rules")
     def container_sync_rules(container_id: int):
         with db() as conn:
@@ -1140,6 +1188,302 @@ def register_container_routes(app, deps: dict[str, Any]):
             )
             conn.execute("UPDATE container_sync_rules SET last_run_at = %s, updated_at = %s WHERE id = %s", (now_ts(), now_ts(), rule_id))
             return {"sync_task": public_sync_task(sync_task), "node_task": public_task(node_task)}
+
+    @app.post("/api/containers/{container_id}/apply-node-cache", status_code=202)
+    def apply_container_node_cache(container_id: int):
+        """将容器的资源挂载切换为本地缓存路径（如果已同步完成）。"""
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            node_id = container["node_id"]
+            current_mounts = list(container["mounts"] or [])
+
+            # 获取所有共享资源：source_path → 资源完整信息
+            source_to_resource = {r["source_path"]: r for r in conn.execute(
+                "SELECT id, source_path, mount_path FROM shared_resources WHERE enabled = TRUE"
+            ).fetchall()}
+
+            # 获取该节点已就绪的本地缓存
+            caches = conn.execute(
+                "SELECT resource_id, local_path FROM node_resource_cache"
+                " WHERE node_id = %s AND status = 'ready' AND local_path != ''",
+                (node_id,),
+            ).fetchall()
+            rid_to_local = {c["resource_id"]: c["local_path"] for c in caches}
+
+            new_mounts = []
+            mount_updates = []
+            changed = False
+            for mount_str in current_mounts:
+                readonly = mount_str.endswith(":ro")
+                core = mount_str[:-3] if readonly else mount_str
+                parts = core.split(":", 1)
+                source = parts[0]
+                mount_path = parts[1] if len(parts) == 2 else source
+                resource = source_to_resource.get(source)
+                rid = resource["id"] if resource else None
+                if rid and rid in rid_to_local:
+                    new_source = rid_to_local[rid]
+                    new_target = resource["mount_path"]
+                    suffix = ":ro" if readonly else ""
+                    new_mounts.append(f"{new_source}:{new_target}{suffix}")
+                    mount_updates.append({
+                        "old_target": mount_path,
+                        "new_source": new_source,
+                        "new_target": new_target,
+                        "readonly": readonly,
+                    })
+                    changed = True
+                else:
+                    new_mounts.append(mount_str)
+
+            if not changed:
+                raise HTTPException(status_code=409, detail="没有可更新的资源挂载，本地缓存尚未就绪或挂载路径不匹配")
+
+            conn.execute(
+                "UPDATE containers SET mounts = %s, updated_at = %s WHERE id = %s",
+                (Jsonb(new_mounts), now_ts(), container_id),
+            )
+            task = enqueue_node_task(
+                conn,
+                node_id,
+                container_id,
+                "apply_resource_mounts",
+                {"container_id": container_id, "name": container["name"], "mount_updates": mount_updates},
+            )
+            return public_task(task)
+
+    @app.get("/api/containers/{container_id}/node-cached-resources")
+    def container_node_cached_resources(container_id: int):
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            rows = conn.execute(
+                """
+                SELECT sr.id, sr.resource_type, sr.name, sr.version, sr.mount_path,
+                       sr.readonly, nrc.local_path
+                FROM node_resource_cache nrc
+                JOIN shared_resources sr ON sr.id = nrc.resource_id
+                WHERE nrc.node_id = %s
+                  AND nrc.status = 'ready'
+                  AND COALESCE(nrc.local_path, '') != ''
+                  AND sr.enabled = TRUE
+                ORDER BY sr.resource_type, sr.name, sr.version
+                """,
+                (container["node_id"],),
+            ).fetchall()
+            return rows
+
+    @app.post("/api/containers/{container_id}/mount-node-cache", status_code=202)
+    def mount_container_node_cache(container_id: int, payload: ContainerNodeCacheMountInput):
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            if container["status"] not in ("running", "stopped"):
+                raise HTTPException(status_code=400, detail="容器必须是 running 或 stopped 状态才能挂载公开资源")
+
+            requested_ids = list(dict.fromkeys(resource_id for resource_id in payload.resource_ids if resource_id > 0))
+            if not requested_ids:
+                raise HTTPException(status_code=400, detail="请先选择至少一个公开资源")
+
+            resources = conn.execute(
+                """
+                SELECT sr.id, sr.name, sr.resource_type, sr.version, sr.mount_path,
+                       sr.readonly, nrc.local_path
+                FROM node_resource_cache nrc
+                JOIN shared_resources sr ON sr.id = nrc.resource_id
+                WHERE nrc.node_id = %s
+                  AND nrc.status = 'ready'
+                  AND COALESCE(nrc.local_path, '') != ''
+                  AND sr.enabled = TRUE
+                  AND sr.id = ANY(%s::bigint[])
+                ORDER BY sr.resource_type, sr.name
+                """,
+                (container["node_id"], requested_ids),
+            ).fetchall()
+            if len(resources) != len(requested_ids):
+                raise HTTPException(status_code=400, detail="部分资源尚未同步到当前容器所在节点，请先在存储中心触发同步")
+
+            existing_mounts = list(container.get("mounts") or [])
+            updates_by_target: dict[str, dict[str, Any]] = {}
+            resource_by_id = {item["id"]: item for item in resources}
+            for resource_id in requested_ids:
+                resource = resource_by_id[resource_id]
+                target = resource["mount_path"]
+                updates_by_target[target] = {
+                    "new_source": resource["local_path"],
+                    "new_target": target,
+                    "readonly": bool(resource["readonly"]),
+                    "old_target": target,
+                    "resource_id": resource["id"],
+                }
+
+            new_mounts: list[str] = []
+            mount_updates: list[dict[str, Any]] = []
+            seen_targets: set[str] = set()
+            changed = False
+
+            for mount_str in existing_mounts:
+                readonly = mount_str.endswith(":ro")
+                core = mount_str[:-3] if readonly else mount_str
+                parts = core.split(":", 1)
+                source = parts[0]
+                target = parts[1] if len(parts) == 2 else source
+                update = updates_by_target.get(target)
+                if not update:
+                    new_mounts.append(mount_str)
+                    continue
+                seen_targets.add(target)
+                final_readonly = bool(update["readonly"])
+                suffix = ":ro" if final_readonly else ""
+                new_mount = f"{update['new_source']}:{target}{suffix}"
+                new_mounts.append(new_mount)
+                if new_mount != mount_str:
+                    mount_updates.append(
+                        {
+                            "old_target": target,
+                            "new_source": update["new_source"],
+                            "new_target": target,
+                            "readonly": final_readonly,
+                        }
+                    )
+                    changed = True
+
+            for target, update in updates_by_target.items():
+                if target in seen_targets:
+                    continue
+                suffix = ":ro" if update["readonly"] else ""
+                new_mounts.append(f"{update['new_source']}:{target}{suffix}")
+                mount_updates.append(
+                    {
+                        "old_target": "",
+                        "new_source": update["new_source"],
+                        "new_target": target,
+                        "readonly": bool(update["readonly"]),
+                    }
+                )
+                changed = True
+
+            if not changed:
+                raise HTTPException(status_code=409, detail="所选资源已挂载到容器，无需重复操作")
+
+            ts = now_ts()
+            conn.execute(
+                "UPDATE containers SET mounts = %s, updated_at = %s WHERE id = %s",
+                (Jsonb(new_mounts), ts, container_id),
+            )
+            for resource_id in requested_ids:
+                mount_path = resource_by_id[resource_id]["mount_path"]
+                conn.execute(
+                    """
+                    INSERT INTO container_resources (container_id, resource_id, mount_path, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (container_id, resource_id) DO UPDATE SET
+                        mount_path = EXCLUDED.mount_path
+                    """,
+                    (container_id, resource_id, mount_path, ts),
+                )
+
+            task = enqueue_node_task(
+                conn,
+                container["node_id"],
+                container_id,
+                "apply_resource_mounts",
+                {"container_id": container_id, "name": container["name"], "mount_updates": mount_updates},
+            )
+            audit(
+                conn,
+                user["username"],
+                "mount-node-cache",
+                f"container:{container_id}",
+                {"resource_ids": requested_ids, "task_id": task["id"]},
+            )
+            return public_task(task)
+
+    @app.post("/api/containers/{container_id}/sync-resource/{resource_id}", status_code=202)
+    def container_sync_and_mount_resource(container_id: int, resource_id: int):
+        """触发将公开资源同步到容器所在节点，完成后自动挂载到该容器。"""
+        if enqueue_resource_sync_task is None:
+            raise HTTPException(status_code=503, detail="同步服务未配置")
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            task = enqueue_resource_sync_task(
+                conn, container["node_id"], resource_id, container_id=container_id
+            )
+            if task is None:
+                raise HTTPException(status_code=409, detail="同步任务已在进行中，或节点/资源不可用")
+            return public_task(task)
+
+    @app.post("/api/containers/{container_id}/sync-node-cache", status_code=202)
+    def container_sync_node_cache(container_id: int, payload: ContainerNodeCacheSyncInput):
+        """按容器所在节点批量同步公开资源到本地缓存。"""
+        if enqueue_resource_sync_task is None:
+            raise HTTPException(status_code=503, detail="同步服务未配置")
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+
+            requested_ids = list(dict.fromkeys(resource_id for resource_id in payload.resource_ids if resource_id > 0))
+            if not requested_ids:
+                raise HTTPException(status_code=400, detail="请先选择至少一个公开资源")
+
+            valid_rows = conn.execute(
+                """
+                SELECT id
+                FROM shared_resources
+                WHERE enabled = TRUE
+                  AND id = ANY(%s::bigint[])
+                """,
+                (requested_ids,),
+            ).fetchall()
+            valid_ids = {row["id"] for row in valid_rows}
+            if len(valid_ids) != len(requested_ids):
+                raise HTTPException(status_code=400, detail="部分公开资源不存在或未启用")
+
+            tasks: list[dict[str, Any]] = []
+            skipped_resource_ids: list[int] = []
+            for resource_id in requested_ids:
+                task = enqueue_resource_sync_task(conn, container["node_id"], resource_id, container_id=container_id)
+                if task is None:
+                    skipped_resource_ids.append(resource_id)
+                    continue
+                tasks.append(public_task(task))
+
+            if not tasks:
+                raise HTTPException(status_code=409, detail="所选资源均已有进行中的同步任务")
+
+            audit(
+                conn,
+                user["username"],
+                "sync-node-cache",
+                f"container:{container_id}",
+                {
+                    "resource_ids": requested_ids,
+                    "submitted_task_ids": [task["id"] for task in tasks],
+                    "skipped_resource_ids": skipped_resource_ids,
+                },
+            )
+            return {
+                "tasks": tasks,
+                "submitted_count": len(tasks),
+                "skipped_resource_ids": skipped_resource_ids,
+            }
 
     @app.post("/api/containers/{container_id}/ports", status_code=201)
     def create_container_port(container_id: int, payload: ContainerPortInput):

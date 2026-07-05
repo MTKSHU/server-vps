@@ -105,6 +105,112 @@ def storage_root_for_node(conn, node_id: int) -> str:
     return path.rstrip("/") or "/"
 
 
+def enqueue_resource_sync_task(
+    conn,
+    node_id: int,
+    resource_id: int,
+    now_ts,
+    enqueue_node_task,
+    container_id: int | None = None,
+) -> dict[str, Any] | None:
+    """将公开资源从存储节点同步到计算节点本地缓存。
+
+    - 若 (node_id, resource_id) 已处于 syncing 状态，跳过（防重复入队）。
+    - 路径由 storage_root_for_node 自动推导，无需额外配置项。
+    - 返回已入队的任务行，或 None（跳过/条件不满足）。
+    """
+    # 防重复：正在同步时跳过
+    existing = conn.execute(
+        "SELECT status FROM node_resource_cache WHERE node_id = %s AND resource_id = %s",
+        (node_id, resource_id),
+    ).fetchone()
+    if existing and existing["status"] == "syncing":
+        return None
+
+    resource = conn.execute(
+        "SELECT * FROM shared_resources WHERE id = %s AND enabled = TRUE",
+        (resource_id,),
+    ).fetchone()
+    if not resource:
+        return None
+
+    # 找一个在线的存储节点作为 rsync 源
+    storage_node = conn.execute(
+        """
+        SELECT n.*, svr.path AS storage_root
+        FROM nodes n
+        LEFT JOIN storage_volume_reports svr ON svr.node_id = n.id AND svr.volume_name = 'root'
+        WHERE n.node_type IN ('storage', 'mixed') AND n.status = 'online'
+        ORDER BY CASE n.node_type WHEN 'storage' THEN 1 ELSE 2 END, n.id
+        LIMIT 1
+        """,
+    ).fetchone()
+    if not storage_node:
+        return None
+
+    # 将平台路径（/data/datasets/...）映射到存储节点的实际路径
+    src_root = str(storage_node.get("storage_root") or "/data").strip() or "/data"
+    src_path = str(resource["source_path"]).strip()
+    if src_path.startswith("/data/"):
+        actual_source = (src_root.rstrip("/") + "/" + src_path[len("/data/"):]).replace("//", "/")
+    elif src_path == "/data":
+        actual_source = src_root
+    else:
+        actual_source = src_path
+
+    # 计算节点本地缓存路径：优先使用节点配置的 resource_cache_base，否则自动推导
+    compute_node = conn.execute("SELECT resource_cache_base FROM nodes WHERE id = %s", (node_id,)).fetchone()
+    node_cache_base = str((compute_node or {}).get("resource_cache_base") or "").strip()
+    # resource_type → 目录名：dataset 系 → datasets，其余（模型）→ models
+    _type = resource["resource_type"]
+    type_dir = "datasets" if _type == "dataset" else "models"
+    safe_name = resource["name"].replace("/", "_").replace("..", "_")
+    safe_version = resource["version"].replace("/", "_").replace("..", "_")
+    if node_cache_base:
+        base = node_cache_base.rstrip("/")
+    else:
+        compute_root = storage_root_for_node(conn, node_id)
+        base = f"{compute_root}/shared-cache"
+    # 路径：{base}/{type_dir}/{version}/{name}
+    # version 存放提供商/来源（如 openmoss、qwen），name 是资源名称
+    local_cache_path = f"{base}/{type_dir}/{safe_version}/{safe_name}"
+
+    private_key = _read_sync_private_key()
+    ts = now_ts()
+
+    # Upsert 缓存记录为 syncing 状态（冲突时仅在非 syncing 时更新，保证幂等）
+    conn.execute(
+        """
+        INSERT INTO node_resource_cache
+            (node_id, resource_id, status, local_path, error, created_at, updated_at)
+        VALUES (%s, %s, 'syncing', %s, '', %s, %s)
+        ON CONFLICT (node_id, resource_id) DO UPDATE
+            SET status = 'syncing',
+                local_path = EXCLUDED.local_path,
+                error = '',
+                updated_at = EXCLUDED.updated_at
+            WHERE node_resource_cache.status != 'syncing'
+        """,
+        (node_id, resource_id, local_cache_path, ts, ts),
+    )
+
+    return enqueue_node_task(
+        conn,
+        node_id,
+        container_id,
+        "sync_shared_resource",
+        {
+            "resource_id": resource["id"],
+            "source_host": str(storage_node.get("sync_ip") or "").strip() or storage_node["ip"],
+            "source_port": int(storage_node.get("sync_ssh_port") or 0) or SYNC_SSH_PORT,
+            "source_user": SYNC_SSH_USER,
+            "source_path": actual_source,
+            "source_private_key": private_key,
+            "local_cache_path": local_cache_path,
+        },
+    )
+
+
 def source_path_for_node(platform_path: str, node: dict[str, Any]) -> str:
     path = platform_path.strip()
     if not path.startswith("/"):
@@ -514,7 +620,8 @@ def enqueue_incus_image_import_task(
     source_node = conn.execute("SELECT * FROM nodes WHERE id = %s", (image_file["source_node_id"],)).fetchone()
     if not source_node:
         return None
-    target_root = storage_root_for_node(conn, node["id"])
+    node_cache_base_str = str(node.get("resource_cache_base") or "").strip()
+    target_root = node_cache_base_str.rstrip("/") if node_cache_base_str else storage_root_for_node(conn, node["id"])
     target_path = f"{target_root}/incus-images/import-cache/{image_file['base_name']}"
     return enqueue_node_task(
         conn,
