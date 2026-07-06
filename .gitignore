@@ -30,6 +30,11 @@ agent/cluster-agent-updater
 *.test
 *.out
 
+# 镜像构建用的临时 deb / tar 文件（不入库，体积过大）
+scripts/*.deb
+scripts/*.tar.gz
+scripts/*.tar
+
 # OS and editor noise
 .DS_Store
 Thumbs.db

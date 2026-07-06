@@ -127,6 +127,7 @@ const exactPairs = [
   ["共享资源名称不合法", "Invalid shared resource name"],
   ["资源名称不合法", "Invalid resource name"],
   ["资源版本不合法", "Invalid resource version"],
+  ["资源提供者不合法", "Invalid resource provider"],
   ["标签不合法", "Invalid tag"],
   ["标签最多 20 个", "At most 20 tags are allowed"],
   ["没有在线存储节点", "There is no online storage node"],

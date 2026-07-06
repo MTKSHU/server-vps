@@ -280,7 +280,7 @@ def normalize_shared_resource(payload: SharedResourceInput) -> SharedResourceInp
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{1,80}", payload.name):
         raise HTTPException(status_code=400, detail="共享资源名称不合法")
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,80}", payload.version):
-        raise HTTPException(status_code=400, detail="资源版本不合法")
+        raise HTTPException(status_code=400, detail="资源提供者不合法")
     payload.source_path = dep("validate_platform_path")(payload.source_path, "源路径")
     payload.mount_path = dep("validate_platform_path")(payload.mount_path, "容器挂载路径")
     payload.tags = normalize_shared_resource_tags(payload.tags)
@@ -1940,7 +1940,7 @@ def register_data_routes(app, deps: dict[str, Any]):
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{1,80}", name):
             raise HTTPException(status_code=400, detail="资源名称不合法")
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,80}", version):
-            raise HTTPException(status_code=400, detail="资源版本不合法")
+            raise HTTPException(status_code=400, detail="资源提供者不合法")
         tags = normalize_shared_resource_tags(payload.tags)
         ts = now_ts()
         with db() as conn:

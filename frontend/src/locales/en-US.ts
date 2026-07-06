@@ -305,6 +305,7 @@ export default {
     downloadLatestAgent: "Download Latest Agent",
     downloadUpdater: "Download Updater",
     version: "Version",
+    provider: "Provider",
     channel: "Channel",
     build: "Build",
     building: "Building...",

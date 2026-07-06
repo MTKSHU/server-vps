@@ -947,7 +947,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
           </div>
           <el-table :data="datasets" stripe>
             <el-table-column prop="name" :label="t('storage.name')" min-width="200" show-overflow-tooltip/>
-            <el-table-column prop="version" :label="t('storage.version')" width="120"/>
+            <el-table-column prop="version" :label="t('storage.provider')" width="120"/>
             <el-table-column :label="t('storage.source')" width="130"><template #default="{row}"><el-tag size="small" effect="plain">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
             <el-table-column :label="t('storage.tags')" min-width="200">
               <template #default="{row}">
@@ -1016,7 +1016,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
           </div>
           <el-table :data="models" stripe>
             <el-table-column prop="name" :label="t('storage.name')" min-width="200" show-overflow-tooltip/>
-            <el-table-column prop="version" :label="t('storage.version')" width="120"/>
+            <el-table-column prop="version" :label="t('storage.provider')" width="120"/>
             <el-table-column :label="t('storage.source')" width="130"><template #default="{row}"><el-tag size="small" effect="plain">{{ sourceLabel(row) }}</el-tag></template></el-table-column>
             <el-table-column :label="t('storage.tags')" min-width="200">
               <template #default="{row}">
@@ -1301,9 +1301,6 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 <el-tag v-else :type="cacheStatusType(row.status)" size="small">{{ row.status }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('storage.size')" width="110">
-              <template #default="{row}">{{ row.size_bytes != null ? bytes(row.size_bytes) : '-' }}</template>
-            </el-table-column>
             <el-table-column :label="t('storage.localPath')" min-width="220" show-overflow-tooltip>
               <template #default="{row}"><span style="font-size:12px;color:var(--muted)">{{ row.local_path || '-' }}</span></template>
             </el-table-column>
@@ -1345,7 +1342,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
     <el-dialog v-model="requestVisible" :title="requestForm.resource_type === 'dataset' ? '下载数据集到共享存储' : '下载模型到共享存储'" width="640px">
       <el-form :model="requestForm" label-position="top">
         <el-form-item label="本地集合名称"><el-input v-model="requestForm.name" placeholder="小写字母/数字/连字符，用于本地目录命名"/></el-form-item>
-        <el-form-item label="版本"><el-input v-model="requestForm.version" placeholder="默认 default"/></el-form-item>
+        <el-form-item label="提供者"><el-input v-model="requestForm.version" placeholder="例如 openmoss / openai / qwen（默认 default）"/></el-form-item>
         <el-form-item label="标签">
           <el-select v-model="requestForm.tags" multiple filterable allow-create collapse-tags collapse-tags-tooltip style="width:100%" placeholder="选择或输入标签">
             <el-option-group v-for="group in resourceTagGroups" :key="group.label" :label="group.label">
@@ -1380,8 +1377,8 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
         <el-form-item label="名称">
           <el-input v-model="resourceTagEditorForm.name" placeholder="小写字母/数字/连字符" />
         </el-form-item>
-        <el-form-item label="版本">
-          <el-input v-model="resourceTagEditorForm.version" placeholder="默认 default" />
+        <el-form-item label="提供者">
+          <el-input v-model="resourceTagEditorForm.version" placeholder="例如 openmoss / openai / qwen（默认 default）" />
         </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="resourceTagEditorForm.tags" multiple filterable allow-create collapse-tags collapse-tags-tooltip style="width:100%" placeholder="选择或输入标签">
@@ -1451,11 +1448,11 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
       <el-form :model="settingsForm" label-position="top">
         <el-form-item label="数据集存储基路径">
           <el-input v-model="settingsForm.dataset_base_path" placeholder="/data/datasets"/>
-          <div class="field-hint">数据集将保存到 {基路径}/{名称}/{版本}</div>
+          <div class="field-hint">数据集将保存到 {基路径}/{名称}/{提供者}</div>
         </el-form-item>
         <el-form-item label="模型存储基路径">
           <el-input v-model="settingsForm.model_base_path" placeholder="/data/models/huggingface"/>
-          <div class="field-hint">模型将保存到 {基路径}/{名称}/{版本}</div>
+          <div class="field-hint">模型将保存到 {基路径}/{名称}/{提供者}</div>
         </el-form-item>
         <el-form-item label="我的文件存储基路径">
           <el-input v-model="settingsForm.user_base_path" placeholder="/data/users"/>
