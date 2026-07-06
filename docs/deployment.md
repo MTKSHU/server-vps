@@ -11,6 +11,7 @@
 | `backend` | FastAPI 后端 | 仅 Compose 内部 |
 | `postgres` | 平台数据库 | 仅 Compose 内部 |
 | `port-router` | 容器业务端口转发 | host network，监听平台分配端口 |
+| `http-path-proxy` | 容器 Web 服务路径代理，支持 WebSocket | 仅 Compose 内部，由 `nginx` 转发 `/c/` |
 
 Casdoor、Prometheus、Grafana 不属于当前 Compose 栈。它们可以独立部署，再通过 SSO 或监控配置与平台协作。
 
@@ -46,7 +47,11 @@ docker compose -f deploy/docker-compose.yml ps
 
 ## 端口模型
 
-用户容器端口分两层：
+用户容器端口分两类访问入口。
+
+### TCP 端口转发
+
+普通 TCP 端口分两层：
 
 - `host_port`：用户访问管理节点时使用，例如 `管理节点IP:20080`。
 - `node_port`：计算节点上的 Incus proxy 端口，由 agent 配置。
@@ -61,6 +66,24 @@ PORT_RANGE_END=39999
 NODE_PORT_RANGE_START=40000
 NODE_PORT_RANGE_END=59999
 PORT_ROUTER_SYNC_INTERVAL=3
+```
+
+### Web 路径代理
+
+code-server、JupyterLab 和通用 Web 服务可通过路径访问：
+
+```text
+http://<管理节点>/c/<container-name>/<port-name>/
+```
+
+`nginx` 将 `/c/` 请求转发到 `http-path-proxy`，后者定期读取 `/api/internal/path-routes`，再连接目标节点上的 `node_port`。代理支持 WebSocket，适用于 code-server 终端和 Jupyter kernel 等长连接。
+
+相关变量：
+
+```text
+PATH_PREFIX=/c/
+PATH_PROXY_PORT=8890
+PATH_ROUTER_SYNC_INTERVAL=5
 ```
 
 ## Agent 发布物
@@ -83,6 +106,8 @@ Compose volume：
 - `postgres-data`：平台数据库。
 - `agent-releases`：agent 二进制发布物。
 - `hf-staging`：Hugging Face / ModelScope 后端下载内部暂存卷，容器内固定路径为 `/tmp/hf-staging`。
+
+管理节点只保存平台数据库、agent 发布物和后端下载暂存。用户数据、公开数据集、模型资源、ZFS dataset、workspace 卷和节点本地缓存位于 storage/mixed 或 compute 节点的实际数据盘上，由节点 agent 上报和执行任务。
 
 生产环境升级前建议备份：
 
@@ -115,6 +140,30 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 cd backend
 RELOAD=true python server.py
 ```
+
+## 文件浏览与节点 agent HTTP API
+
+个人文件浏览、扫描、下载、预览会优先使用节点 agent 的 HTTP 文件 API，以减少 SSH 冷启动延迟。需要在 backend 和节点 agent 之间保持一致：
+
+```text
+NODE_AGENT_TOKEN=<与节点 agent 文件 API 一致的 token>
+NODE_AGENT_FILES_PORT=8082
+```
+
+如果未配置或节点 agent HTTP API 不可用，后端会回退到已有的 SSH/SFTP 路径。
+
+## 资源与任务限流
+
+Hugging Face / ModelScope 下载、公开资源同步、镜像导出/分发和目录扫描都可能占用 CPU、磁盘和网络。管理节点与存储节点共用机器时建议设置：
+
+```text
+BACKEND_CPU_LIMIT=<管理节点可接受的 CPU 核数>
+HTTPS_PROXY=<可选，用于访问 Hugging Face 等外部站点>
+HTTP_PROXY=<可选>
+NO_PROXY=<可选>
+```
+
+平台设置页还提供 `transfer_bandwidth_limit_mbps`，用于给部分后台传输任务提供统一限速依据。
 
 ## TLS 和反向代理
 

@@ -445,6 +445,7 @@ export default {
     modelRequest: "模型下载请求",
     name: "名称",
     version: "版本",
+    provider: "提供者",
     source: "来源",
     tags: "标签",
     files: "文件数",

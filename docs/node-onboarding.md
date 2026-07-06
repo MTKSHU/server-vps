@@ -37,6 +37,13 @@ incus profile show default
 Incus storage pool：data
 ```
 
+节点类型由平台配置，可选：
+
+- `compute`：主要运行用户容器。
+- `storage`：主要承载用户目录、公开资源、ZFS dataset 和存储镜像文件。
+- `mixed`：同时承担计算和存储任务。
+- `app`：预留给应用型节点，不作为默认 GPU 调度目标。
+
 ## 2. 生成 join token
 
 管理员登录平台，进入“节点管理”，生成单节点 token。
@@ -66,6 +73,13 @@ CLUSTER_INCUS_STORAGE_POOL=data
 ```
 
 `CLUSTER_INCUS_STORAGE_POOL` 用于容器根盘、workspace 数据卷和节点磁盘容量上报；`CLUSTER_DATA_PATH` 仅用于主机目录挂载和旧任务兼容。
+
+如需启用节点 agent HTTP 文件 API，让后端更快浏览个人文件，可在 agent 环境中加入与管理节点一致的 token 和端口（具体变量以当前 agent 启动参数/页面生成内容为准）：
+
+```text
+NODE_AGENT_TOKEN=<与 backend NODE_AGENT_TOKEN 一致>
+NODE_AGENT_FILES_PORT=8082
+```
 
 如需固定主机名：
 
@@ -125,6 +139,7 @@ updater 读取同一个 `/etc/cluster-node-agent.env`，使用节点 token 拉�
 - CPU、内存、磁盘已上报。
 - GPU 节点能看到 GPU 型号、显存和 UUID。
 - Incus 状态正常。
+- 如果是 storage/mixed 节点，存储卷、用户 dataset、公开资源缓存根目录正常上报。
 
 创建一个测试容器，确认：
 
@@ -132,6 +147,17 @@ updater 读取同一个 `/etc/cluster-node-agent.env`，使用节点 token 拉�
 - 容器 Shell 可连接。
 - 分配 GPU 的容器内 `nvidia-smi` 可用。
 - 端口映射可以通过管理节点公开端口访问。
+- code-server、JupyterLab 或通用 Web 端口可以通过 `/c/<container-name>/<port-name>/` 路径访问。
+
+## 7. 节点配置建议
+
+节点上线后，在“节点管理”中检查并保存：
+
+- 节点类型、是否可调度、维护模式。
+- 最大容器数、最大运行容器数、GPU 共享上限和资源预留。
+- Shell SSH 用户/端口、数据同步专用地址 `sync_ip` 和 `sync_ssh_port`。
+- 公开资源本地缓存根目录 `resource_cache_base`。留空时使用节点数据盘下的默认 shared-cache；有本地 NVMe/SSD 时建议显式配置。
+- WOL MAC 和广播地址（需要远程唤醒时）。
 
 ## 常见问题
 

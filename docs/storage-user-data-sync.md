@@ -1,6 +1,6 @@
-# 用户目录、共享数据与存储同步
+# 用户目录、公开资源与存储同步
 
-本文记录当前 server-vps 的存储模型：用户目录、共享数据集、模型资源、容器同步任务、ZFS 用户 dataset 和 workspace 卷都由平台统一维护，再通过节点任务交给 agent 执行。
+本文记录当前 server-vps 的存储模型：用户目录、公开数据集、模型资源、资源请求、节点本地缓存、容器同步任务、ZFS 用户 dataset、workspace 卷和存储镜像文件都由平台统一维护，再通过节点任务交给 agent 执行。
 
 ## 数据分类
 
@@ -11,16 +11,19 @@
 | 模型缓存 | `/data/models/huggingface` | `/data/models/huggingface` | 只读 | 支持 Hugging Face / ModelScope 资源请求、同步或预热 |
 | Scratch | `/scratch/users/<username>` | `/scratch/<ssh_username>` | 读写 | 计算节点本地临时数据，不作为冷备份来源 |
 | Workspace 卷 | Incus storage pool | `/workspace` | 读写 | 按用户和节点创建，可由管理员回收 |
+| 节点本地资源缓存 | `<node-resource-cache-base>` | 按资源挂载 | 只读 | 将公开数据集/模型预热到计算节点本地盘，减少共享存储压力 |
 
 ## 已落地对象
 
 后端启动迁移会创建：
 
 - `user_data_policies`：每个用户的 home 源路径、备份开关、创建同步、停止回写和备份间隔。
-- `shared_resources`：共享数据集和模型资源的源路径、容器路径、标签、只读开关和同步策略。
+- `shared_resources`：公开数据集和模型资源的源路径、容器路径、标签、只读开关和同步策略。
+- `node_resource_cache` / `node_cache_inventory`：公开资源在各节点本地缓存的任务状态和实际文件清单。
 - `data_sync_tasks`：容器创建、手动同步、定时同步和备份产生的任务记录，由存储节点/计算节点 agent 消费。
 - `user_storage_datasets`：用户 ZFS dataset 的平台记录和任务状态。
 - `user_workspace_volumes`：用户在各节点上的 workspace 卷记录。
+- `storage_image_files`：从节点导出到存储节点的 Incus 镜像文件，可继续分发到其他节点。
 
 默认种子：
 
@@ -30,12 +33,15 @@
 
 ## 容器创建流程
 
-1. 前端只提交 `data_profile`，不再拼真实宿主机路径。
-2. 后端根据当前用户、`ssh_username` 和策略生成挂载：
-   - `default`：home + datasets + huggingface + scratch
-   - `minimal`：home
-3. 后端写入 `containers.mounts` 和 `containers.data_profile`。
-4. 后端为用户 home 和需要 on-create/prewarm 的共享资源写入 `data_sync_tasks`。
+1. 前端提交选中的公开资源、workspace/scratch 等选项，不直接拼真实宿主机路径。
+2. 后端根据当前用户、`ssh_username`、选中的公开资源和策略生成挂载：
+   - home：用户目录。
+   - datasets/models：公开数据集和模型资源。
+   - scratch：节点本地临时目录。
+   - workspace：按用户和节点创建的 Incus volume。
+   - node cache：已同步到节点本地的公开资源缓存。
+3. 后端写入 `containers.mounts`、`container_resources` 和相关同步任务。
+4. 后端为用户 home 和需要 on-create/prewarm 的公开资源写入 `data_sync_tasks`。
 5. agent 执行 `incus_create_container` 前会自动创建 `/data/...`、`/scratch/...`、`CLUSTER_DATA_PATH/...` 下缺失的挂载目录。
 
 ## 存储中心界面
@@ -43,11 +49,50 @@
 “存储中心”当前提供：
 
 - 我的文件：浏览、上传、下载、删除和预览个人目录文件，支持文件夹上传和分页浏览。
-- 共享数据集：按名称、版本和标签筛选；管理员可校验、扫描、编辑标签和浏览资源文件。
-- 模型资源：支持 Hugging Face / ModelScope 来源标识和下载进度展示。
-- 资源请求：用户可提交数据集或模型资源请求，管理员审核后由平台下载到存储节点。
+- 公开数据集：按名称、提供者和标签筛选；管理员可校验、扫描、编辑标签和浏览资源文件。
+- 模型资源：按名称、提供者和标签筛选，支持 Hugging Face / ModelScope 来源标识和下载进度展示。
+- 资源请求：用户可提交数据集或模型资源请求，管理员可复用请求参数；平台后台下载到存储节点后自动注册为公开资源。
+- 节点本地缓存：管理员可将公开数据集/模型同步到单个节点或全部在线节点，也可清理某节点缓存。
 - 存储配置：管理员维护数据集、模型和用户目录根路径，以及 Hugging Face endpoint。
 - ZFS 与 workspace：管理员可为用户创建或移除 ZFS dataset，并回收节点 workspace 卷。
+- 存储镜像文件：管理员可从节点导出 Incus 镜像到存储节点、分发到其他节点或删除存储镜像文件。
+
+说明：`shared_resources.version` 字段在数据库和 API 中继续保留以避免迁移风险，但界面和产品语义中显示为“提供者”，用于表达资源来源组织或作者，例如 `openmoss`、`openai`、`qwen`。
+
+## 个人文件访问路径
+
+个人文件相关接口位于 `/api/storage/users/{user_id}/...`，包括列表、实时列表、上传、扫描、下载、预览和删除。
+
+后端访问存储节点时优先使用节点 agent HTTP 文件 API：
+
+```text
+NODE_AGENT_TOKEN
+NODE_AGENT_FILES_PORT=8082
+```
+
+配置可用时，列目录和预览无需等待 SSH 冷启动；不可用时会回退到 SSH/SFTP 路径。上传仍受后端上传限制、用户 `storage_quota_gb` 和目标存储节点实际空间限制。
+
+## 公开资源请求
+
+资源请求接口 `/api/data/resource-requests` 当前支持：
+
+- `source=huggingface`：通过 Hugging Face CLI 下载模型或数据集，支持 revision、token 和 `hf_endpoint`。
+- `source=modelscope`：通过 ModelScope SDK 下载模型或数据集，支持 revision、token。
+
+下载先进入后端暂存卷 `/tmp/hf-staging`，再推送到存储节点目标路径。服务重启时，仍处于 `downloading` 的资源会标记为 failed，用户需要重新提交。
+
+## 节点本地资源缓存
+
+节点配置中的 `resource_cache_base` 用于设置公开资源本地缓存根目录；为空时使用节点数据盘根目录下的默认 shared-cache 路径。
+
+主要流程：
+
+1. 管理员在存储中心选择公开资源，触发“同步到节点”或“同步到全部在线节点”。
+2. 后端创建节点任务，agent 将存储节点上的资源同步到目标节点本地缓存目录。
+3. 容器页面可查看节点已缓存资源，并将缓存挂载到容器中。
+4. 管理员可按节点和资源清理缓存。
+
+适用场景：大模型或大数据集被多台容器重复读取时，先同步到本地 NVMe/SSD，再以只读挂载方式给容器使用。
 
 ## 跨节点同步 MVP
 

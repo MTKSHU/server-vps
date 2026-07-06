@@ -9,7 +9,7 @@ TrueNAS SCALE 底层虽然是 Linux，但它不是普通 Ubuntu 服务器。`clu
 推荐把 TrueNAS SCALE 节点只作为 `storage` 节点使用：
 
 - 承载 `/mnt/<pool>/cluster-storage` 作为平台数据根目录。
-- 执行用户目录、共享数据集、模型资源的同步和校验任务。
+- 执行用户目录、公开数据集、模型资源的同步和校验任务。
 - 执行用户 ZFS dataset 创建、quota 设置、mountpoint 设置和移除任务。
 - 不在该节点上创建 Incus 计算容器；计算容器仍放在 Ubuntu GPU/计算节点。
 

@@ -5,7 +5,7 @@
   <a href="README.md"><img src="https://img.shields.io/badge/docs-%E4%B8%AD%E6%96%87-blue.svg" alt="中文文档"></a>
 </p>
 
-A GPU container management platform for small research groups. server-vps uses one management node and multiple GPU/storage nodes to centralize Incus containers, GPU allocation, user quotas, port access, data directories, and node agent releases in a web console.
+A GPU container management platform for small research groups. server-vps uses one management node and multiple GPU/storage/mixed nodes to centralize Incus containers, GPU allocation, user quotas, port access, path-based web service proxying, data directories, public resource caches, and node agent releases in a web console.
 
 The default deployment only runs the platform services and uses local account login. External OIDC/CAS SSO, Casdoor pending-user import, and platform self-registration are optional features.
 
@@ -19,20 +19,22 @@ server-vps is designed for:
 
 - Small research groups, labs, and course environments that share a limited number of GPU servers.
 - Users who should create and manage Linux containers from a web UI instead of logging into the host directly.
-- Administrators who need to manage user quotas, node permissions, container ports, shared datasets, model caches, and node agent versions.
+- Administrators who need to manage user quotas, node permissions, container ports, public datasets, model resources, node-local caches, image distribution, and node agent versions.
 - Sites that already have external identity, monitoring, and TLS systems and want this project to focus on GPU container resource management.
 
 It is not a full Kubernetes replacement, and it does not bundle an identity provider, monitoring stack, or public-cloud billing system.
 
 ## Features
 
-- Dashboard: online nodes, GPUs, running containers, CPU, memory, disk usage, and node monitoring.
-- Node management: single-node join tokens, node types, scheduling policies, resource limits, port policies, Wake-on-LAN, sync addresses, SSH public keys, node shell, shutdown, reboot, and wake actions.
+- Dashboard: online nodes, GPUs, running containers, CPU, memory, disk usage, alerts, node monitoring, and node history.
+- Node management: single-node join tokens, node types (compute/storage/app/mixed), scheduling policies, resource limits, port policies, Wake-on-LAN, sync addresses, resource cache directories, platform SSH public keys, node shell, shutdown, reboot, and wake actions.
 - Agent releases: build `cluster-node-agent` / `cluster-agent-updater` artifacts from the web console, configure stable/canary auto-updates, and trigger node upgrades.
-- Container management: create Incus containers with selected images, nodes, CPU/memory/GPU resources, SSH users, and port mappings; start, stop, restart, shell into, resize, publish images from, and sync data for containers.
-- Port access: the platform allocates public ports on the management node, and `port-router` forwards them to Incus proxy ports on compute nodes.
-- Storage center: personal files, shared datasets, model resources, upload/download/preview, Hugging Face / ModelScope resource requests, ZFS user datasets, and workspace volumes.
-- Users and authentication: local accounts by default; optional external OIDC/CAS SSO; user groups, quotas, node permissions, and pending SSO users managed by administrators.
+- Image management: maintain platform image catalog entries, inspect node-local Incus images, pull Ubuntu remote images to nodes, export node images to storage, and distribute stored images to other nodes.
+- Container management: create Incus containers with selected images, nodes, CPU/memory/GPU resources, SSH users, public resources, and port mappings; start, stop, restart, retry failed provisioning, shell into, resize, publish images from, edit ports, configure sync rules, and mount node-local resource caches.
+- Port access: the platform allocates public ports on the management node, and `port-router` forwards them to Incus proxy ports on compute nodes. For code-server, JupyterLab, and generic web services, `http-path-proxy` exposes `/c/<container>/<port>/` paths.
+- Storage center: personal file browse/upload/download/preview/delete, public datasets/model resources (the API field `version` is presented as "provider" in the product), Hugging Face / ModelScope resource requests, resource file scans, node-local cache sync, ZFS user datasets, workspace volumes, and stored Incus image files.
+- Task center: `/api/tasks/recent` combines node tasks and data sync tasks; the UI surfaces progress, errors, and retry actions in the relevant pages.
+- Users and authentication: local accounts by default; optional external OIDC/CAS SSO; user groups, quotas, node permissions, and pending SSO users managed by administrators; the profile page supports SSH public keys and API tokens.
 - Platform self-registration: optional and disabled by default; production deployments should usually require administrator approval before enabling new users.
 
 ## Architecture Boundary
@@ -40,10 +42,11 @@ It is not a full Kubernetes replacement, and it does not bundle an identity prov
 The management node runs these services with Docker Compose:
 
 - `nginx`: the single Web/API entry point.
-- `frontend`: Vue 3 + Vite + Element Plus admin console.
+- `frontend`: Vue 3 + Vite admin console.
 - `backend`: FastAPI API, scheduling, resource ledger, and agent communication.
 - `postgres`: platform database.
 - `port-router`: listens on public container ports on the management node and forwards traffic to compute nodes.
+- `http-path-proxy`: routes `/c/<container>/<port>/` to container web ports and supports WebSocket traffic.
 
 GPU/storage nodes run directly on the host:
 
@@ -55,8 +58,6 @@ GPU/storage nodes run directly on the host:
 The current Compose stack does not include:
 
 - Casdoor, Keycloak, or other identity providers. They can be connected as external OIDC/CAS providers.
-- Prometheus/Grafana. Node exporters can be scraped by an external monitoring system.
-- TLS termination. For production, place an external reverse proxy or load balancer in front of the platform.
 
 ## Quick Start
 
@@ -118,6 +119,9 @@ docker compose -f deploy/docker-compose.yml ps
 | `PORT_ROUTER_TOKEN` | Token used by `port-router` to read the internal route table; must be changed for production |
 | `SYNC_SSH_IDENTITY_FILE` | Private key path for cross-node data sync |
 | `AGENT_SOURCE_HOST_PATH` | Host source path used by the backend when building agent binaries with Docker |
+| `NODE_AGENT_TOKEN` / `NODE_AGENT_FILES_PORT` | Token and port for the node-agent file API; when configured, personal file browsing prefers HTTP over SSH |
+| `PATH_PREFIX` / `PATH_PROXY_PORT` | Container web-service path proxy prefix and internal listen port |
+| `BACKEND_CPU_LIMIT` | Optional CPU cap for the backend container so download/sync work does not starve Web/API responses |
 
 See [docs/deployment.md](docs/deployment.md) for full deployment notes and [deploy/.env.example](deploy/.env.example) for the environment template.
 
@@ -143,7 +147,7 @@ See [docs/node-onboarding.md](docs/node-onboarding.md) for the full flow.
 - [docs/deployment.md](docs/deployment.md): management-node deployment, environment variables, upgrades, and troubleshooting.
 - [docs/authentication.md](docs/authentication.md): local accounts, optional self-registration, and external OIDC/CAS SSO.
 - [docs/node-onboarding.md](docs/node-onboarding.md): GPU/storage node onboarding.
-- [docs/storage-user-data-sync.md](docs/storage-user-data-sync.md): user directories, shared data, model resources, and sync.
+- [docs/storage-user-data-sync.md](docs/storage-user-data-sync.md): user directories, public resources, model resources, node caches, and sync.
 - [docs/architecture.md](docs/architecture.md): current architecture and module boundaries.
 
 ## Development

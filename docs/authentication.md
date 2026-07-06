@@ -5,7 +5,7 @@ server-vps 当前支持两类登录方式：
 - 本地账号密码：默认启用，无外部依赖。
 - 外部 SSO：可选，支持 CAS 和 OIDC Provider。
 
-Casdoor 已独立于本仓库运行。server-vps 不负责启动、迁移、反代或配置 Casdoor SMTP。
+登录成功后，浏览器使用平台会话 token 调用 API。个人页还支持创建 API Token，用于脚本或自动化调用平台 API。Casdoor 已独立于本仓库运行，server-vps 不负责启动、迁移、反代或配置 Casdoor SMTP。
 
 ## 默认本地账号
 
@@ -17,6 +17,22 @@ Casdoor 已独立于本仓库运行。server-vps 不负责启动、迁移、反�
 ```
 
 用户由管理员在“用户管理”里创建、启用、分组和分配额度。
+
+## 个人 API Token
+
+用户可在“个人信息”页创建 API Token：
+
+- 明文只在创建时显示一次。
+- 后端只保存 hash、预览、名称、过期时间、创建时间和最后使用时间。
+- 每个用户最多创建 10 个 token。
+- 支持永久有效或按前端选项设置过期时间；用户可随时吊销。
+- 调用 API 时使用：
+
+```text
+Authorization: Bearer <token>
+```
+
+当前 API Token 权限等同于创建者账号本身：管理员 token 具备管理员接口权限，普通用户 token 只能访问普通用户可访问的接口。它适合内部脚本、自动化查询和后续 CLI 上传工具使用；尚未实现细粒度 scope、IP 绑定或上传专用权限，这些属于 TODO 中的后续设计。
 
 ## 平台自助注册
 

@@ -5,7 +5,7 @@
   <a href="README.en.md"><img src="https://img.shields.io/badge/docs-English-blue.svg" alt="English documentation"></a>
 </p>
 
-面向小型课题组的 GPU 容器管理平台。server-vps 以一台管理节点和若干 GPU/存储节点为边界，帮助管理员把 Incus 容器、GPU 资源、用户额度、端口访问、数据目录和节点 agent 发布流程集中到一个 Web 控制台中。
+面向小型课题组的 GPU 容器管理平台。server-vps 以一台管理节点和若干 GPU/存储/混合节点为边界，帮助管理员把 Incus 容器、GPU 资源、用户额度、端口访问、Web 服务路径代理、数据目录、公开资源缓存和节点 agent 发布流程集中到一个 Web 控制台中。
 
 默认部署只包含平台自身服务，认证方式为本地账号密码；外部 OIDC/CAS SSO、Casdoor 待审用户导入、平台自助注册等能力均为可选配置。
 
@@ -19,20 +19,22 @@ server-vps 适合这些场景：
 
 - 小型课题组、实验室或课程环境，需要把少量 GPU 服务器开放给多名成员使用。
 - 希望用户通过 Web 页面自助创建和管理 Linux 容器，而不是直接登录宿主机。
-- 管理员需要维护用户配额、节点权限、容器端口、共享数据集、模型缓存和节点 agent 版本。
+- 管理员需要维护用户配额、节点权限、容器端口、公开数据集、模型资源、节点本地缓存、镜像分发和节点 agent 版本。
 - 现有统一认证、监控、TLS 入口已有独立系统，希望平台只负责 GPU 容器资源管理。
 
 它不是完整的 Kubernetes 替代品，也不内置身份服务、监控栈或公有云计费系统。
 
 ## 核心功能
 
-- 仪表盘：汇总在线节点、GPU、运行容器、CPU、内存、磁盘，并展示节点实时监控。
-- 节点管理：生成单节点 join token，维护节点类型、调度策略、资源上限、端口策略、WOL、同步地址和 SSH 公钥，支持节点 Shell、关机、重启、唤醒。
+- 仪表盘：汇总在线节点、GPU、运行容器、CPU、内存、磁盘、告警，并展示节点实时监控和历史曲线。
+- 节点管理：生成单节点 join token，维护节点类型（compute/storage/app/mixed）、调度策略、资源上限、端口策略、WOL、同步地址、资源缓存目录和平台 SSH 公钥，支持节点 Shell、关机、重启、唤醒。
 - Agent 发布：管理员可在 Web 控制台构建 `cluster-node-agent` / `cluster-agent-updater` 发布物，配置 stable/canary 自动更新，并触发节点升级。
-- 容器管理：用户可选择镜像、节点、CPU/内存/GPU、SSH 用户和端口映射创建 Incus 容器；支持启动、停止、重启、Shell、资源调整、镜像发布和数据同步。
-- 端口访问：平台分配管理节点公开端口，`port-router` 转发到计算节点 Incus proxy，用户无需直接访问计算节点。
-- 存储中心：支持个人文件、共享数据集、模型资源、上传/下载/预览、Hugging Face / ModelScope 资源请求、ZFS 用户 dataset 和 workspace 卷管理。
-- 用户与认证：默认本地账号密码；可选外部 OIDC/CAS SSO；管理员可维护用户、分组、额度、节点权限和 SSO 待审用户。
+- 镜像管理：维护平台镜像目录、查看节点本地 Incus 镜像，从 Ubuntu remote 拉取镜像到节点，导出节点镜像到存储节点并分发到其他节点。
+- 容器管理：用户可选择镜像、节点、CPU/内存/GPU、SSH 用户、公开资源和端口映射创建 Incus 容器；支持启动、停止、重启、失败重试、Shell、资源调整、镜像发布、端口增删改、数据同步规则和节点缓存挂载。
+- 端口访问：平台分配管理节点公开端口，`port-router` 转发到计算节点 Incus proxy；对 code-server、JupyterLab 和通用 Web 服务，`http-path-proxy` 提供 `/c/<container>/<port>/` 路径访问。
+- 存储中心：支持个人文件浏览/上传/下载/预览/删除、公开数据集/模型资源（字段 `version` 的产品语义为“提供者”）、Hugging Face / ModelScope 资源请求、资源文件扫描、节点本地缓存同步、ZFS 用户 dataset、workspace 卷和存储镜像文件管理。
+- 任务中心：`/api/tasks/recent` 汇总节点任务和数据同步任务，前端在相关页面展示进度、失败原因和重试入口。
+- 用户与认证：默认本地账号密码；可选外部 OIDC/CAS SSO；管理员可维护用户、分组、额度、节点权限和 SSO 待审用户；个人页支持 SSH 公钥和 API Token。
 - 平台自助注册：可选开启，默认关闭；生产环境建议注册后由管理员审核启用。
 
 ## 架构边界
@@ -40,10 +42,11 @@ server-vps 适合这些场景：
 管理节点通过 Docker Compose 运行：
 
 - `nginx`：唯一 Web/API 入口。
-- `frontend`：Vue 3 + Vite + Element Plus 管理后台。
+- `frontend`：Vue 3 + Vite管理后台。
 - `backend`：FastAPI API、调度、资源账本、agent 通信。
 - `postgres`：平台数据库。
 - `port-router`：在管理节点监听用户容器公开端口，并转发到计算节点。
+- `http-path-proxy`：把 `/c/<container>/<port>/` 转发到容器 Web 端口，支持 WebSocket。
 
 GPU/存储节点原生运行：
 
@@ -55,8 +58,6 @@ GPU/存储节点原生运行：
 不属于当前 Compose 栈：
 
 - Casdoor、Keycloak 或其他身份服务。它们可作为外部 OIDC/CAS Provider 接入。
-- Prometheus/Grafana。节点 exporter 可由外部监控系统采集。
-- TLS 终止。生产环境建议在平台前方放置外部反向代理或负载均衡。
 
 ## 快速启动
 
@@ -118,6 +119,9 @@ docker compose -f deploy/docker-compose.yml ps
 | `PORT_ROUTER_TOKEN` | `port-router` 读取内部路由表的令牌，生产环境必须修改 |
 | `SYNC_SSH_IDENTITY_FILE` | 跨节点数据同步使用的私钥路径 |
 | `AGENT_SOURCE_HOST_PATH` | 后端通过 Docker 编译 agent 时使用的宿主机源码路径 |
+| `NODE_AGENT_TOKEN` / `NODE_AGENT_FILES_PORT` | 后端访问节点 agent 文件 API 的令牌和端口；配置后个人文件浏览优先走 HTTP |
+| `PATH_PREFIX` / `PATH_PROXY_PORT` | 容器 Web 服务路径代理前缀和内部监听端口 |
+| `BACKEND_CPU_LIMIT` | 限制 backend 容器 CPU，避免下载/同步任务影响 Web/API 响应 |
 
 完整部署说明见 [docs/deployment.md](docs/deployment.md)，环境变量模板见 [deploy/.env.example](deploy/.env.example)。
 
@@ -143,7 +147,7 @@ server-vps 不内置或反代 Casdoor。平台默认使用本地账号；如需�
 - [docs/deployment.md](docs/deployment.md)：管理节点部署、环境变量、升级和排障。
 - [docs/authentication.md](docs/authentication.md)：本地账号、可选平台自助注册、外部 OIDC/CAS SSO。
 - [docs/node-onboarding.md](docs/node-onboarding.md)：GPU/存储节点接入。
-- [docs/storage-user-data-sync.md](docs/storage-user-data-sync.md)：用户目录、共享数据、模型资源和同步。
+- [docs/storage-user-data-sync.md](docs/storage-user-data-sync.md)：用户目录、公开资源、模型资源、节点缓存和同步。
 - [docs/architecture.md](docs/architecture.md)：当前架构和模块边界。
 
 ## 开发
