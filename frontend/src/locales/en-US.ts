@@ -437,7 +437,7 @@ export default {
     publicResourceTotal: "Public Resource Total",
     collections: "{count} collections",
     noStorageNode: "No storage node",
-    settings: "Storage Path Settings",
+    settings: "Storage Settings",
     searchByName: "Search by name...",
     filterByTag: "Filter by tag",
     datasetRequest: "Dataset Download Request",

@@ -438,7 +438,7 @@ export default {
     publicResourceTotal: "公开资源总量",
     collections: "{count} 个集合",
     noStorageNode: "无存储节点",
-    settings: "存储路径设置",
+    settings: "存储设置",
     searchByName: "按名称搜索...",
     filterByTag: "按标签筛选",
     datasetRequest: "数据集下载请求",

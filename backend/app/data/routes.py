@@ -894,8 +894,6 @@ async def backend_hf_download_and_sync(
             env["HF_TOKEN"] = hf_token
         if hf_endpoint:
             env["HF_ENDPOINT"] = hf_endpoint
-        elif "HF_ENDPOINT" in env:
-            del env["HF_ENDPOINT"]   # 清除无效的镜像站默认值
         # 代理：优先用用户请求中的设置（未来扩展），否则用系统配置
         if HF_HTTPS_PROXY and "HTTPS_PROXY" not in env:
             env["HTTPS_PROXY"] = HF_HTTPS_PROXY

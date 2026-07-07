@@ -33,7 +33,9 @@ services:
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-change-me-now}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
       AGENT_RELEASE_MAX_MB: ${AGENT_RELEASE_MAX_MB:-100}
-      # HuggingFace 下载代理（能访问 huggingface.co 的 HTTP 代理，格式: http://host:port）
+      # HuggingFace 下载端点；国内环境默认使用 hf-mirror.com，也可改回 https://huggingface.co
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      # HuggingFace 下载代理（可选，格式: http://host:port 或 socks5://host:port）
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}

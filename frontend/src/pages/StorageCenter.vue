@@ -154,7 +154,7 @@ const homeUsagePercent = computed(() => {
 });
 function taskError(task: { last_error?: string; detail?: Record<string, unknown> }) { return task.last_error || String(task.detail?.last_error || ""); }
 
-// Storage path settings state
+// Storage settings state
 const settingsVisible = ref(false);
 const settingsForm = reactive<StorageSettings>({ dataset_base_path: "/data/datasets", model_base_path: "/data/models/huggingface", user_base_path: "/data/users", hf_endpoint: "", hf_endpoint_enabled: false });
 const settingsSaving = ref(false);
@@ -468,7 +468,7 @@ async function saveSettings() {
     const result = await updateStorageSettings(settingsForm);
     Object.assign(settingsForm, result);
     settingsVisible.value = false;
-    ElMessage.success("存储路径设置已保存");
+    ElMessage.success("存储设置已保存");
   } finally { settingsSaving.value = false; }
 }
 async function submitRequest() {
@@ -1353,7 +1353,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
         <el-form-item label="下载源">
           <el-radio-group v-model="requestForm.source">
             <el-radio value="modelscope">ModelScope（推荐，国内可直连）</el-radio>
-            <el-radio value="huggingface">HuggingFace（需代理或境外网络）</el-radio>
+            <el-radio value="huggingface">HuggingFace（可用镜像或代理）</el-radio>
           </el-radio-group>
         </el-form-item>
         <template v-if="requestForm.source === 'modelscope'">
@@ -1363,7 +1363,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
           <el-form-item label="MS Token（可选）"><el-input v-model="requestForm.ms_token" type="password" show-password placeholder="可选"/></el-form-item>
         </template>
         <template v-else>
-          <el-alert type="warning" :closable="false" title="huggingface.co 在中国大陆被封锁（TLS 握手失败）。需在 .env 中配置有效的 HTTPS_PROXY 才能使用。hf-mirror.com 不是真正的镜像，无法使用。" style="margin-bottom:12px"/>
+          <el-alert type="warning" :closable="false" title="国内访问 HuggingFace 可在 .env 中配置 HF_ENDPOINT=https://hf-mirror.com，或配置有效的 HTTPS_PROXY 代理。" style="margin-bottom:12px"/>
           <el-form-item label="HuggingFace 仓库 ID"><el-input v-model="requestForm.hf_repo_id" placeholder="例如 meta-llama/Llama-3.2-1B"/></el-form-item>
           <el-form-item label="Revision（分支/Tag）"><el-input v-model="requestForm.hf_revision" placeholder="默认 main"/></el-form-item>
           <el-form-item label="HF Token（可选，访问 gated 模型）"><el-input v-model="requestForm.hf_token" type="password" show-password placeholder="hf_xxxxx"/></el-form-item>
@@ -1441,8 +1441,8 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
       <template #footer><el-button :icon="Close" @click="previewVisible=false">关闭</el-button></template>
     </el-dialog>
 
-    <!-- 存储路径设置 -->
-    <el-dialog v-model="settingsVisible" title="存储路径设置" width="540px">
+    <!-- 存储设置 -->
+    <el-dialog v-model="settingsVisible" title="存储设置" width="540px">
       <el-alert type="info" :closable="false" style="margin-bottom:16px"
         title="修改后仅对后续新增操作生效，已有资源路径不受影响。"/>
       <el-form :model="settingsForm" label-position="top">
@@ -1457,6 +1457,20 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
         <el-form-item label="我的文件存储基路径">
           <el-input v-model="settingsForm.user_base_path" placeholder="/data/users"/>
           <div class="field-hint">新用户的主目录将创建在 {基路径}/{用户名}</div>
+        </el-form-item>
+        <el-form-item label="HuggingFace 下载端点">
+          <el-switch
+            v-model="settingsForm.hf_endpoint_enabled"
+            active-text="启用自定义 HF_ENDPOINT"
+            inactive-text="使用服务环境默认值"
+          />
+          <el-input
+            v-model="settingsForm.hf_endpoint"
+            :disabled="!settingsForm.hf_endpoint_enabled"
+            placeholder="https://hf-mirror.com"
+            style="margin-top:8px"
+          />
+          <div class="field-hint">国内访问可填写 https://hf-mirror.com；关闭时使用后端容器环境中的 HF_ENDPOINT。</div>
         </el-form-item>
       </el-form>
       <template #footer>
