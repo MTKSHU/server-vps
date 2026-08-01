@@ -14,7 +14,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             }
           }
@@ -169,6 +171,147 @@
         }
       }
     },
+    "/api/tasks/recent": {
+      "get": {
+        "summary": "Recent Tasks",
+        "description": "返回全量任务历史（节点任务 + 同步任务），支持分页与状态分组筛选。\nstatus_group: '' = 全部 | 'active' = 进行中 | 'failed' = 失败 | 'succeeded' = 成功",
+        "operationId": "recent_tasks_api_tasks_recent_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Per Page"
+            }
+          },
+          {
+            "name": "status_group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Status Group"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/api-tokens": {
+      "get": {
+        "summary": "List Api Tokens",
+        "operationId": "list_api_tokens_api_me_api_tokens_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Api Token",
+        "operationId": "create_api_token_api_me_api_tokens_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiTokenCreateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/api-tokens/{token_id}": {
+      "delete": {
+        "summary": "Delete Api Token",
+        "operationId": "delete_api_token_api_me_api_tokens__token_id__delete",
+        "parameters": [
+          {
+            "name": "token_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Token Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/preferences/{key}": {
       "get": {
         "summary": "Get User Preference",
@@ -260,7 +403,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserOut"
+                  },
+                  "type": "array",
+                  "title": "Response Users Api Users Get"
+                }
               }
             }
           }
@@ -769,7 +918,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NodeOut"
+                  },
+                  "type": "array",
+                  "title": "Response Nodes Api Nodes Get"
+                }
               }
             }
           }
@@ -1555,7 +1710,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ImageOut"
+                  },
+                  "type": "array",
+                  "title": "Response Images Api Images Get"
+                }
               }
             }
           }
@@ -1605,7 +1766,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImageCatalogOut"
+                }
               }
             }
           }
@@ -1714,6 +1877,81 @@
       "post": {
         "summary": "Pull Image To Nodes",
         "operationId": "pull_image_to_nodes_api_image_catalog_pull_to_nodes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/image-catalog/delete-node-image": {
+      "post": {
+        "summary": "Delete Node Image",
+        "operationId": "delete_node_image_api_image_catalog_delete_node_image_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "title": "Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/image-catalog/copy-local-image": {
+      "post": {
+        "summary": "Copy Local Image To Node",
+        "description": "将本地自建 Incus 镜像分发到目标节点。\n\n- 若源节点已有导出文件（status='exported'）：直接下发 incus_image_import 任务，\n  目标节点 agent rsync 直连源节点，管理端不参与数据传输。\n- 若尚无导出文件：下发 incus_image_export 任务（含 distribute_to_node_ids），\n  导出完成后 agent 回调自动触发 incus_image_import。\n两种情况任务均写入 node_tasks，可在任务中心查看进度。",
+        "operationId": "copy_local_image_to_node_api_image_catalog_copy_local_image_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1880,7 +2118,7 @@
     "/api/storage/users/{user_id}/files/live": {
       "get": {
         "summary": "User Directory Live",
-        "description": "即时 SSH 到存储节点执行 ls -la，毫秒级返回文件列表，无需预扫描",
+        "description": "即时返回文件列表：优先通过 agent HTTP API（< 10ms），回退到 SSH ls。",
         "operationId": "user_directory_live_api_storage_users__user_id__files_live_get",
         "parameters": [
           {
@@ -2250,6 +2488,54 @@
         }
       }
     },
+    "/api/data/shared-resources/migrate-provider-layout": {
+      "post": {
+        "summary": "Migrate Shared Resources Provider Layout",
+        "operationId": "migrate_shared_resources_provider_layout_api_data_shared_resources_migrate_provider_layout_post",
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Dry Run"
+            }
+          },
+          {
+            "name": "create_symlink",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Create Symlink"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/data/shared-resources/{resource_id}": {
       "put": {
         "summary": "Update Shared Resource",
@@ -2425,6 +2711,43 @@
       "post": {
         "summary": "Verify Shared Resource",
         "operationId": "verify_shared_resource_api_data_shared_resources__resource_id__verify_post",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/shared-resources/{resource_id}/finalize-manual": {
+      "post": {
+        "summary": "Finalize Manual Shared Resource",
+        "operationId": "finalize_manual_shared_resource_api_data_shared_resources__resource_id__finalize_manual_post",
         "parameters": [
           {
             "name": "resource_id",
@@ -2813,12 +3136,34 @@
       "get": {
         "summary": "Workspace Volumes",
         "operationId": "workspace_volumes_api_storage_workspace_volumes_get",
+        "parameters": [
+          {
+            "name": "fetch_disk_usage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Fetch Disk Usage"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2996,6 +3341,150 @@
         }
       }
     },
+    "/api/storage/resource-cache": {
+      "get": {
+        "summary": "List Resource Cache",
+        "description": "管理员查询全量节点资源缓存状态矩阵。",
+        "operationId": "list_resource_cache_api_storage_resource_cache_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/resources/{resource_id}/sync-to-node/{node_id}": {
+      "post": {
+        "summary": "Trigger Resource Sync",
+        "description": "管理员手动触发将指定资源同步到指定节点。",
+        "operationId": "trigger_resource_sync_api_storage_resources__resource_id__sync_to_node__node_id__post",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/resources/{resource_id}/sync-to-all-nodes": {
+      "post": {
+        "summary": "Trigger Resource Sync All Nodes",
+        "description": "管理员手动触发将指定资源同步到所有在线可调度计算节点。",
+        "operationId": "trigger_resource_sync_all_nodes_api_storage_resources__resource_id__sync_to_all_nodes_post",
+        "parameters": [
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/storage/resource-cache/{node_id}/{resource_id}": {
+      "delete": {
+        "summary": "Clear Resource Cache",
+        "description": "管理员清除节点本地缓存记录（不删除节点上的实际文件）。",
+        "operationId": "clear_resource_cache_api_storage_resource_cache__node_id___resource_id__delete",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/containers": {
       "get": {
         "summary": "Containers",
@@ -3005,7 +3494,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ContainerOut"
+                  },
+                  "type": "array",
+                  "title": "Response Containers Api Containers Get"
+                }
               }
             }
           }
@@ -3066,7 +3561,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerOut"
+                }
               }
             }
           },
@@ -3103,7 +3600,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerOut"
+                }
               }
             }
           },
@@ -3140,7 +3639,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerOut"
+                }
               }
             }
           },
@@ -3438,7 +3939,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataSyncTaskOut"
+                  },
+                  "title": "Response Container Sync Tasks Api Containers  Container Id  Sync Tasks Get"
+                }
               }
             }
           },
@@ -3482,6 +3989,43 @@
         },
         "responses": {
           "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/node-cached-resources": {
+      "get": {
+        "summary": "List Node Cached Resources",
+        "operationId": "list_node_cached_resources_api_containers_node_cached_resources_get",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -3725,6 +4269,223 @@
         }
       }
     },
+    "/api/containers/{container_id}/apply-node-cache": {
+      "post": {
+        "summary": "Apply Container Node Cache",
+        "description": "将容器的资源挂载切换为本地缓存路径（如果已同步完成）。",
+        "operationId": "apply_container_node_cache_api_containers__container_id__apply_node_cache_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/node-cached-resources": {
+      "get": {
+        "summary": "Container Node Cached Resources",
+        "operationId": "container_node_cached_resources_api_containers__container_id__node_cached_resources_get",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/mount-node-cache": {
+      "post": {
+        "summary": "Mount Container Node Cache",
+        "operationId": "mount_container_node_cache_api_containers__container_id__mount_node_cache_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerNodeCacheMountInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync-resource/{resource_id}": {
+      "post": {
+        "summary": "Container Sync And Mount Resource",
+        "description": "触发将公开资源同步到容器所在节点，完成后自动挂载到该容器。",
+        "operationId": "container_sync_and_mount_resource_api_containers__container_id__sync_resource__resource_id__post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Resource Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/sync-node-cache": {
+      "post": {
+        "summary": "Container Sync Node Cache",
+        "description": "按容器所在节点批量同步公开资源到本地缓存。",
+        "operationId": "container_sync_node_cache_api_containers__container_id__sync_node_cache_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerNodeCacheSyncInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/containers/{container_id}/ports": {
       "post": {
         "summary": "Create Container Port",
@@ -3928,7 +4689,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
               }
             }
           }
@@ -3944,7 +4707,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
               }
             }
           }
@@ -4004,10 +4769,75 @@
         }
       }
     },
+    "/api/metrics/nodes/{node_id}/history": {
+      "get": {
+        "summary": "Node Metrics History",
+        "description": "返回节点指标历史（CPU%/内存%/GPU%），最多 7 天。",
+        "operationId": "node_metrics_history_api_metrics_nodes__node_id__history_get",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Node Id"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 6,
+              "title": "Hours"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/internal/port-routes": {
       "get": {
         "summary": "Internal Port Routes",
         "operationId": "internal_port_routes_api_internal_port_routes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/internal/path-routes": {
+      "get": {
+        "summary": "Internal Path Routes",
+        "description": "返回可通过路径代理（/c/<container>/<port-name>/）访问的 Web 端口路由表。\n每个 (container_name, port_name) 对是一条独立路由，同一容器可有多条。",
+        "operationId": "internal_path_routes_api_internal_path_routes_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4139,6 +4969,54 @@
         }
       }
     },
+    "/api/nodes/tasks/{task_id}/progress": {
+      "post": {
+        "summary": "Report Node Task Progress",
+        "description": "agent 在执行 container_data_sync 期间周期性上报 rsync 传输进度。",
+        "operationId": "report_node_task_progress_api_nodes_tasks__task_id__progress_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTaskProgress"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/nodes/tasks/{task_id}/result": {
       "post": {
         "summary": "Complete Node Task",
@@ -4207,6 +5085,29 @@
         ],
         "title": "AgentTaskClaim"
       },
+      "AgentTaskProgress": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "progress": {
+            "type": "object",
+            "title": "Progress",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "hostname"
+        ],
+        "title": "AgentTaskProgress"
+      },
       "AgentTaskResult": {
         "properties": {
           "token": {
@@ -4249,6 +5150,62 @@
           "ok"
         ],
         "title": "AgentTaskResult"
+      },
+      "AlertItem": {
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ],
+            "title": "Level"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "type",
+          "message"
+        ],
+        "title": "AlertItem",
+        "description": "集群告警条目。"
+      },
+      "ApiTokenCreateInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "expires_at": {
+            "type": "integer",
+            "title": "Expires At",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ApiTokenCreateInput"
       },
       "ApproveSsoInput": {
         "properties": {
@@ -4392,6 +5349,11 @@
             },
             "type": "array",
             "title": "Ports"
+          },
+          "expires_at": {
+            "type": "integer",
+            "title": "Expires At",
+            "default": 0
           }
         },
         "type": "object",
@@ -4434,6 +5396,162 @@
         ],
         "title": "ContainerExecCreate"
       },
+      "ContainerNodeCacheMountInput": {
+        "properties": {
+          "resource_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Resource Ids"
+          }
+        },
+        "type": "object",
+        "title": "ContainerNodeCacheMountInput"
+      },
+      "ContainerNodeCacheSyncInput": {
+        "properties": {
+          "resource_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Resource Ids"
+          }
+        },
+        "type": "object",
+        "title": "ContainerNodeCacheSyncInput"
+      },
+      "ContainerOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "owner_id": {
+            "type": "integer",
+            "title": "Owner Id"
+          },
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id"
+          },
+          "image_id": {
+            "type": "string",
+            "title": "Image Id"
+          },
+          "image_name": {
+            "type": "string",
+            "title": "Image Name",
+            "default": ""
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "default": ""
+          },
+          "node": {
+            "type": "string",
+            "title": "Node",
+            "default": ""
+          },
+          "node_ip": {
+            "type": "string",
+            "title": "Node Ip",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "access_status": {
+            "type": "string",
+            "title": "Access Status",
+            "default": "pending"
+          },
+          "access_error": {
+            "type": "string",
+            "title": "Access Error",
+            "default": ""
+          },
+          "system_role": {
+            "type": "string",
+            "title": "System Role",
+            "default": ""
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "title": "Cpu Cores"
+          },
+          "memory_gb": {
+            "type": "integer",
+            "title": "Memory Gb"
+          },
+          "disk_gb": {
+            "type": "integer",
+            "title": "Disk Gb"
+          },
+          "ssh_username": {
+            "type": "string",
+            "title": "Ssh Username",
+            "default": "ubuntu"
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip",
+            "default": ""
+          },
+          "mounts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Mounts"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At"
+          },
+          "gpus": {
+            "items": {
+              "$ref": "#/components/schemas/GpuOut"
+            },
+            "type": "array",
+            "title": "Gpus"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/ContainerPortOut"
+            },
+            "type": "array",
+            "title": "Ports"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "owner_id",
+          "node_id",
+          "image_id",
+          "status",
+          "cpu_cores",
+          "memory_gb",
+          "disk_gb",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ContainerOut",
+        "description": "GET /api/containers 响应元素。"
+      },
       "ContainerPortInput": {
         "properties": {
           "name": {
@@ -4456,6 +5574,87 @@
           "container_port"
         ],
         "title": "ContainerPortInput"
+      },
+      "ContainerPortOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "container_id": {
+            "type": "integer",
+            "title": "Container Id",
+            "default": 0
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "protocol": {
+            "type": "string",
+            "title": "Protocol"
+          },
+          "container_port": {
+            "type": "integer",
+            "title": "Container Port"
+          },
+          "host_port": {
+            "type": "integer",
+            "title": "Host Port"
+          },
+          "node_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Port"
+          },
+          "public_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Port"
+          },
+          "node_listen_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Listen Port"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At",
+            "default": 0
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "protocol",
+          "container_port",
+          "host_port"
+        ],
+        "title": "ContainerPortOut"
       },
       "ContainerPublishImageInput": {
         "properties": {
@@ -4545,6 +5744,11 @@
           "ip": {
             "type": "string",
             "title": "Ip",
+            "default": ""
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
             "default": ""
           }
         },
@@ -4668,6 +5872,133 @@
         ],
         "title": "ContainerSyncRuleInput"
       },
+      "DataSyncTaskOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "task_type": {
+            "type": "string",
+            "title": "Task Type"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "source_node_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Node Id"
+          },
+          "target_node_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Node Id"
+          },
+          "container_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Id"
+          },
+          "source_path": {
+            "type": "string",
+            "title": "Source Path",
+            "default": ""
+          },
+          "target_path": {
+            "type": "string",
+            "title": "Target Path",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "detail": {
+            "type": "object",
+            "title": "Detail"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SyncProgressOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At"
+          },
+          "finished_at": {
+            "type": "integer",
+            "title": "Finished At",
+            "default": 0
+          },
+          "last_error": {
+            "type": "string",
+            "title": "Last Error",
+            "default": ""
+          },
+          "result": {
+            "type": "object",
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_type",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DataSyncTaskOut",
+        "description": "GET /api/containers/{id}/sync-tasks 响应元素。"
+      },
       "GPUReport": {
         "properties": {
           "slot": {
@@ -4721,6 +6052,44 @@
         ],
         "title": "GPUReport"
       },
+      "GpuOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "slot": {
+            "type": "integer",
+            "title": "Slot"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "pci_address": {
+            "type": "string",
+            "title": "Pci Address",
+            "default": ""
+          },
+          "vram_gb": {
+            "type": "integer",
+            "title": "Vram Gb"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slot",
+          "uuid",
+          "model",
+          "vram_gb"
+        ],
+        "title": "GpuOut"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -4733,6 +6102,46 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "database"
+        ],
+        "title": "HealthResponse",
+        "description": "GET /api/health 响应体。"
+      },
+      "ImageCatalogOut": {
+        "properties": {
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImageOut"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "incus_images": {
+            "items": {
+              "$ref": "#/components/schemas/IncusImageOut"
+            },
+            "type": "array",
+            "title": "Incus Images"
+          }
+        },
+        "type": "object",
+        "title": "ImageCatalogOut",
+        "description": "GET /api/image-catalog 响应体。"
       },
       "ImageInput": {
         "properties": {
@@ -4781,6 +6190,114 @@
           "incus_ref"
         ],
         "title": "ImageInput"
+      },
+      "ImageOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "cuda_major": {
+            "type": "integer",
+            "title": "Cuda Major",
+            "default": 0
+          },
+          "compatible_pools": {
+            "type": "string",
+            "title": "Compatible Pools",
+            "default": ""
+          },
+          "incus_ref": {
+            "type": "string",
+            "title": "Incus Ref",
+            "default": ""
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "preferred": {
+            "type": "boolean",
+            "title": "Preferred",
+            "default": false
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "default": "admin"
+          },
+          "created_at": {
+            "type": "integer",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ImageOut",
+        "description": "GET /api/images 响应元素。"
+      },
+      "IncusImageOut": {
+        "properties": {
+          "node_id": {
+            "type": "integer",
+            "title": "Node Id"
+          },
+          "node": {
+            "type": "string",
+            "title": "Node"
+          },
+          "node_status": {
+            "type": "string",
+            "title": "Node Status",
+            "default": ""
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "default": ""
+          },
+          "aliases": {
+            "type": "string",
+            "title": "Aliases",
+            "default": ""
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "architecture": {
+            "type": "string",
+            "title": "Architecture",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "integer",
+            "title": "Updated At",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id",
+          "node"
+        ],
+        "title": "IncusImageOut",
+        "description": "节点本地 Incus 镜像条目。"
       },
       "IncusImageReport": {
         "properties": {
@@ -4978,10 +6495,318 @@
             "type": "integer",
             "title": "Sync Ssh Port",
             "default": 0
+          },
+          "resource_cache_base": {
+            "type": "string",
+            "title": "Resource Cache Base",
+            "default": ""
           }
         },
         "type": "object",
         "title": "NodeConfigInput"
+      },
+      "NodeOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "ip": {
+            "type": "string",
+            "title": "Ip"
+          },
+          "node_type": {
+            "type": "string",
+            "title": "Node Type",
+            "default": "compute"
+          },
+          "driver_pool": {
+            "type": "string",
+            "title": "Driver Pool",
+            "default": "unknown"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "schedulable": {
+            "type": "boolean",
+            "title": "Schedulable",
+            "default": true
+          },
+          "maintenance": {
+            "type": "boolean",
+            "title": "Maintenance",
+            "default": false
+          },
+          "max_containers": {
+            "type": "integer",
+            "title": "Max Containers",
+            "default": 8
+          },
+          "max_running_containers": {
+            "type": "integer",
+            "title": "Max Running Containers",
+            "default": 8
+          },
+          "max_gpu_shared_containers": {
+            "type": "integer",
+            "title": "Max Gpu Shared Containers",
+            "default": 4
+          },
+          "allow_gpu_sharing": {
+            "type": "boolean",
+            "title": "Allow Gpu Sharing",
+            "default": true
+          },
+          "max_cpu_per_container": {
+            "type": "integer",
+            "title": "Max Cpu Per Container",
+            "default": 0
+          },
+          "max_memory_gb_per_container": {
+            "type": "integer",
+            "title": "Max Memory Gb Per Container",
+            "default": 0
+          },
+          "max_disk_gb_per_container": {
+            "type": "integer",
+            "title": "Max Disk Gb Per Container",
+            "default": 0
+          },
+          "reserved_memory_gb": {
+            "type": "integer",
+            "title": "Reserved Memory Gb",
+            "default": 0
+          },
+          "reserved_disk_gb": {
+            "type": "integer",
+            "title": "Reserved Disk Gb",
+            "default": 0
+          },
+          "allow_port_mapping": {
+            "type": "boolean",
+            "title": "Allow Port Mapping",
+            "default": true
+          },
+          "max_ports_per_container": {
+            "type": "integer",
+            "title": "Max Ports Per Container",
+            "default": 8
+          },
+          "scheduler_weight": {
+            "type": "integer",
+            "title": "Scheduler Weight",
+            "default": 0
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Labels"
+          },
+          "wol_mac": {
+            "type": "string",
+            "title": "Wol Mac",
+            "default": ""
+          },
+          "wol_broadcast": {
+            "type": "string",
+            "title": "Wol Broadcast",
+            "default": "255.255.255.255"
+          },
+          "ssh_user": {
+            "type": "string",
+            "title": "Ssh User",
+            "default": "root"
+          },
+          "ssh_port": {
+            "type": "integer",
+            "title": "Ssh Port",
+            "default": 22
+          },
+          "sync_ip": {
+            "type": "string",
+            "title": "Sync Ip",
+            "default": ""
+          },
+          "sync_ssh_port": {
+            "type": "integer",
+            "title": "Sync Ssh Port",
+            "default": 0
+          },
+          "resource_cache_base": {
+            "type": "string",
+            "title": "Resource Cache Base",
+            "default": ""
+          },
+          "cpu_model": {
+            "type": "string",
+            "title": "Cpu Model",
+            "default": ""
+          },
+          "cpu_total": {
+            "type": "integer",
+            "title": "Cpu Total",
+            "default": 0
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "title": "Cpu Cores",
+            "default": 0
+          },
+          "cpu_sockets": {
+            "type": "integer",
+            "title": "Cpu Sockets",
+            "default": 1
+          },
+          "cpu_temperature_c": {
+            "type": "integer",
+            "title": "Cpu Temperature C",
+            "default": 0
+          },
+          "memory_total_gb": {
+            "type": "integer",
+            "title": "Memory Total Gb",
+            "default": 0
+          },
+          "disk_total_gb": {
+            "type": "number",
+            "title": "Disk Total Gb",
+            "default": 0
+          },
+          "cpu_used": {
+            "type": "integer",
+            "title": "Cpu Used",
+            "default": 0
+          },
+          "memory_used_gb": {
+            "type": "integer",
+            "title": "Memory Used Gb",
+            "default": 0
+          },
+          "disk_used_gb": {
+            "type": "number",
+            "title": "Disk Used Gb",
+            "default": 0
+          },
+          "last_seen": {
+            "type": "integer",
+            "title": "Last Seen",
+            "default": 0
+          },
+          "load_avg": {
+            "type": "number",
+            "title": "Load Avg",
+            "default": 0
+          },
+          "cpu_usage_percent": {
+            "type": "number",
+            "title": "Cpu Usage Percent",
+            "default": 0
+          },
+          "swap_total_gb": {
+            "type": "number",
+            "title": "Swap Total Gb",
+            "default": 0
+          },
+          "swap_used_gb": {
+            "type": "number",
+            "title": "Swap Used Gb",
+            "default": 0
+          },
+          "os_version": {
+            "type": "string",
+            "title": "Os Version",
+            "default": ""
+          },
+          "kernel_version": {
+            "type": "string",
+            "title": "Kernel Version",
+            "default": ""
+          },
+          "driver_version": {
+            "type": "string",
+            "title": "Driver Version",
+            "default": ""
+          },
+          "cuda_driver_api_version": {
+            "type": "string",
+            "title": "Cuda Driver Api Version",
+            "default": ""
+          },
+          "incus_status": {
+            "type": "string",
+            "title": "Incus Status",
+            "default": "unknown"
+          },
+          "agent_version": {
+            "type": "string",
+            "title": "Agent Version",
+            "default": ""
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "title": "Uptime Seconds",
+            "default": 0
+          },
+          "agent_update_channel": {
+            "type": "string",
+            "title": "Agent Update Channel",
+            "default": "stable"
+          },
+          "agent_auto_update": {
+            "type": "boolean",
+            "title": "Agent Auto Update",
+            "default": false
+          },
+          "target_agent_version": {
+            "type": "string",
+            "title": "Target Agent Version",
+            "default": ""
+          },
+          "agent_update_status": {
+            "type": "string",
+            "title": "Agent Update Status",
+            "default": ""
+          },
+          "agent_update_error": {
+            "type": "string",
+            "title": "Agent Update Error",
+            "default": ""
+          },
+          "agent_update_at": {
+            "type": "integer",
+            "title": "Agent Update At",
+            "default": 0
+          },
+          "registered_at": {
+            "type": "integer",
+            "title": "Registered At",
+            "default": 0
+          },
+          "gpus": {
+            "items": {
+              "$ref": "#/components/schemas/GpuOut"
+            },
+            "type": "array",
+            "title": "Gpus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "hostname",
+          "ip",
+          "status"
+        ],
+        "title": "NodeOut",
+        "description": "GET /api/nodes 响应元素。"
       },
       "NodeRegistration": {
         "properties": {
@@ -5184,6 +7009,21 @@
             "type": "integer",
             "title": "Transfer Bandwidth Limit Mbps",
             "default": 0
+          },
+          "webhook_enabled": {
+            "type": "boolean",
+            "title": "Webhook Enabled",
+            "default": false
+          },
+          "webhook_url": {
+            "type": "string",
+            "title": "Webhook Url",
+            "default": ""
+          },
+          "webhook_secret": {
+            "type": "string",
+            "title": "Webhook Secret",
+            "default": ""
           },
           "sso_provider_enabled": {
             "type": "boolean",
@@ -5570,6 +7410,15 @@
             "title": "Source",
             "default": "huggingface"
           },
+          "download_mode": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "title": "Download Mode",
+            "default": "automatic"
+          },
           "tags": {
             "items": {
               "type": "string"
@@ -5590,6 +7439,11 @@
           "hf_token": {
             "type": "string",
             "title": "Hf Token",
+            "default": ""
+          },
+          "hf_endpoint": {
+            "type": "string",
+            "title": "Hf Endpoint",
             "default": ""
           },
           "ms_repo_id": {
@@ -5697,7 +7551,7 @@
           "model_base_path": {
             "type": "string",
             "title": "Model Base Path",
-            "default": "/data/models/huggingface"
+            "default": "/data/models"
           },
           "user_base_path": {
             "type": "string",
@@ -5713,6 +7567,16 @@
             "type": "boolean",
             "title": "Hf Endpoint Enabled",
             "default": false
+          },
+          "hf_download_engine": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "sdk",
+              "hfd"
+            ],
+            "title": "Hf Download Engine",
+            "default": "auto"
           }
         },
         "type": "object",
@@ -5771,6 +7635,154 @@
         ],
         "title": "StorageVolumeReport"
       },
+      "SummaryResponse": {
+        "properties": {
+          "nodes_online": {
+            "type": "integer",
+            "title": "Nodes Online"
+          },
+          "nodes_total": {
+            "type": "integer",
+            "title": "Nodes Total"
+          },
+          "gpus_free": {
+            "type": "integer",
+            "title": "Gpus Free"
+          },
+          "gpus_total": {
+            "type": "integer",
+            "title": "Gpus Total"
+          },
+          "containers_running": {
+            "type": "integer",
+            "title": "Containers Running"
+          },
+          "containers_total": {
+            "type": "integer",
+            "title": "Containers Total"
+          },
+          "cpu_used": {
+            "type": "integer",
+            "title": "Cpu Used"
+          },
+          "cpu_total": {
+            "type": "integer",
+            "title": "Cpu Total"
+          },
+          "memory_used_gb": {
+            "type": "number",
+            "title": "Memory Used Gb"
+          },
+          "memory_total_gb": {
+            "type": "number",
+            "title": "Memory Total Gb"
+          },
+          "disk_used_gb": {
+            "type": "number",
+            "title": "Disk Used Gb"
+          },
+          "disk_total_gb": {
+            "type": "number",
+            "title": "Disk Total Gb"
+          },
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/AlertItem"
+            },
+            "type": "array",
+            "title": "Alerts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes_online",
+          "nodes_total",
+          "gpus_free",
+          "gpus_total",
+          "containers_running",
+          "containers_total",
+          "cpu_used",
+          "cpu_total",
+          "memory_used_gb",
+          "memory_total_gb",
+          "disk_used_gb",
+          "disk_total_gb"
+        ],
+        "title": "SummaryResponse",
+        "description": "GET /api/summary 响应体。"
+      },
+      "SyncProgressOut": {
+        "properties": {
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct"
+          },
+          "bytes_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes Done"
+          },
+          "bytes_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes Total"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "current_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current File"
+          }
+        },
+        "type": "object",
+        "title": "SyncProgressOut"
+      },
       "UserDirectoryScanInput": {
         "properties": {
           "relative_path": {
@@ -5786,6 +7798,166 @@
         },
         "type": "object",
         "title": "UserDirectoryScanInput"
+      },
+      "UserOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": ""
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "default": "member"
+          },
+          "phone": {
+            "type": "string",
+            "title": "Phone",
+            "default": ""
+          },
+          "email": {
+            "type": "string",
+            "title": "Email",
+            "default": ""
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name",
+            "default": "member"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "ssh_key": {
+            "type": "string",
+            "title": "Ssh Key",
+            "default": ""
+          },
+          "allowed_node_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Allowed Node Ids"
+          },
+          "cpu_cores": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpu Cores"
+          },
+          "memory_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Gb"
+          },
+          "disk_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk Gb"
+          },
+          "container_disk_limit_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Disk Limit Gb"
+          },
+          "storage_quota_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Quota Gb"
+          },
+          "gpu_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gpu Count"
+          },
+          "container_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Count"
+          },
+          "pending_sso": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Sso"
+          },
+          "casdoor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Casdoor Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "UserOut",
+        "description": "GET /api/users 响应元素（不含密码 hash）。"
       },
       "UserPreferenceInput": {
         "properties": {

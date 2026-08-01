@@ -55,10 +55,38 @@ type NodeRegistration struct {
 	StorageVolumes       []StorageVolume    `json:"storage_volumes"`
 }
 
+type AgentCollectionConfig struct {
+	MetricsIntervalSeconds   int `json:"metrics_interval_seconds"`
+	HeartbeatIntervalSeconds int `json:"heartbeat_interval_seconds"`
+	ContainerIntervalSeconds int `json:"container_interval_seconds"`
+	StorageIntervalSeconds   int `json:"storage_interval_seconds"`
+	InventoryIntervalSeconds int `json:"inventory_interval_seconds"`
+	TaskPollIntervalSeconds  int `json:"task_poll_interval_seconds"`
+}
+
+type AgentRegistrationResponse struct {
+	AgentConfig AgentCollectionConfig `json:"agent_config"`
+}
+
+type AgentMetricsReport struct {
+	Token           string      `json:"token"`
+	Hostname        string      `json:"hostname"`
+	UptimeSeconds   int64       `json:"uptime_seconds"`
+	CPUUsagePercent float64     `json:"cpu_usage_percent"`
+	CPUTemperatureC int         `json:"cpu_temperature_c"`
+	MemoryTotalGB   int         `json:"memory_total_gb"`
+	MemoryUsedGB    int         `json:"memory_used_gb"`
+	LoadAvg         float64     `json:"load_avg"`
+	SwapTotalGB     float64     `json:"swap_total_gb"`
+	SwapUsedGB      float64     `json:"swap_used_gb"`
+	GPUs            []GPUReport `json:"gpus"`
+}
+
 type ContainerReport struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	IP     string `json:"ip"`
+	Role   string `json:"role"`
 }
 
 type IncusImageReport struct {
@@ -244,11 +272,19 @@ type IncusImageImportPayload struct {
 }
 
 type SharedResourceVerifyPayload struct {
-	ResourceID   int    `json:"resource_id"`
-	ResourceType string `json:"resource_type"`
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	SourcePath   string `json:"source_path"`
+	ResourceID           int    `json:"resource_id"`
+	ResourceType         string `json:"resource_type"`
+	Name                 string `json:"name"`
+	Version              string `json:"version"`
+	SourcePath           string `json:"source_path"`
+	Source               string `json:"source"`
+	RepoID               string `json:"repo_id"`
+	Revision             string `json:"revision"`
+	Token                string `json:"token"`
+	RepoType             string `json:"repo_type"`
+	HFEndpoint           string `json:"hf_endpoint"`
+	AllowOfflineManifest bool   `json:"allow_offline_manifest"`
+	ManualFinalize       bool   `json:"manual_finalize"`
 }
 
 type SharedResourceScanPayload struct {
@@ -348,6 +384,34 @@ type SyncSharedResourcePayload struct {
 	SourcePath       string `json:"source_path"`
 	SourcePrivateKey string `json:"source_private_key"`
 	LocalCachePath   string `json:"local_cache_path"`
+}
+
+type DownloadSharedResourcePayload struct {
+	ResourceID       int    `json:"resource_id"`
+	ResourceType     string `json:"resource_type"`
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	Source           string `json:"source"`
+	RepoID           string `json:"repo_id"`
+	Revision         string `json:"revision"`
+	Token            string `json:"token"`
+	RepoType         string `json:"repo_type"`
+	TargetPath       string `json:"target_path"`
+	StagingPath      string `json:"staging_path"`
+	HFEndpoint       string `json:"hf_endpoint"`
+	HFDownloadEngine string `json:"hf_download_engine"`
+}
+
+type MigrateSharedResourcePathPayload struct {
+	ResourceID    int    `json:"resource_id"`
+	ResourceType  string `json:"resource_type"`
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	OldPath       string `json:"old_path"`
+	NewPath       string `json:"new_path"`
+	OldSourcePath string `json:"old_source_path"`
+	NewSourcePath string `json:"new_source_path"`
+	CreateSymlink bool   `json:"create_symlink"`
 }
 
 // MountUpdate 描述一条资源挂载的更新指令

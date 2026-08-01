@@ -6,5 +6,5 @@ pydantic==2.10.4
 httpx==0.28.1
 docker==7.1.0
 asyncssh==2.19.0
-huggingface-hub>=0.26.0
+huggingface-hub>=0.32.0
 modelscope>=1.9.0

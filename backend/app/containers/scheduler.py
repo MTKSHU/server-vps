@@ -9,7 +9,7 @@ def effective_limit(value: int, fallback: int) -> int:
 
 def count_node_containers(conn, node_id: int, statuses: tuple[str, ...]) -> int:
     return conn.execute(
-        "SELECT COUNT(*) AS count FROM containers WHERE node_id = %s AND status = ANY(%s::text[])",
+        "SELECT COUNT(*) AS count FROM containers WHERE node_id = %s AND status = ANY(%s::text[]) AND system_role = ''",
         (node_id, list(statuses)),
     ).fetchone()["count"]
 

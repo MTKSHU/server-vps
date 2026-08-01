@@ -501,6 +501,8 @@ def register_container_routes(app, deps: dict[str, Any]):
     def create_container(payload: ContainerCreate):
         if not re.fullmatch(r"[a-z][a-z0-9-]{2,30}", payload.name):
             raise HTTPException(status_code=400, detail="容器名称必须以小写字母开头，只包含小写字母、数字和连字符")
+        if payload.name == "cluster-resource-downloader":
+            raise HTTPException(status_code=400, detail="该名称保留给系统下载容器")
         payload.ssh_username = payload.ssh_username.strip() or "ubuntu"
         if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", payload.ssh_username):
             raise HTTPException(status_code=400, detail="初始用户名不合法")
@@ -668,6 +670,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not container:
                 raise HTTPException(status_code=404, detail="容器不存在")
             require_container_access(user, container)
+            if container.get("system_role"):
+                raise HTTPException(status_code=409, detail="系统容器由节点 agent 管理，请在节点任务中维护")
             if container["status"] in ("provisioning", "starting", "stopping", "restarting", "deleting"):
                 raise HTTPException(status_code=409, detail=f"容器正在 {container['status']}，请稍后再试")
             ts = now_ts()
@@ -702,6 +706,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not container:
                 raise HTTPException(status_code=404, detail="容器不存在")
             require_container_access(user, container)
+            if container.get("system_role"):
+                raise HTTPException(status_code=409, detail="系统容器由节点 agent 管理，不能重试创建")
             if container["status"] != "failed":
                 raise HTTPException(status_code=409, detail="只有 failed 状态的容器可以重试创建")
             node = conn.execute("SELECT * FROM nodes WHERE id = %s", (container["node_id"],)).fetchone()
@@ -1615,6 +1621,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not container:
                 raise HTTPException(status_code=404, detail="容器不存在")
             require_container_access(user, container)
+            if container.get("system_role"):
+                raise HTTPException(status_code=409, detail="系统容器由节点 agent 管理，不能从容器管理页删除")
             if payload.force and not is_admin_user(user):
                 raise HTTPException(status_code=403, detail="仅管理员可强制移除容器记录")
             if payload.name != container["name"]:

@@ -31,6 +31,19 @@ def register_settings_routes(app, deps: dict[str, Any]):
             raise HTTPException(status_code=400, detail="平台时区不合法，请使用 IANA 时区名，例如 Asia/Shanghai") from exc
         if payload.transfer_bandwidth_limit_mbps < 0 or payload.transfer_bandwidth_limit_mbps > 100000:
             raise HTTPException(status_code=400, detail="传输带宽上限必须在 0-100000 Mbps 之间")
+        interval_limits = {
+            "实时指标": (payload.agent_metrics_interval_seconds, 1, 60),
+            "节点心跳": (payload.agent_heartbeat_interval_seconds, 5, 300),
+            "容器状态": (payload.agent_container_interval_seconds, 5, 300),
+            "存储容量": (payload.agent_storage_interval_seconds, 30, 3600),
+            "静态清单": (payload.agent_inventory_interval_seconds, 60, 86400),
+            "任务轮询": (payload.agent_task_poll_interval_seconds, 1, 60),
+        }
+        for label, (value, minimum, maximum) in interval_limits.items():
+            if value < minimum or value > maximum:
+                raise HTTPException(status_code=400, detail=f"{label}周期必须在 {minimum}-{maximum} 秒之间")
+        if payload.agent_container_interval_seconds < payload.agent_heartbeat_interval_seconds:
+            raise HTTPException(status_code=400, detail="容器状态周期不能小于节点心跳周期")
         if payload.sso_provider_enabled and not payload.sso_callback_base_url.strip():
             raise HTTPException(status_code=400, detail="启用 SSO 时必须填写回调基础地址")
         if payload.sso_provider_enabled and payload.sso_provider_type == "cas" and not payload.sso_cas_server_url.strip():

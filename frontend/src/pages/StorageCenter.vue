@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { FolderOpened, Edit, RefreshRight, CircleCheck, Delete, Refresh, Download, View, Setting, DataLine, Connection, Upload, FolderAdd, Close, Select } from "@element-plus/icons-vue";
+import { FolderOpened, Edit, RefreshRight, CircleCheck, Delete, Refresh, Download, View, Setting, DataLine, Connection, Upload, FolderAdd, Close, Select, CopyDocument, Monitor } from "@element-plus/icons-vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import StatusTag from "../components/StatusTag.vue";
@@ -12,12 +12,12 @@ import {
   getUserDirectory, getUserDirectoryLive, getUserStorageDatasets, getUserWorkspaceVolumes, requestSharedResource, scanSharedResource, scanUserDirectory,
   previewSharedResourceFile, previewUserFile,
   ensureAllUserStorageDatasets, ensureUserStorageDataset, removeUserStorageDataset, removeUserWorkspaceVolume,
-  updateSharedResourceInfo, updateStorageSettings, uploadUserFiles, verifySharedResource,
+  updateSharedResourceInfo, updateStorageSettings, uploadUserFiles, verifySharedResource, finalizeManualSharedResource,
   getResourceCacheMatrix, triggerResourceSync, clearResourceCache,
   triggerResourceSyncAllNodes,
   type SharedResource, type SharedResourcePreview, type StorageSettings, type StorageVolume, type UserDataPolicy,
   type UserDirectoryEntry, type UserDirectoryScan, type UserStorageDataset, type UserWorkspaceVolume,
-  type NodeResourceCache,
+  type ManualResourceDownload, type NodeResourceCache,
 } from "../api/cluster";
 import { authToken, authUser, hasAdminAccess } from "../auth";
 
@@ -52,7 +52,11 @@ const storageQuotaGb = ref(0);
 const activeTab = ref(typeof route.query.tab === "string" ? route.query.tab : "files");
 const requestVisible = ref(false);
 const requesting = ref(false);
-const requestForm = reactive({ resource_type: "dataset" as SharedResource["resource_type"], name: "", version: "default", tags: [] as string[], source: "modelscope" as "huggingface" | "modelscope", hf_repo_id: "", hf_revision: "main", hf_token: "", ms_repo_id: "", ms_revision: "master", ms_token: "" });
+const requestForm = reactive({ resource_type: "dataset" as SharedResource["resource_type"], name: "", version: "default", tags: [] as string[], source: "modelscope" as "huggingface" | "modelscope", download_mode: "automatic" as "automatic" | "manual", hf_repo_id: "", hf_revision: "main", hf_token: "", hf_endpoint: "", ms_repo_id: "", ms_revision: "master", ms_token: "" });
+const manualGuideVisible = ref(false);
+const manualGuide = ref<ManualResourceDownload | null>(null);
+const manualResourceID = ref(0);
+const manualGuideReady = computed(() => resources.value.some((row) => row.id === manualResourceID.value && row.request_status === "awaiting_manual_download"));
 const tagLibrary = ref<string[]>([]);
 type TagGroup = { label: string; options: { label: string; value: string }[] };
 function buildTagGroups(tags: string[]): TagGroup[] {
@@ -74,6 +78,26 @@ const resourceTagEditorForm = reactive({ id: 0, name: "", version: "", tags: [] 
 const downloadingKeys = ref<string[]>([]);
 function downloadKey(name = "") { return [currentPath.value, name].filter(Boolean).join("/") || "__root__"; }
 function isDownloading(name = "") { return downloadingKeys.value.includes(downloadKey(name)); }
+function isResourceBusy(row: { request_status?: string }) {
+  return row.request_status === 'downloading' || row.request_status === 'checking' || row.request_status === 'preparing_manual_download';
+}
+function isManualResourceReady(row: SharedResource) {
+  return row.source_url?.startsWith("hf://")
+    && row.download_progress?.phase === "manual_ready"
+    && (row.request_status === "awaiting_manual_download" || row.request_status === "failed");
+}
+const manualTargetPreview = computed(() => {
+  const base = requestForm.resource_type === "dataset" ? settingsForm.dataset_base_path : settingsForm.model_base_path;
+  return `${base.replace(/\/$/, "")}/${requestForm.version || "default"}/${requestForm.name || "resource"}`;
+});
+watch(() => requestForm.source, (source) => {
+  if (source === "modelscope") requestForm.download_mode = "automatic";
+});
+watch(() => requestForm.hf_repo_id, (repoID) => {
+  const [provider, name] = repoID.trim().split("/");
+  if (provider && (!requestForm.version || requestForm.version === "default")) requestForm.version = provider;
+  if (name && !requestForm.name) requestForm.name = name;
+});
 
 // 搜索/筛选状态
 const datasetSearch = ref("");
@@ -154,9 +178,9 @@ const homeUsagePercent = computed(() => {
 });
 function taskError(task: { last_error?: string; detail?: Record<string, unknown> }) { return task.last_error || String(task.detail?.last_error || ""); }
 
-// Storage path settings state
+// Storage settings state
 const settingsVisible = ref(false);
-const settingsForm = reactive<StorageSettings>({ dataset_base_path: "/data/datasets", model_base_path: "/data/models/huggingface", user_base_path: "/data/users", hf_endpoint: "", hf_endpoint_enabled: false });
+const settingsForm = reactive<StorageSettings>({ dataset_base_path: "/data/datasets", model_base_path: "/data/models", user_base_path: "/data/users", hf_endpoint: "", hf_endpoint_enabled: false, hf_download_engine: "auto" });
 const settingsSaving = ref(false);
 
 // Resource file browser state
@@ -240,6 +264,8 @@ const userBrowseEntriesPaged = computed<UserBrowseEntry[]>(() => {
   return filePage.value === 1 ? [...virtualItems, ...pageItems] : pageItems;
 });
 function progressPhaseLabel(row: SharedResource) {
+  if (row.request_status === "preparing_manual_download") return "准备下载容器";
+  if (row.request_status === "checking" || row.download_progress?.phase === "done") return "校验中";
   return row.download_progress?.phase === "uploading" ? "⬆ 推送到存储节点" : "⬇ 下载中";
 }
 function progressPercent(row: SharedResource) {
@@ -251,6 +277,8 @@ function hasDeterminateProgress(row: SharedResource) {
 }
 function progressDetail(row: SharedResource) {
   const progress = row.download_progress || {};
+  if (row.request_status === "preparing_manual_download") return "正在安装工具并挂载目标目录...";
+  if (row.request_status === "checking" || progress.phase === "done") return "正在校验资源完整性...";
   if ((progress.bytes_total || 0) > 0) return `${bytes(progress.bytes_done || 0)} / ${bytes(progress.bytes_total || 0)}`;
   if ((progress.files_total || 0) > 0) return `${progress.files_done || 0}/${progress.files_total || 0} 文件`;
   if ((progress.files_done || 0) > 0) return `已完成 ${progress.files_done || 0} 文件`;
@@ -468,16 +496,23 @@ async function saveSettings() {
     const result = await updateStorageSettings(settingsForm);
     Object.assign(settingsForm, result);
     settingsVisible.value = false;
-    ElMessage.success("存储路径设置已保存");
+    ElMessage.success("存储设置已保存");
   } finally { settingsSaving.value = false; }
 }
 async function submitRequest() {
   requesting.value = true;
   try {
-    await requestSharedResource(requestForm);
+    const result = await requestSharedResource(requestForm);
     requestVisible.value = false;
-    Object.assign(requestForm, { name: "", version: "default", tags: [], hf_repo_id: "", hf_revision: "main", hf_token: "", ms_repo_id: "", ms_revision: "master", ms_token: "" });
-    ElMessage.success("已在后台开始下载，稍后刷新查看状态");
+    if (result.manual_download) {
+      manualGuide.value = result.manual_download;
+      manualResourceID.value = result.resource.id;
+      manualGuideVisible.value = true;
+      ElMessage.success("下载容器准备任务已提交");
+    } else {
+      ElMessage.success("已在后台开始下载，稍后刷新查看状态");
+    }
+    Object.assign(requestForm, { name: "", version: "default", tags: [], download_mode: "automatic", hf_repo_id: "", hf_revision: "main", hf_token: "", hf_endpoint: settingsForm.hf_endpoint_enabled ? settingsForm.hf_endpoint : "", ms_repo_id: "", ms_revision: "master", ms_token: "" });
     await load();
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "提交失败，请重试");
@@ -486,6 +521,17 @@ async function submitRequest() {
   }
 }
 async function checkResource(row: SharedResource) { try { await verifySharedResource(row.id); ElMessage.success("校验任务已提交"); } catch (err) { ElMessage.error(err instanceof Error ? err.message : "操作失败"); } }
+async function finalizeManualResource(row: SharedResource) {
+  try {
+    await ElMessageBox.confirm("平台将使用本地 hfd 下载元数据校验全部文件，校验通过后归档为公开资源。", "完成手动下载并归档", { type: "warning", confirmButtonText: "开始校验", cancelButtonText: "取消" });
+    await finalizeManualSharedResource(row.id);
+    ElMessage.success("归档校验任务已提交");
+    await load();
+  } catch (err) {
+    if (err === "cancel" || err === "close") return;
+    ElMessage.error(err instanceof Error ? err.message : "操作失败");
+  }
+}
 function redownload(row: SharedResource) {
   const url = row.source_url || "";
   let source: "huggingface" | "modelscope" = "modelscope";
@@ -503,7 +549,7 @@ function redownload(row: SharedResource) {
     ms_repo_id = at >= 0 ? rest.slice(0, at) : rest;
     ms_revision = at >= 0 ? rest.slice(at + 1) : "master";
   }
-  Object.assign(requestForm, { resource_type: row.resource_type, name: row.name, version: row.version, tags: [...(row.tags || [])], source, hf_repo_id, hf_revision, hf_token: "", ms_repo_id, ms_revision, ms_token: "" });
+  Object.assign(requestForm, { resource_type: row.resource_type, name: row.name, version: row.version, tags: [...(row.tags || [])], source, download_mode: "automatic", hf_repo_id, hf_revision, hf_token: "", hf_endpoint: row.source_endpoint || (settingsForm.hf_endpoint_enabled ? settingsForm.hf_endpoint : ""), ms_repo_id, ms_revision, ms_token: "" });
   requestVisible.value = true;
 }
 function editResource(row: SharedResource) {
@@ -825,7 +871,23 @@ async function download(row?: { name: string; type?: string }) {
     downloadingKeys.value = downloadingKeys.value.filter(k => k !== key);
   }
 }
-function openRequest(type: SharedResource["resource_type"]) { requestForm.resource_type = type; requestVisible.value = true; }
+function openRequest(type: SharedResource["resource_type"]) {
+  requestForm.resource_type = type;
+  requestForm.hf_endpoint = settingsForm.hf_endpoint_enabled ? settingsForm.hf_endpoint : "";
+  requestVisible.value = true;
+}
+async function copyManualCommand(command = "") {
+  if (!command) return;
+  await navigator.clipboard.writeText(command);
+  ElMessage.success("命令已复制");
+}
+function openDownloaderShell(containerID = 0) {
+  if (!containerID) {
+    ElMessage.warning("下载容器尚未同步到容器列表");
+    return;
+  }
+  void router.push({ name: "containerShell", params: { id: containerID } });
+}
 watch(activeTab, (tab) => router.replace({ query: { ...route.query, tab } }));
 watch(activeTab, (tab) => {
   if (tab === "workspace-volumes") {
@@ -873,7 +935,7 @@ watch(activeTab, (tab) => {
 // 有下载任务进行时每 5 秒自动轮询（仅刷新资源列表，不触发全页刷新）
 let _refreshTimer: ReturnType<typeof setInterval> | null = null;
 watch(resources, (list) => {
-  const active = list.some(r => r.request_status === 'downloading');
+  const active = list.some(r => isResourceBusy(r));
   if (active && !_refreshTimer) {
     _refreshTimer = setInterval(() => pollResources(), 5000);
   } else if (!active && _refreshTimer) {
@@ -903,11 +965,14 @@ function storageStatusType(status: string | undefined): string {
 }
 function checkStatusLabel(row: { request_status?: string; check_status?: string }): string {
   if (row.request_status === 'failed') return t("storage.downloadFailed");
+  if (row.request_status === 'preparing_manual_download') return "正在准备下载容器";
+  if (row.request_status === 'awaiting_manual_download') return "等待手动下载";
   const map: Record<string, string> = { ok: 'status.ready', failed: 'status.failed', unknown: 'nodes.unknown', checking: 'status.verifying' };
   const key = map[row.check_status ?? ''];
   return key ? t(key) : row.check_status ?? '—';
 }
 function checkStatusType(row: { request_status?: string; check_status?: string }): string {
+  if (row.request_status === 'awaiting_manual_download' || row.request_status === 'preparing_manual_download') return 'warning';
   if (row.check_status === 'ok') return 'success';
   if (row.check_status === 'failed' || row.request_status === 'failed') return 'danger';
   if (row.check_status === 'checking') return 'warning';
@@ -964,7 +1029,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
             <el-table-column :label="t('storage.size')" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
             <el-table-column :label="t('storage.state')" min-width="160">
               <template #default="{row}">
-                <div v-if="row.request_status === 'downloading'" class="dl-progress">
+                <div v-if="isResourceBusy(row)" class="dl-progress">
                   <div class="dl-phase">{{ progressPhaseLabel(row) }}</div>
                   <el-progress v-if="hasDeterminateProgress(row)" :percentage="progressPercent(row)" :stroke-width="6" style="width:130px;margin-top:3px"/>
                   <div v-else class="dl-bar"><div class="dl-bar-inner" /></div>
@@ -979,7 +1044,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('storage.actions')" width="320">
+            <el-table-column :label="t('storage.actions')" width="360">
               <template #default="{row}">
                 <el-tooltip :content="t('storage.viewFiles')" placement="top" :show-after="300">
                   <el-button size="small" :icon="FolderOpened" @click="openResourceBrowser(row)" />
@@ -992,6 +1057,12 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 </el-tooltip>
                 <el-tooltip v-if="isAdmin && row.request_status === 'failed' && row.source_url" :content="t('storage.retryDownload')" placement="top" :show-after="300">
                   <el-button size="small" type="warning" :icon="RefreshRight" @click="redownload(row)" />
+                </el-tooltip>
+                <el-tooltip v-if="isAdmin && isManualResourceReady(row)" content="打开下载容器终端" placement="top" :show-after="300">
+                  <el-button size="small" type="primary" :icon="Monitor" @click="openDownloaderShell(row.download_progress?.container_id || 0)" />
+                </el-tooltip>
+                <el-tooltip v-if="isAdmin && isManualResourceReady(row)" content="完成手动下载并归档" placement="top" :show-after="300">
+                  <el-button size="small" type="success" :icon="Select" @click="finalizeManualResource(row)" />
                 </el-tooltip>
                 <el-tooltip v-if="isAdmin" :content="t('storage.verify')" placement="top" :show-after="300">
                   <el-button size="small" :icon="CircleCheck" @click="checkResource(row)" />
@@ -1033,7 +1104,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
             <el-table-column :label="t('storage.size')" width="120"><template #default="{row}">{{ bytes(row.size_bytes) }}</template></el-table-column>
             <el-table-column :label="t('storage.state')" min-width="160">
               <template #default="{row}">
-                <div v-if="row.request_status === 'downloading'" class="dl-progress">
+                <div v-if="isResourceBusy(row)" class="dl-progress">
                   <div class="dl-phase">{{ progressPhaseLabel(row) }}</div>
                   <el-progress v-if="hasDeterminateProgress(row)" :percentage="progressPercent(row)" :stroke-width="6" style="width:130px;margin-top:3px"/>
                   <div v-else class="dl-bar"><div class="dl-bar-inner" /></div>
@@ -1048,7 +1119,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="t('storage.actions')" width="320">
+            <el-table-column :label="t('storage.actions')" width="360">
               <template #default="{row}">
                 <el-tooltip :content="t('storage.viewFiles')" placement="top" :show-after="300">
                   <el-button size="small" :icon="FolderOpened" @click="openResourceBrowser(row)" />
@@ -1061,6 +1132,12 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
                 </el-tooltip>
                 <el-tooltip v-if="isAdmin && row.request_status === 'failed' && row.source_url" :content="t('storage.retryDownload')" placement="top" :show-after="300">
                   <el-button size="small" type="warning" :icon="RefreshRight" @click="redownload(row)" />
+                </el-tooltip>
+                <el-tooltip v-if="isAdmin && isManualResourceReady(row)" content="打开下载容器终端" placement="top" :show-after="300">
+                  <el-button size="small" type="primary" :icon="Monitor" @click="openDownloaderShell(row.download_progress?.container_id || 0)" />
+                </el-tooltip>
+                <el-tooltip v-if="isAdmin && isManualResourceReady(row)" content="完成手动下载并归档" placement="top" :show-after="300">
+                  <el-button size="small" type="success" :icon="Select" @click="finalizeManualResource(row)" />
                 </el-tooltip>
                 <el-tooltip v-if="isAdmin" :content="t('storage.verify')" placement="top" :show-after="300">
                   <el-button size="small" :icon="CircleCheck" @click="checkResource(row)" />
@@ -1353,7 +1430,7 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
         <el-form-item label="下载源">
           <el-radio-group v-model="requestForm.source">
             <el-radio value="modelscope">ModelScope（推荐，国内可直连）</el-radio>
-            <el-radio value="huggingface">HuggingFace（需代理或境外网络）</el-radio>
+            <el-radio value="huggingface">HuggingFace（可用镜像或代理）</el-radio>
           </el-radio-group>
         </el-form-item>
         <template v-if="requestForm.source === 'modelscope'">
@@ -1363,13 +1440,54 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
           <el-form-item label="MS Token（可选）"><el-input v-model="requestForm.ms_token" type="password" show-password placeholder="可选"/></el-form-item>
         </template>
         <template v-else>
-          <el-alert type="warning" :closable="false" title="huggingface.co 在中国大陆被封锁（TLS 握手失败）。需在 .env 中配置有效的 HTTPS_PROXY 才能使用。hf-mirror.com 不是真正的镜像，无法使用。" style="margin-bottom:12px"/>
+          <el-form-item label="下载方式">
+            <el-radio-group v-model="requestForm.download_mode">
+              <el-radio-button value="automatic">平台自动下载</el-radio-button>
+              <el-radio-button value="manual">容器内手动下载</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-alert
+            :type="requestForm.download_mode === 'manual' ? 'info' : 'warning'"
+            :closable="false"
+            :title="requestForm.download_mode === 'manual' ? '平台准备下载容器和目标目录，由管理员在容器终端自行执行下载。' : '平台通过存储节点的系统下载容器自动执行 HuggingFace 下载。'"
+            style="margin-bottom:12px"
+          />
           <el-form-item label="HuggingFace 仓库 ID"><el-input v-model="requestForm.hf_repo_id" placeholder="例如 meta-llama/Llama-3.2-1B"/></el-form-item>
           <el-form-item label="Revision（分支/Tag）"><el-input v-model="requestForm.hf_revision" placeholder="默认 main"/></el-form-item>
-          <el-form-item label="HF Token（可选，访问 gated 模型）"><el-input v-model="requestForm.hf_token" type="password" show-password placeholder="hf_xxxxx"/></el-form-item>
+          <el-form-item v-if="requestForm.download_mode === 'automatic'" label="HF Token（可选，访问 gated 模型）"><el-input v-model="requestForm.hf_token" type="password" show-password placeholder="hf_xxxxx"/></el-form-item>
+          <template v-else>
+            <el-form-item label="本次下载与校验端点">
+              <el-input v-model="requestForm.hf_endpoint" clearable placeholder="留空表示 huggingface.co" />
+            </el-form-item>
+            <el-form-item label="共享存储目标目录">
+              <el-input :model-value="manualTargetPreview" readonly />
+            </el-form-item>
+            <el-alert type="info" :closable="false" title="如仓库需要鉴权，请进入容器后设置 HF_TOKEN；平台不会保存手动下载 Token。" />
+          </template>
         </template>
       </el-form>
-      <template #footer><el-button :icon="Close" @click="requestVisible=false">取消</el-button><el-button type="primary" :icon="Download" :loading="requesting" @click="submitRequest">提交下载</el-button></template>
+      <template #footer><el-button :icon="Close" @click="requestVisible=false">取消</el-button><el-button type="primary" :icon="requestForm.download_mode === 'manual' ? Monitor : Download" :loading="requesting" @click="submitRequest">{{ requestForm.download_mode === 'manual' ? '准备下载容器' : '提交下载' }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="manualGuideVisible" title="下载容器已安排准备" width="680px">
+      <el-descriptions v-if="manualGuide" :column="1" border>
+        <el-descriptions-item label="存储节点">{{ manualGuide.node }}</el-descriptions-item>
+        <el-descriptions-item label="下载容器">{{ manualGuide.container_name }}</el-descriptions-item>
+        <el-descriptions-item label="容器目录">{{ manualGuide.container_path }}</el-descriptions-item>
+        <el-descriptions-item label="宿主机目录">{{ manualGuide.target_path }}</el-descriptions-item>
+        <el-descriptions-item label="HF Endpoint">{{ manualGuide.hf_endpoint || 'https://huggingface.co' }}</el-descriptions-item>
+      </el-descriptions>
+      <div v-if="manualGuide" class="manual-command-wrap">
+        <div class="manual-command-head">
+          <strong>建议命令</strong>
+          <el-tooltip content="复制命令" placement="top"><el-button :icon="CopyDocument" @click="copyManualCommand(manualGuide.command)" /></el-tooltip>
+        </div>
+        <pre class="manual-command">{{ manualGuide.command }}</pre>
+      </div>
+      <template #footer>
+        <el-button :icon="Close" @click="manualGuideVisible=false">稍后处理</el-button>
+        <el-button type="primary" :icon="Monitor" :loading="!manualGuideReady" :disabled="!manualGuideReady || !manualGuide?.container_id" @click="openDownloaderShell(manualGuide?.container_id || 0)">打开容器终端</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="resourceTagEditorVisible" title="编辑资源" width="560px">
@@ -1441,22 +1559,44 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
       <template #footer><el-button :icon="Close" @click="previewVisible=false">关闭</el-button></template>
     </el-dialog>
 
-    <!-- 存储路径设置 -->
-    <el-dialog v-model="settingsVisible" title="存储路径设置" width="540px">
+    <!-- 存储设置 -->
+    <el-dialog v-model="settingsVisible" title="存储设置" width="540px">
       <el-alert type="info" :closable="false" style="margin-bottom:16px"
         title="修改后仅对后续新增操作生效，已有资源路径不受影响。"/>
       <el-form :model="settingsForm" label-position="top">
         <el-form-item label="数据集存储基路径">
           <el-input v-model="settingsForm.dataset_base_path" placeholder="/data/datasets"/>
-          <div class="field-hint">数据集将保存到 {基路径}/{名称}/{提供者}</div>
+          <div class="field-hint">数据集将保存到 {基路径}/{提供者}/{名称}</div>
         </el-form-item>
         <el-form-item label="模型存储基路径">
-          <el-input v-model="settingsForm.model_base_path" placeholder="/data/models/huggingface"/>
-          <div class="field-hint">模型将保存到 {基路径}/{名称}/{提供者}</div>
+          <el-input v-model="settingsForm.model_base_path" placeholder="/data/models"/>
+          <div class="field-hint">模型将保存到 {基路径}/{提供者}/{名称}</div>
         </el-form-item>
         <el-form-item label="我的文件存储基路径">
           <el-input v-model="settingsForm.user_base_path" placeholder="/data/users"/>
           <div class="field-hint">新用户的主目录将创建在 {基路径}/{用户名}</div>
+        </el-form-item>
+        <el-form-item label="HuggingFace 下载端点">
+          <el-switch
+            v-model="settingsForm.hf_endpoint_enabled"
+            active-text="启用自定义下载端点"
+            inactive-text="使用官方默认地址"
+          />
+          <el-input
+            v-model="settingsForm.hf_endpoint"
+            :disabled="!settingsForm.hf_endpoint_enabled"
+            placeholder="https://hf-mirror.com"
+            style="margin-top:8px"
+          />
+          <div class="field-hint">启用后下载与完整性校验只使用此端点，不会回退 huggingface.co；关闭时使用官方默认地址。</div>
+        </el-form-item>
+        <el-form-item label="HuggingFace 下载引擎">
+          <el-radio-group v-model="settingsForm.hf_download_engine">
+            <el-radio-button value="auto">自动</el-radio-button>
+            <el-radio-button value="hfd">hfd</el-radio-button>
+            <el-radio-button value="sdk">SDK</el-radio-button>
+          </el-radio-group>
+          <div class="field-hint">自动模式会先从 hf-mirror 安装/刷新 hfd，失败后回退 Hugging Face SDK；ModelScope 下载不受此设置影响。</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1469,6 +1609,9 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
 
 <style scoped>
 .storage-card-header{display:flex;justify-content:flex-end;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.manual-command-wrap{margin-top:16px}
+.manual-command-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.manual-command{max-height:240px;margin:0;padding:12px;overflow:auto;background:var(--el-fill-color-light);border:1px solid var(--el-border-color);border-radius:4px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
 .res-toolbar{justify-content:flex-start;gap:8px}
 .toolbar-spacer{flex:1}
 .storage-stats{grid-template-columns:repeat(5,minmax(150px,1fr))}

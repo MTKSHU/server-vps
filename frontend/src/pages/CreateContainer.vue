@@ -304,6 +304,7 @@ async function submit() {
       ssh_username: form.ssh_username,
       ports: expandedPorts(),
       resources: [],
+      expires_at: 0,
     });
     ElMessage.success("容器已创建");
     if (props.embedded) {

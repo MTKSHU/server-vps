@@ -173,7 +173,10 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
 
     @app.get("/api/agent-releases/latest/download")
     def download_latest_agent_release(architecture: str = "amd64"):
-        require_admin()
+        # Bootstrap endpoint: a node does not have a registered agent identity
+        # yet, and a join token is deliberately not a Web UI bearer session.
+        # Release contents are executable artifacts rather than credentials;
+        # integrity/authenticity is provided by TLS during initial install.
         architecture = _clean(architecture, ARCHITECTURES, "架构")
         with db() as conn:
             release = conn.execute(
@@ -197,7 +200,8 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
 
     @app.get("/api/agent-releases/latest/download-updater")
     def download_latest_agent_updater(architecture: str = "amd64"):
-        require_admin()
+        # Public for the same bootstrap reason as latest/download.  Updater
+        # manifest and versioned update downloads remain node-token protected.
         architecture = _clean(architecture, ARCHITECTURES, "架构")
         file_name = f"cluster-agent-updater-{architecture}"
         path = _release_path(file_name)

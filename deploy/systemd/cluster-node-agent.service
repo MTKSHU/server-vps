@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/cluster-node-agent.env
-ExecStart=/usr/local/bin/cluster-node-agent --server ${CLUSTER_SERVER_URL} --token ${CLUSTER_NODE_TOKEN} --node-group ${CLUSTER_NODE_GROUP} --data-path ${CLUSTER_DATA_PATH} --interval 2
+ExecStart=/usr/local/bin/cluster-node-agent --interval 15 --storage-interval 60 --inventory-interval 300 --task-poll-interval 5
 Restart=always
 RestartSec=5
 

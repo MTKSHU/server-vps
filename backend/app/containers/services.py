@@ -102,6 +102,7 @@ def usage_for_user(conn, user_id: int) -> dict[str, int]:
         FROM containers
         WHERE owner_id = %s
           AND status = ANY(%s::text[])
+          AND system_role = ''
         """,
         (user_id, list(RESOURCE_CONTAINER_STATUSES)),
     ).fetchone()

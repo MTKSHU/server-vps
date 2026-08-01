@@ -59,7 +59,18 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    public_api_paths = {"/api/health", "/api/auth/config", "/api/auth/login", "/api/auth/register", "/api/auth/sso/providers", "/api/auth/sso/callback", "/api/nodes/register"}
+    public_api_paths = {
+        "/api/health",
+        "/api/auth/config",
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/sso/providers",
+        "/api/auth/sso/callback",
+        "/api/nodes/register",
+        "/api/nodes/metrics",
+        "/api/agent-releases/latest/download",
+        "/api/agent-releases/latest/download-updater",
+    }
 
     @app.middleware("http")
     async def authentication(request: Request, call_next):

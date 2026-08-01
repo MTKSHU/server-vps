@@ -46,6 +46,12 @@ export interface PlatformSettings {
   sso_default_group: "platform_admin" | "admin" | "member" | "guest";
   platform_timezone: string;
   transfer_bandwidth_limit_mbps: number;
+  agent_metrics_interval_seconds: number;
+  agent_heartbeat_interval_seconds: number;
+  agent_container_interval_seconds: number;
+  agent_storage_interval_seconds: number;
+  agent_inventory_interval_seconds: number;
+  agent_task_poll_interval_seconds: number;
   webhook_enabled: boolean;
   webhook_url: string;
   webhook_secret: string;
@@ -420,16 +426,23 @@ export interface SharedResource {
   created_at: number;
   updated_at: number;
   source_url: string;
+  source_endpoint: string;
   request_status: string;
   requested_by: number | null;
   download_progress: {
-    phase?: "downloading" | "uploading" | "done" | "error";
+    phase?: "downloading" | "uploading" | "done" | "error" | "preparing_manual" | "manual_ready";
     pct?: number;
     current_file?: string;
     files_done?: number;
     files_total?: number;
     bytes_done?: number;
     bytes_total?: number;
+    node?: string;
+    container_id?: number;
+    container_name?: string;
+    container_path?: string;
+    target_path?: string;
+    manual_command?: string;
   } | null;
 }
 
@@ -869,6 +882,7 @@ export interface StorageSettings {
   user_base_path: string;
   hf_endpoint: string;
   hf_endpoint_enabled: boolean;
+  hf_download_engine: "auto" | "sdk" | "hfd";
 }
 
 export interface UserStorageDataset {
@@ -953,12 +967,26 @@ export function updateSharedResourceInfo(id: number, payload: { name: string; ve
   return patchJson<SharedResource>(`/api/data/shared-resources/${id}/info`, payload);
 }
 
-export function requestSharedResource(payload: { resource_type: SharedResource["resource_type"]; name: string; version: string; source: string; tags: string[]; hf_repo_id: string; hf_revision: string; hf_token: string; ms_repo_id: string; ms_revision: string; ms_token: string }) {
-  return postJson<{ resource: SharedResource; task: ContainerTask }>("/api/data/resource-requests", payload);
+export interface ManualResourceDownload {
+  container_id: number;
+  container_name: string;
+  node: string;
+  container_path: string;
+  target_path: string;
+  command: string;
+  hf_endpoint: string;
+}
+
+export function requestSharedResource(payload: { resource_type: SharedResource["resource_type"]; name: string; version: string; source: string; download_mode: "automatic" | "manual"; tags: string[]; hf_repo_id: string; hf_revision: string; hf_token: string; hf_endpoint: string; ms_repo_id: string; ms_revision: string; ms_token: string }) {
+  return postJson<{ resource: SharedResource; task_id: number; manual_download: ManualResourceDownload | null }>("/api/data/resource-requests", payload);
 }
 
 export function verifySharedResource(id: number) {
   return postJson<ContainerTask>(`/api/data/shared-resources/${id}/verify`, {});
+}
+
+export function finalizeManualSharedResource(id: number) {
+  return postJson<ContainerTask>(`/api/data/shared-resources/${id}/finalize-manual`, {});
 }
 
 export function deleteSharedResource(id: number) {

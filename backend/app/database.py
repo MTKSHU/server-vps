@@ -102,6 +102,7 @@ def init_schema():
                 CONSTRAINT shared_resources_sync_policy_check CHECK (sync_policy IN ('manual', 'on_create', 'prewarm'))
             );
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT '';
+            ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS source_endpoint TEXT NOT NULL DEFAULT '';
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS request_status TEXT NOT NULL DEFAULT 'ready';
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS requested_by BIGINT REFERENCES users(id) ON DELETE SET NULL;
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS upload_name TEXT NOT NULL DEFAULT '';
@@ -318,6 +319,10 @@ def init_schema():
             );
             ALTER TABLE containers ADD COLUMN IF NOT EXISTS access_status TEXT NOT NULL DEFAULT 'ready';
             ALTER TABLE containers ADD COLUMN IF NOT EXISTS access_error TEXT NOT NULL DEFAULT '';
+            ALTER TABLE containers ADD COLUMN IF NOT EXISTS system_role TEXT NOT NULL DEFAULT '';
+            INSERT INTO images (id, name, incus_ref, cuda_major, compatible_pools, owner, enabled, preferred)
+            VALUES ('system/resource-downloader', '系统资源下载器', 'images:ubuntu/24.04', 0, 'unknown', 'system', TRUE, FALSE)
+            ON CONFLICT (id) DO NOTHING;
             CREATE TABLE IF NOT EXISTS container_gpus (
                 container_id BIGINT NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
                 gpu_id BIGINT NOT NULL REFERENCES gpus(id),
@@ -541,6 +546,7 @@ def init_schema():
         conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS check_error TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS checked_at INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS download_progress JSONB NOT NULL DEFAULT '{}'")
+        conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS source_endpoint TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS ssh_user TEXT NOT NULL DEFAULT 'root'")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS ssh_port INTEGER NOT NULL DEFAULT 22")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS sync_ip TEXT NOT NULL DEFAULT ''")

@@ -20,6 +20,12 @@ const form = reactive<PlatformSettings>({
   sso_default_group: "member",
   platform_timezone: "Asia/Shanghai",
   transfer_bandwidth_limit_mbps: 0,
+  agent_metrics_interval_seconds: 2,
+  agent_heartbeat_interval_seconds: 15,
+  agent_container_interval_seconds: 15,
+  agent_storage_interval_seconds: 60,
+  agent_inventory_interval_seconds: 300,
+  agent_task_poll_interval_seconds: 5,
   webhook_enabled: false,
   webhook_url: "",
   webhook_secret: "",
@@ -181,6 +187,31 @@ onMounted(load);
         </el-form-item>
         <el-form-item :label="t('settings.transferBandwidthLimit')">
           <el-input-number v-model="form.transfer_bandwidth_limit_mbps" :min="0" :max="100000" :step="10" />
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header><strong>{{ t("settings.agentCollectionPolicy") }}</strong></template>
+      <el-alert :title="t('settings.agentCollectionHint')" type="info" :closable="false" show-icon style="margin-bottom:16px" />
+      <el-form :model="form" label-position="top" class="settings-grid">
+        <el-form-item :label="t('settings.metricsInterval')">
+          <el-input-number v-model="form.agent_metrics_interval_seconds" :min="1" :max="60" />
+        </el-form-item>
+        <el-form-item :label="t('settings.heartbeatInterval')">
+          <el-input-number v-model="form.agent_heartbeat_interval_seconds" :min="5" :max="300" />
+        </el-form-item>
+        <el-form-item :label="t('settings.containerInterval')">
+          <el-input-number v-model="form.agent_container_interval_seconds" :min="form.agent_heartbeat_interval_seconds" :max="300" />
+        </el-form-item>
+        <el-form-item :label="t('settings.storageInterval')">
+          <el-input-number v-model="form.agent_storage_interval_seconds" :min="30" :max="3600" :step="10" />
+        </el-form-item>
+        <el-form-item :label="t('settings.inventoryInterval')">
+          <el-input-number v-model="form.agent_inventory_interval_seconds" :min="60" :max="86400" :step="60" />
+        </el-form-item>
+        <el-form-item :label="t('settings.taskPollInterval')">
+          <el-input-number v-model="form.agent_task_poll_interval_seconds" :min="1" :max="60" />
         </el-form-item>
       </el-form>
     </el-card>

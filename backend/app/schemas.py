@@ -21,6 +21,7 @@ class ContainerStateReport(BaseModel):
     name: str
     status: str = ""
     ip: str = ""
+    role: str = ""
 
 
 class IncusImageReport(BaseModel):
@@ -342,11 +343,13 @@ class SharedResourceRequestInput(BaseModel):
     name: str
     version: str = "default"
     source: str = "huggingface"   # "huggingface" | "modelscope"
+    download_mode: Literal["automatic", "manual"] = "automatic"
     tags: list[str] = Field(default_factory=list)
     # HuggingFace 参数
     hf_repo_id: str = ""
     hf_revision: str = "main"
     hf_token: str = ""
+    hf_endpoint: str = ""
     # ModelScope 参数
     ms_repo_id: str = ""
     ms_revision: str = "master"
@@ -355,10 +358,11 @@ class SharedResourceRequestInput(BaseModel):
 
 class StorageSettingsInput(BaseModel):
     dataset_base_path: str = "/data/datasets"
-    model_base_path: str = "/data/models/huggingface"
+    model_base_path: str = "/data/models"
     user_base_path: str = "/data/users"
     hf_endpoint: str = ""
     hf_endpoint_enabled: bool = False
+    hf_download_engine: Literal["auto", "sdk", "hfd"] = "auto"
 
 
 class PlatformSettingsInput(BaseModel):
@@ -372,6 +376,12 @@ class PlatformSettingsInput(BaseModel):
     sso_default_group: Literal["platform_admin", "admin", "member", "guest"] = "member"
     platform_timezone: str = "Asia/Shanghai"
     transfer_bandwidth_limit_mbps: int = 0
+    agent_metrics_interval_seconds: int = 2
+    agent_heartbeat_interval_seconds: int = 15
+    agent_container_interval_seconds: int = 15
+    agent_storage_interval_seconds: int = 60
+    agent_inventory_interval_seconds: int = 300
+    agent_task_poll_interval_seconds: int = 5
     webhook_enabled: bool = False
     webhook_url: str = ""
     webhook_secret: str = ""
@@ -390,6 +400,20 @@ class PlatformSettingsInput(BaseModel):
     sso_oidc_client_secret: str = ""
     sso_oidc_scopes: str = "openid profile email"
     sso_casdoor_admin_owner: str = "built-in"
+
+
+class AgentMetricsInput(BaseModel):
+    token: str
+    hostname: str
+    uptime_seconds: int = 0
+    cpu_usage_percent: float = 0
+    cpu_temperature_c: int = 0
+    memory_total_gb: int = 1
+    memory_used_gb: int = 0
+    load_avg: float = 0
+    swap_total_gb: float = 0
+    swap_used_gb: float = 0
+    gpus: list[GPUReport] = Field(default_factory=list)
 
 
 class StorageImageExportInput(BaseModel):
@@ -569,6 +593,7 @@ class ContainerOut(BaseModel):
     status: str
     access_status: str = "pending"
     access_error: str = ""
+    system_role: str = ""
     cpu_cores: int
     memory_gb: int
     disk_gb: int

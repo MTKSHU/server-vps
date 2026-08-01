@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,5 +123,228 @@ func TestValidateRestorePayloadRejectsTargetSymlinkEscape(t *testing.T) {
 	}, dataRoot)
 	if err == nil {
 		t.Fatal("expected restore target symlink escape to be rejected")
+	}
+}
+
+func TestExecuteSharedResourceVerifyRejectsEmptyDirectory(t *testing.T) {
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		ResourceID: 1,
+		SourcePath: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatalf("expected empty resource to fail verification, output=%s", output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyRejectsHFDNeeded(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hfdDir := filepath.Join(root, ".hfd")
+	if err := os.MkdirAll(hfdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hfdDir, "needed"), []byte("missing.bin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		ResourceID: 2,
+		SourcePath: root,
+	})
+	if err == nil || !strings.Contains(output, ".hfd/needed is not empty") {
+		t.Fatalf("expected hfd needed marker to fail verification, err=%v, output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyRejectsAria2Partial(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "file.bin.aria2"), []byte("state"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		ResourceID: 3,
+		SourcePath: root,
+	})
+	if err == nil || !strings.Contains(output, "partial file remains") {
+		t.Fatalf("expected aria2 marker to fail verification, err=%v, output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyAcceptsNonEmptyDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("complete"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		ResourceID: 4,
+		SourcePath: root,
+	})
+	if err != nil {
+		t.Fatalf("expected non-empty resource to pass verification: %v, output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyComparesHFManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datasets/owner/repo" {
+			t.Errorf("unexpected endpoint path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"sha":"commit-1","siblings":[]}`)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "present.bin"), []byte("1234"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hfdDir := filepath.Join(root, ".hfd")
+	if err := os.MkdirAll(hfdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hfdDir, "manifest"), []byte("4\tpresent.bin\n8\tmissing.bin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hfdDir, "repo_metadata.json"), []byte(`{"sha":"commit-1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		ResourceID: 5,
+		SourcePath: root,
+		Source:     "huggingface",
+		RepoID:     "owner/repo",
+		Revision:   "main",
+		RepoType:   "dataset",
+		HFEndpoint: server.URL,
+	})
+	if err == nil || !strings.Contains(output, "missing remote file: missing.bin") {
+		t.Fatalf("expected missing remote file to fail verification, err=%v output=%s", err, output)
+	}
+	if !strings.Contains(output, server.URL) {
+		t.Fatalf("verification output does not identify the configured endpoint: %s", output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyRejectsChangedHFRevision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"sha":"commit-new","siblings":[]}`)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("1234"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hfdDir := filepath.Join(root, ".hfd")
+	if err := os.MkdirAll(hfdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hfdDir, "manifest"), []byte("4\tfile.bin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hfdDir, "repo_metadata.json"), []byte(`{"sha":"commit-old"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		SourcePath: root,
+		Source:     "huggingface",
+		RepoID:     "owner/repo",
+		Revision:   "main",
+		RepoType:   "model",
+		HFEndpoint: server.URL,
+	})
+	if err == nil || !strings.Contains(output, "remote revision changed after download") {
+		t.Fatalf("expected changed remote revision to fail verification, err=%v output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyRejectsOfficialRedirect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://huggingface.co/api/models/owner/repo", http.StatusPermanentRedirect)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("1234"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		SourcePath: root,
+		Source:     "huggingface",
+		RepoID:     "owner/repo",
+		Revision:   "main",
+		RepoType:   "model",
+		HFEndpoint: server.URL,
+	})
+	if err == nil || !strings.Contains(output, "redirected repository API to huggingface.co") {
+		t.Fatalf("expected redirect to official endpoint to fail, err=%v output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyFinalizesFromLocalHFMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://huggingface.co/api/datasets/owner/repo", http.StatusPermanentRedirect)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("complete"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(root, ".cache", "huggingface", "download", "file.bin.metadata")
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, []byte("commit-1\netag\n123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		SourcePath:           root,
+		Source:               "huggingface",
+		RepoID:               "owner/repo",
+		Revision:             "main",
+		RepoType:             "dataset",
+		HFEndpoint:           server.URL,
+		AllowOfflineManifest: true,
+		ManualFinalize:       true,
+	})
+	if err != nil {
+		t.Fatalf("expected local hfd evidence to permit manual finalization: %v output=%s", err, output)
+	}
+	if !strings.Contains(output, `"verification_mode":"local_hfd_evidence"`) || !strings.Contains(output, `"downloaded_sha":"commit-1"`) {
+		t.Fatalf("expected local verification detail, output=%s", output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyRejectsIncompleteLocalHFMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://huggingface.co/api/models/owner/repo", http.StatusPermanentRedirect)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.bin"), []byte("complete"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		SourcePath:           root,
+		Source:               "huggingface",
+		RepoID:               "owner/repo",
+		RepoType:             "model",
+		HFEndpoint:           server.URL,
+		AllowOfflineManifest: true,
+	})
+	if err == nil || !strings.Contains(output, "local hfd evidence is invalid") {
+		t.Fatalf("expected missing local metadata to fail finalization, err=%v output=%s", err, output)
 	}
 }

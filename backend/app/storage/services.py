@@ -164,16 +164,16 @@ def enqueue_resource_sync_task(
     # resource_type → 目录名：dataset 系 → datasets，其余（模型）→ models
     _type = resource["resource_type"]
     type_dir = "datasets" if _type == "dataset" else "models"
-    safe_name = resource["name"].replace("/", "_").replace("..", "_")
-    safe_version = resource["version"].replace("/", "_").replace("..", "_")
+    safe_repo_name = resource["name"].replace("/", "_").replace("..", "_")
+    safe_provider = resource["version"].replace("/", "_").replace("..", "_")
     if node_cache_base:
         base = node_cache_base.rstrip("/")
     else:
         compute_root = storage_root_for_node(conn, node_id)
         base = f"{compute_root}/shared-cache"
-    # 路径：{base}/{type_dir}/{version}/{name}
-    # version 存放提供商/来源（如 openmoss、qwen），name 是资源名称
-    local_cache_path = f"{base}/{type_dir}/{safe_version}/{safe_name}"
+    # 路径：{base}/{type_dir}/{provider}/{repo_name}
+    # DB 字段 version 在产品语义中表示 provider，name 表示 repo_name。
+    local_cache_path = f"{base}/{type_dir}/{safe_provider}/{safe_repo_name}"
 
     private_key = _read_sync_private_key()
     ts = now_ts()

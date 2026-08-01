@@ -44,7 +44,7 @@ docker save cluster-code-server:latest | incus image import - --alias cluster/co
 容器创建并启动后，访问：
 
 ```
-https://hpc.vmip.com.cn/c/<容器名>/
+https://hpc.example.com/c/<容器名>/
 ```
 
 初始密码可通过 SSH 获取：
@@ -66,5 +66,5 @@ cat ~/.code-server-password
 设置环境变量（在计算节点执行）：
 
 ```bash
-incus config set <容器名> environment.PLATFORM_DOMAIN hpc.vmip.com.cn
+incus config set <容器名> environment.PLATFORM_DOMAIN hpc.example.com
 ```

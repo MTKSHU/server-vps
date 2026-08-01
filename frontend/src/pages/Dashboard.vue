@@ -139,30 +139,46 @@ function nodeGpus(row: NodeHardware): Gpu[] {
   return gpus.value.filter(g => g.hostname === row.hostname);
 }
 
-function formatCpuHardware(row: NodeHardware) {
+function formatCpuHardware(row: NodeHardware): string[] {
   const sockets = Math.max(1, row.cpu_sockets || 1);
   const model = row.cpu_model || "CPU";
-  const modelText = sockets > 1 ? `${sockets} × ${model}` : model;
+  const line1 = sockets > 1 ? `${sockets} × ${model}` : model;
+
   const coresPerSocket = row.cpu_cores || 0;
-  const threadsPerSocket = sockets > 1 && row.cpu_total > 0 ? Math.floor(row.cpu_total / sockets) : row.cpu_total || 0;
-  const parts = [modelText];
+  const threadsPerSocket =
+    sockets > 1 && row.cpu_total > 0
+      ? Math.floor(row.cpu_total / sockets)
+      : row.cpu_total || 0;
+
+  const line2Parts: string[] = [];
+
   if (sockets > 1) {
     const perSocket = [
       coresPerSocket > 0 ? t("dashboard.cores", { count: coresPerSocket }) : "",
       threadsPerSocket > 0 ? t("dashboard.threads", { count: threadsPerSocket }) : "",
     ].filter(Boolean).join(" / ");
+
     const totalCores = coresPerSocket > 0 ? coresPerSocket * sockets : 0;
     const total = [
       totalCores > 0 ? t("dashboard.cores", { count: totalCores }) : "",
       row.cpu_total > 0 ? t("dashboard.threads", { count: row.cpu_total }) : "",
     ].filter(Boolean).join(" / ");
-    if (perSocket) parts.push(t("dashboard.perSocket", { value: perSocket }));
-    if (total) parts.push(t("dashboard.total", { value: total }));
+
+    if (perSocket) line2Parts.push(t("dashboard.perSocket", { value: perSocket }));
+    if (total) line2Parts.push(t("dashboard.total", { value: total }));
   } else {
-    if (coresPerSocket > 0) parts.push(t("dashboard.cores", { count: coresPerSocket }));
-    if (row.cpu_total > 0) parts.push(t("dashboard.threads", { count: row.cpu_total }));
+    // 单插槽统一为 "x核 / y线程"
+    const singleSocket = [
+      coresPerSocket > 0 ? t("dashboard.cores", { count: coresPerSocket }) : "",
+      row.cpu_total > 0 ? t("dashboard.threads", { count: row.cpu_total }) : "",
+    ].filter(Boolean).join(" / ");
+
+    if (singleSocket) line2Parts.push(singleSocket);
   }
-  return parts.join(" · ");
+
+  const line2 = line2Parts.join(" · ");
+
+  return line2 ? [line1, line2] : [line1];
 }
 
 function formatGpuHardware(row: NodeHardware) {
@@ -275,11 +291,19 @@ onUnmounted(() => {
             </div>
 
             <div v-if="node.cpu_model || node.cpu_total" class="metric-row cpu-info-row">
-              <span class="cpu-model-text">{{ formatCpuHardware(node) }}</span>
+              <!-- 第一行：CPU 型号 -->
+              <div class="cpu-model-text">
+                {{ formatCpuHardware(node)[0] }}
+              </div>
+
+              <!-- 第二行：核心与线程（仅在有第二行时渲染） -->
+              <div v-if="formatCpuHardware(node)[1]" class="cpu-detail-text">
+                {{ formatCpuHardware(node)[1] }}
+              </div>
             </div>
           </div>
 
-          <div v-if="node.containers_total > 0" class="metric-section metric-section-container">
+          <div class="metric-section metric-section-container">
             <div class="metric-section-title">{{ t("dashboard.containers") }}</div>
             <div class="metric-row compact-row">
               <div class="metric-label">
@@ -475,6 +499,22 @@ onUnmounted(() => {
 
 .metric-section .metric-row:last-child {
   margin-bottom: 0;
+}
+
+.cpu-info-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px; /* 两行之间的微小间距 */
+}
+
+.cpu-model-text {
+  font-weight: 500;
+  color: #1f2937; /* 加深型号颜色 */
+}
+
+.cpu-detail-text {
+  font-size: 12px;
+  color: #6b7280; /* 次要信息使用灰字 */
 }
 
 .compact-row {

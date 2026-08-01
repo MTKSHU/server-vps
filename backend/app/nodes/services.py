@@ -202,11 +202,39 @@ def sync_node_containers(conn, node_id: int, reports: list[ContainerStateReport]
         return
     transitional = ("provisioning", "starting", "stopping", "restarting", "deleting")
     by_name = {report.name: report for report in reports if report.name}
+    ts = now_ts()
+    for report in reports:
+        if report.role != "resource_downloader" or not report.name:
+            continue
+        status = normalize_reported_container_status(report.status) or "stopped"
+        admin = conn.execute(
+            "SELECT id FROM users WHERE username = 'admin' ORDER BY id LIMIT 1",
+        ).fetchone()
+        if not admin:
+            continue
+        conn.execute(
+            """
+            INSERT INTO containers (
+                name, owner_id, node_id, image_id, status, cpu_cores, memory_gb, disk_gb,
+                ssh_username, ssh_key, mounts, ip, access_status, access_error, system_role,
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, 'system/resource-downloader', %s, 1, 2, 20,
+                      'root', '', '[]', %s, 'ready', '', 'resource_downloader', %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                node_id = EXCLUDED.node_id,
+                status = EXCLUDED.status,
+                ip = EXCLUDED.ip,
+                access_status = 'ready',
+                access_error = '',
+                system_role = 'resource_downloader',
+                updated_at = EXCLUDED.updated_at
+            """,
+            (report.name, admin["id"], node_id, status, report.ip if status == "running" else "", ts, ts),
+        )
     rows = conn.execute(
         "SELECT id, name, status, ip FROM containers WHERE node_id = %s ORDER BY id",
         (node_id,),
     ).fetchall()
-    ts = now_ts()
     for container in rows:
         if container["status"] in transitional or container["status"] == "failed":
             continue

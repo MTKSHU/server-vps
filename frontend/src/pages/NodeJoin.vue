@@ -31,7 +31,7 @@ const envFileTemplate = computed(() => {
   return `CLUSTER_SERVER_URL=${base}\nCLUSTER_NODE_TOKEN=<在下方生成 token 后替换>${hostname}\nCLUSTER_DATA_PATH=/data\nCLUSTER_INCUS_STORAGE_POOL=data`;
 });
 
-const systemdServiceContent = `[Unit]\nDescription=GPU cluster node agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nEnvironmentFile=/etc/cluster-node-agent.env\nExecStart=/usr/local/bin/cluster-node-agent --server \${CLUSTER_SERVER_URL} --token \${CLUSTER_NODE_TOKEN} --data-path \${CLUSTER_DATA_PATH} --incus-storage-pool \${CLUSTER_INCUS_STORAGE_POOL} --interval 60\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target`;
+const systemdServiceContent = `[Unit]\nDescription=GPU cluster node agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nEnvironmentFile=/etc/cluster-node-agent.env\nExecStart=/usr/local/bin/cluster-node-agent --interval 15 --storage-interval 60 --inventory-interval 300 --task-poll-interval 5\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target`;
 
 const agentUpdaterDownloadUrl = computed(() => {
   const base = (form.server_url || window.location.origin).replace(/\/+$/, "");
@@ -92,7 +92,7 @@ async function removeToken(row: JoinToken) {
 
 function detailCommand(token: JoinToken) {
   const hostname = token.expected_hostname ? ` --hostname ${token.expected_hostname}` : "";
-  return `cluster-node-agent --server ${token.server_url || "<server_url>"} --token <完整token> ${hostname}--data-path /data --incus-storage-pool data`.trim();
+  return `cluster-node-agent --server ${token.server_url || "<server_url>"} --token <完整token>${hostname} --data-path /data --incus-storage-pool data --interval 15 --storage-interval 60 --inventory-interval 300 --task-poll-interval 5`.trim();
 }
 
 function detailEnvFile(token: JoinToken) {
@@ -136,13 +136,13 @@ onMounted(load);
           <el-step title="下载 Agent 二进制">
             <template #description>
               <p class="step-desc">在新节点上执行，从本平台下载最新 agent：</p>
+              <p class="step-desc">该引导下载地址不使用 join token；join token 仅用于节点注册和后续 agent 鉴权。</p>
               <div class="step-code">
                 <div class="step-code-header">
                   <span>在新节点上执行</span>
-                  <el-button size="small" :icon="CopyDocument" @click="copy(`curl -fsSL -H 'Authorization: Bearer <token>' '${agentDownloadUrl}' -o /usr/local/bin/cluster-node-agent && chmod +x /usr/local/bin/cluster-node-agent`)">复制</el-button>
+                  <el-button size="small" :icon="CopyDocument" @click="copy(`curl -fsSL '${agentDownloadUrl}' -o /usr/local/bin/cluster-node-agent && chmod +x /usr/local/bin/cluster-node-agent`)">复制</el-button>
                 </div>
                 <pre>curl -fsSL \
-  -H 'Authorization: Bearer &lt;token&gt;' \
   '{{ agentDownloadUrl }}' \
   -o /usr/local/bin/cluster-node-agent&#10;&#10;chmod +x /usr/local/bin/cluster-node-agent&#10;cluster-node-agent --version</pre>
               </div>
@@ -184,10 +184,9 @@ onMounted(load);
               <div class="step-code">
                 <div class="step-code-header">
                   <span>下载 cluster-agent-updater</span>
-                  <el-button size="small" :icon="CopyDocument" @click="copy(`curl -fsSL -H 'Authorization: Bearer <token>' '${agentUpdaterDownloadUrl}' -o /usr/local/bin/cluster-agent-updater && chmod +x /usr/local/bin/cluster-agent-updater`)">复制</el-button>
+                  <el-button size="small" :icon="CopyDocument" @click="copy(`curl -fsSL '${agentUpdaterDownloadUrl}' -o /usr/local/bin/cluster-agent-updater && chmod +x /usr/local/bin/cluster-agent-updater`)">复制</el-button>
                 </div>
                 <pre>curl -fsSL \
-  -H 'Authorization: Bearer &lt;token&gt;' \
   '{{ agentUpdaterDownloadUrl }}' \
   -o /usr/local/bin/cluster-agent-updater&#10;&#10;chmod +x /usr/local/bin/cluster-agent-updater</pre>
               </div>

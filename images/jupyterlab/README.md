@@ -58,7 +58,7 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04
 容器创建并启动后，访问：
 
 ```
-https://hpc.vmip.com.cn/c/<容器名>/
+https://hpc.example.com/c/<容器名>/
 ```
 
 首次访问需要输入 token，通过 SSH 获取：

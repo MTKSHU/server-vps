@@ -73,6 +73,11 @@ def join_command(server_url: str, token: str, expected_hostname: str = "") -> st
         f" --token {token}"
         f"{hostname_arg}"
         " --data-path /data"
+        " --incus-storage-pool data"
+        " --interval 15"
+        " --storage-interval 60"
+        " --inventory-interval 300"
+        " --task-poll-interval 5"
     )
 
 
@@ -394,6 +399,7 @@ def register_node_routes(app, deps: dict[str, Any]):
                     f"CLUSTER_SERVER_URL={server_url}",
                     f"CLUSTER_NODE_TOKEN={token}",
                     "CLUSTER_DATA_PATH=/data",
+                    "CLUSTER_INCUS_STORAGE_POOL=data",
                 ]
             )
             return public

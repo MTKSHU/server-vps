@@ -7,7 +7,6 @@ import tarfile
 import posixpath
 import re
 import shlex
-import shutil
 import time
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
@@ -42,8 +41,6 @@ from psycopg.types.json import Jsonb
 import httpx
 
 from ..config import (
-    HF_HTTPS_PROXY,
-    HF_STAGING_DIR,
     MAX_UPLOAD_MB,
     NODE_AGENT_FILES_PORT,
     NODE_AGENT_TOKEN,
@@ -57,8 +54,6 @@ from ..platform_settings import get_platform_settings
 
 
 _deps: dict[str, Any] = {}
-_SHARED_RESOURCE_DOWNLOAD_LIMIT = 3
-_shared_resource_download_semaphore = asyncio.Semaphore(_SHARED_RESOURCE_DOWNLOAD_LIMIT)
 _TRANSFER_CHUNK_SIZE = 1024 * 1024
 _transfer_limit_lock = asyncio.Lock()
 _transfer_limit_next_at = 0.0
@@ -176,6 +171,84 @@ def source_path_for_node(platform_path: str, node: dict[str, Any]) -> str:
     if path.startswith("/data/"):
         return posixpath.join(storage_root, path[len("/data/"):])
     return path
+
+
+def _safe_resource_path_segment(value: str, label: str) -> str:
+    segment = value.strip().strip("/")
+    if not segment or "/" in segment or "\\" in segment or "\x00" in segment:
+        raise HTTPException(status_code=400, detail=f"{label} 不可作为存储路径片段")
+    if segment in (".", "..") or ".." in segment.split("/"):
+        raise HTTPException(status_code=400, detail=f"{label} 不合法")
+    return segment
+
+
+def _shared_resource_base_path(resource_type: str, settings: dict[str, str]) -> str:
+    if resource_type == "dataset":
+        return settings["dataset_base_path"].rstrip("/")
+    return settings["model_base_path"].rstrip("/")
+
+
+def _shared_resource_storage_path(base: str, provider: str, name: str) -> str:
+    safe_provider = _safe_resource_path_segment(provider or "default", "资源提供者")
+    safe_name = _safe_resource_path_segment(name, "资源名称")
+    return posixpath.join(base.rstrip("/"), safe_provider, safe_name)
+
+
+def _candidate_resource_bases(base: str, node: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for item in (base, source_path_for_node(base, node)):
+        normalized = posixpath.normpath(item.rstrip("/") or "/")
+        if normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
+
+
+def _resource_provider_layout_candidate(resource: dict[str, Any], settings: dict[str, str], node: dict[str, Any]) -> dict[str, Any]:
+    provider = _safe_resource_path_segment(str(resource["version"] or "default"), "资源提供者")
+    name = _safe_resource_path_segment(str(resource["name"] or ""), "资源名称")
+    source_path = posixpath.normpath(str(resource["source_path"]).rstrip("/") or "/")
+    base = _shared_resource_base_path(resource["resource_type"], settings)
+    for candidate_base in _candidate_resource_bases(base, node):
+        old_path = posixpath.join(candidate_base, name, provider)
+        new_path = posixpath.join(candidate_base, provider, name)
+        if source_path == new_path:
+            return {
+                "resource_id": resource["id"],
+                "status": "already_new",
+                "old_path": old_path,
+                "new_path": new_path,
+                "node_id": node["id"],
+                "node": node["hostname"],
+            }
+        if source_path == old_path:
+            return {
+                "resource_id": resource["id"],
+                "status": "candidate",
+                "layout": "name_provider",
+                "old_path": old_path,
+                "new_path": new_path,
+                "node_id": node["id"],
+                "node": node["hostname"],
+            }
+        if source_path.startswith(candidate_base.rstrip("/") + "/"):
+            return {
+                "resource_id": resource["id"],
+                "status": "candidate",
+                "layout": "legacy_custom",
+                "old_path": source_path,
+                "new_path": new_path,
+                "node_id": node["id"],
+                "node": node["hostname"],
+            }
+    return {
+        "resource_id": resource["id"],
+        "status": "skipped",
+        "reason": "source_path 不匹配旧格式",
+        "old_path": source_path,
+        "new_path": "",
+        "node_id": node["id"],
+        "node": node["hostname"],
+    }
 
 
 def _content_disposition(filename: str) -> str:
@@ -360,15 +433,14 @@ def public_shared_resource(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "source_url": row.get("source_url", ""),
+        "source_endpoint": row.get("source_endpoint", ""),
         "request_status": row.get("request_status", "ready"),
         "requested_by": row.get("requested_by"),
         "download_progress": row.get("download_progress") or {},
     }
 
 
-# ─── 后端主动下载 HuggingFace 并推送到存储节点 ──────────────────────────────
-# 排除 huggingface-cli 写入的元数据缓存目录，不传到存储节点
-_HF_EXCLUDE = {".cache"}
+# ─── 文件预览限制 ────────────────────────────────────────────────────────
 _TEXT_PREVIEW_EXTS = {".txt", ".py", ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".conf", ".md", ".sh", ".log", ".csv", ".tsv", ".xml", ".env"}
 _IMAGE_PREVIEW_MIME = {
     ".jpg": "image/jpeg",
@@ -386,44 +458,6 @@ _TEXT_PREVIEW_LIMIT = 256 * 1024
 _IMAGE_PREVIEW_LIMIT = 3 * 1024 * 1024
 _VIDEO_PREVIEW_LIMIT = 100 * 1024 * 1024
 _PDF_PREVIEW_LIMIT = 100 * 1024 * 1024
-
-
-def _iter_visible_files(paths: list[str]):
-    for path in paths:
-        name = os.path.basename(path.rstrip("/"))
-        if name.startswith(".") or name in _HF_EXCLUDE:
-            continue
-        if os.path.isfile(path):
-            yield path
-            continue
-        if not os.path.isdir(path):
-            continue
-        for root, dirnames, filenames in os.walk(path):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in _HF_EXCLUDE]
-            for filename in filenames:
-                if filename.startswith(".") or filename in _HF_EXCLUDE:
-                    continue
-                full = os.path.join(root, filename)
-                if os.path.isfile(full):
-                    yield full
-
-
-def _scan_visible_files(paths: list[str]) -> tuple[int, int, str]:
-    count = 0
-    size = 0
-    latest_file = ""
-    latest_mtime = -1.0
-    for full in _iter_visible_files(paths):
-        count += 1
-        try:
-            stat = os.stat(full)
-        except OSError:
-            continue
-        size += max(0, int(stat.st_size))
-        if stat.st_mtime >= latest_mtime:
-            latest_mtime = stat.st_mtime
-            latest_file = os.path.basename(full)[:60]
-    return count, size, latest_file
 
 
 def _shared_resource_ssh_kwargs(node: dict[str, Any] | str) -> dict[str, Any]:
@@ -636,63 +670,6 @@ def start_data_background_tasks() -> None:
     asyncio.create_task(_ssh_warmup_loop())
 
 
-async def _upload_entries_incremental(
-    ssh,
-    sftp,
-    *,
-    temp_dir: str,
-    entries: list[str],
-    target_path: str,
-    sftp_state: dict[str, Any],
-    sftp_seen: set[str],
-    sftp_transferred: dict[str, int],
-    progress_handler,
-    bandwidth_limit_mbps: int = 0,
-) -> None:
-    target_root = target_path.rstrip("/") or "/"
-    ensured_dirs: set[str] = set()
-    for src in sorted(_iter_visible_files(entries)):
-        rel_path = os.path.relpath(src, temp_dir).replace(os.sep, "/")
-        remote_path = posixpath.join(target_root, rel_path)
-        remote_parent = posixpath.dirname(remote_path) or "/"
-        if remote_parent not in ensured_dirs:
-            await ssh.run(f"mkdir -p {shlex.quote(remote_parent)}", check=True)
-            ensured_dirs.add(remote_parent)
-
-        local_size = os.path.getsize(src)
-        remote_size = -1
-        try:
-            remote_stat = await sftp.stat(remote_path)
-            remote_size = int(getattr(remote_stat, "size", -1) or -1)
-        except Exception:
-            remote_size = -1
-
-        if remote_size == local_size:
-            sftp_state["current_file"] = os.path.basename(src)[:60]
-            if src not in sftp_seen:
-                sftp_seen.add(src)
-                sftp_state["files_done"] += 1
-            sftp_state["bytes_done"] += max(0, local_size - sftp_transferred.get(src, 0))
-            sftp_transferred[src] = local_size
-            continue
-
-        transferred = 0
-        sftp_state["current_file"] = os.path.basename(src)[:60]
-        async with sftp.open(remote_path, "wb") as remote_file:
-            with open(src, "rb") as local_file:
-                while True:
-                    chunk = await asyncio.to_thread(local_file.read, _TRANSFER_CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    await _throttle_transfer_chunk(len(chunk), bandwidth_limit_mbps)
-                    await remote_file.write(chunk)
-                    transferred += len(chunk)
-                    if progress_handler:
-                        progress_handler(src, remote_path, transferred, local_size)
-        if local_size == 0 and progress_handler:
-            progress_handler(src, remote_path, 0, 0)
-
-
 async def _preview_shared_resource_file(node: dict[str, Any] | str, absolute_path: str) -> dict[str, Any]:
     ext = os.path.splitext(absolute_path)[1].lower()
     async with asyncssh.connect(**_shared_resource_ssh_kwargs(node)) as ssh:
@@ -766,8 +743,36 @@ def enqueue_shared_resource_verify_task(
     node: dict[str, Any],
     source_path: str,
     delay_seconds: int = 0,
+    allow_offline_manifest: bool = False,
+    manual_finalize: bool = False,
 ) -> dict[str, Any]:
     ts = dep("now_ts")()
+    settings = get_storage_settings(conn)
+    payload: dict[str, Any] = {
+        "resource_id": resource["id"],
+        "resource_type": resource["resource_type"],
+        "name": resource["name"],
+        "version": resource["version"],
+        "source_path": source_path,
+        "allow_offline_manifest": allow_offline_manifest,
+        "manual_finalize": manual_finalize,
+    }
+    source_url = str(resource.get("source_url") or "")
+    source_match = re.fullmatch(r"(hf|ms)://([^@]+)@(.+)", source_url)
+    if source_match:
+        source_kind, repo_id, revision = source_match.groups()
+        payload.update(
+            {
+                "source": "huggingface" if source_kind == "hf" else "modelscope",
+                "repo_id": repo_id,
+                "revision": revision,
+                "repo_type": "dataset" if resource["resource_type"] == "dataset" else "model",
+            }
+        )
+        if source_kind == "hf":
+            payload["hf_endpoint"] = str(resource.get("source_endpoint") or "") or (
+                settings["hf_endpoint"] if settings["hf_endpoint_enabled"] == "1" else ""
+            )
     conn.execute(
         """
         UPDATE shared_resources
@@ -781,13 +786,7 @@ def enqueue_shared_resource_verify_task(
         node["id"],
         None,
         "verify_shared_resource",
-        {
-            "resource_id": resource["id"],
-            "resource_type": resource["resource_type"],
-            "name": resource["name"],
-            "version": resource["version"],
-            "source_path": source_path,
-        },
+        payload,
         available_at=ts + max(0, delay_seconds),
     )
 
@@ -810,443 +809,73 @@ def schedule_shared_resource_auto_verify(resource_id: int, node: dict[str, Any],
         pass
 
 
-def mark_shared_resource_download_queued(resource_id: int) -> None:
-    try:
-        with dep("db")() as conn:
-            conn.execute(
-                """
-                UPDATE shared_resources
-                SET download_progress = %s, updated_at = %s
-                WHERE id = %s
-                """,
-                (
-                    Jsonb(
-                        {
-                            "phase": "queued",
-                            "pct": 0,
-                            "current_file": "",
-                            "queue_limit": _SHARED_RESOURCE_DOWNLOAD_LIMIT,
-                        }
-                    ),
-                    dep("now_ts")(),
-                    resource_id,
-                ),
-            )
-    except Exception:
-        pass
-
-
-async def run_queued_shared_resource_download(resource_id: int, runner: Callable[[], Awaitable[None]]) -> None:
-    mark_shared_resource_download_queued(resource_id)
-    async with _shared_resource_download_semaphore:
-        await runner()
-
-
-async def backend_hf_download_and_sync(
-    resource_id: int,
-    hf_repo_id: str,
-    hf_revision: str,
-    hf_token: str,
-    hf_endpoint: str,
+def enqueue_shared_resource_download_task(
+    conn,
+    resource: dict[str, Any],
+    node: dict[str, Any],
+    source: str,
+    repo_id: str,
+    revision: str,
+    token: str,
     repo_type: str,
-    node: dict[str, Any] | str,
     target_path: str,
-) -> None:
-    """在后端服务器运行 huggingface-cli download，然后通过 asyncssh SFTP 推送到存储节点。"""
-    temp_dir = os.path.join(HF_STAGING_DIR, f"hf-{resource_id}")
-    _prog: dict[str, Any] = {}
-    keep_staging = False
-
-    def _flush(status: str | None = None, error: str = "") -> None:
-        try:
-            with dep("db")() as conn:
-                if status is not None:
-                    conn.execute(
-                        "UPDATE shared_resources "
-                        "SET request_status=%s, check_error=%s, download_progress=%s, updated_at=%s "
-                        "WHERE id=%s",
-                        (status, error[:2000], Jsonb(_prog), dep("now_ts")(), resource_id),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE shared_resources SET download_progress=%s, updated_at=%s WHERE id=%s",
-                        (Jsonb(_prog), dep("now_ts")(), resource_id),
-                    )
-        except Exception:
-            pass
-
-    try:
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # ── Stage 1: HuggingFace download ──────────────────────────────
-        _prog.update(phase="downloading", files_done=0, files_total=0, bytes_done=0, pct=0, current_file="")
-
-        cli_args = [
-            "hf", "download", hf_repo_id,
-            "--local-dir", temp_dir,
-            "--revision", hf_revision,
-        ]
-        if repo_type == "dataset":
-            cli_args += ["--repo-type", "dataset"]
-
-        env = {**os.environ}
-        if hf_token:
-            env["HF_TOKEN"] = hf_token
-        if hf_endpoint:
-            env["HF_ENDPOINT"] = hf_endpoint
-        elif "HF_ENDPOINT" in env:
-            del env["HF_ENDPOINT"]   # 清除无效的镜像站默认值
-        # 代理：优先用用户请求中的设置（未来扩展），否则用系统配置
-        if HF_HTTPS_PROXY and "HTTPS_PROXY" not in env:
-            env["HTTPS_PROXY"] = HF_HTTPS_PROXY
-            env["https_proxy"] = HF_HTTPS_PROXY
-
-        dl_proc = await asyncio.create_subprocess_exec(
-            *cli_args, env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,  # 合并 stderr→stdout 统一读取
-        )
-        _out_chunks: list[bytes] = []
-
-        async def _read_stderr() -> None:
-            buf = b""
-            while True:
-                chunk = await dl_proc.stdout.read(4096)
-                if not chunk:
-                    break
-                _out_chunks.append(chunk)
-                buf += chunk
-                parts = re.split(b"[\r\n]", buf)
-                buf = parts[-1]
-                for part in parts[:-1]:
-                    text = part.decode(errors="replace")
-                    # 整体进度："Fetching 45 files:  11%|..."
-                    m = re.search(r"Fetching (\d+) files:\s+(\d+)%", text)
-                    if m:
-                        _prog["files_total"] = int(m.group(1))
-                        _prog["pct"] = int(m.group(2))
-                    # 单文件进度："Downloading filename.bin:  45%|..."
-                    m2 = re.search(r"Downloading ([^:]+?):\s+(\d+)%", text)
-                    if m2:
-                        _prog["current_file"] = m2.group(1).strip()[-60:]
-
-        async def _poll_dl() -> None:
-            while True:
-                await asyncio.sleep(3)
-                try:
-                    files_done, bytes_done, latest_file = _scan_visible_files([temp_dir])
-                    _prog["files_done"] = files_done
-                    _prog["bytes_done"] = bytes_done
-                    if latest_file and not _prog.get("current_file"):
-                        _prog["current_file"] = latest_file
-                    if _prog.get("files_total"):
-                        approx_pct = min(99, int(files_done * 100 / max(1, int(_prog["files_total"]))))
-                        _prog["pct"] = max(int(_prog.get("pct") or 0), approx_pct)
-                except OSError:
-                    pass
-                _flush()
-
-        _poll_task = asyncio.create_task(_poll_dl())
-        await asyncio.gather(_read_stderr(), dl_proc.wait())
-        _poll_task.cancel()
-        try:
-            await _poll_task
-        except asyncio.CancelledError:
-            pass
-
-        if dl_proc.returncode != 0:
-            err = b"".join(_out_chunks).decode(errors="replace")
-            raise RuntimeError(f"hf download 下载失败:\n{err[-2000:]}")
-
-        # ── Stage 2: SFTP push to storage node ────────────────────────
-        connect_kwargs = _shared_resource_ssh_kwargs(node)
-
-        entries = [
-            os.path.join(temp_dir, e)
-            for e in os.listdir(temp_dir)
-            if e not in _HF_EXCLUDE
-        ]
-
-        upload_files_total, upload_bytes_total, _ = _scan_visible_files(entries)
-        _prog.update(
-            phase="uploading",
-            pct=0,
-            current_file="",
-            files_done=0,
-            files_total=upload_files_total,
-            bytes_done=0,
-            bytes_total=upload_bytes_total,
-        )
-        _flush()
-
-        _sftp_state: dict[str, Any] = {"current_file": "", "bytes_done": 0, "files_done": 0}
-        _sftp_seen: set[str] = set()
-        _sftp_transferred: dict[str, int] = {}
-        bandwidth_limit_mbps = _transfer_bandwidth_limit_mbps()
-
-        def _sftp_progress(src: str, dst: str, transferred: int, total: int) -> None:
-            _sftp_state["current_file"] = os.path.basename(src)[:60]
-            prev = _sftp_transferred.get(src, 0)
-            if transferred > prev:
-                _sftp_state["bytes_done"] += transferred - prev
-                _sftp_transferred[src] = transferred
-            if transferred >= total and src not in _sftp_seen:
-                _sftp_seen.add(src)
-                _sftp_state["files_done"] += 1
-
-        async def _poll_sftp() -> None:
-            while True:
-                await asyncio.sleep(3)
-                _prog["current_file"] = _sftp_state.get("current_file", "")
-                _prog["files_done"] = int(_sftp_state.get("files_done") or 0)
-                _prog["bytes_done"] = int(_sftp_state.get("bytes_done") or 0)
-                total = int(_prog.get("bytes_total") or 0)
-                if total > 0:
-                    _prog["pct"] = min(99, int(_prog["bytes_done"] * 100 / total))
-                _flush()
-
-        _sftp_poll = asyncio.create_task(_poll_sftp())
-        async with asyncssh.connect(**connect_kwargs) as ssh:
-            await ssh.run(f"mkdir -p {shlex.quote(target_path)}", check=True)
-            if entries:
-                async with ssh.start_sftp_client() as sftp:
-                    await _upload_entries_incremental(
-                        ssh,
-                        sftp,
-                        temp_dir=temp_dir,
-                        entries=entries,
-                        target_path=target_path,
-                        sftp_state=_sftp_state,
-                        sftp_seen=_sftp_seen,
-                        sftp_transferred=_sftp_transferred,
-                        progress_handler=_sftp_progress,
-                        bandwidth_limit_mbps=bandwidth_limit_mbps,
-                    )
-        _sftp_poll.cancel()
-        try:
-            await _sftp_poll
-        except asyncio.CancelledError:
-            pass
-
-        _prog.update(phase="done", pct=100, current_file="", files_done=upload_files_total, bytes_done=upload_bytes_total)
-        _flush(status="ready")
-        schedule_shared_resource_auto_verify(resource_id, node, target_path)
-
-    except Exception as exc:
-        keep_staging = True
-        _prog.update(phase="error")
-        _flush(status="failed", error=str(exc))
-
-    finally:
-        if not keep_staging:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-# ─── 后端主动从 ModelScope 下载并推送到存储节点 ─────────────────────────────
-async def backend_ms_download_and_sync(
-    resource_id: int,
-    ms_repo_id: str,
-    ms_revision: str,
-    ms_token: str,
-    repo_type: str,
-    node: dict[str, Any] | str,
-    target_path: str,
-) -> None:
-    """使用 ModelScope SDK 下载数据集/模型，然后通过 asyncssh SFTP 推送到存储节点。"""
-    temp_dir = os.path.join(HF_STAGING_DIR, f"ms-{resource_id}")
-    _prog: dict[str, Any] = {}
-    keep_staging = False
-
-    def _flush(status: str | None = None, error: str = "") -> None:
-        try:
-            with dep("db")() as conn:
-                if status is not None:
-                    conn.execute(
-                        "UPDATE shared_resources "
-                        "SET request_status=%s, check_error=%s, download_progress=%s, updated_at=%s "
-                        "WHERE id=%s",
-                        (status, error[:2000], Jsonb(_prog), dep("now_ts")(), resource_id),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE shared_resources SET download_progress=%s, updated_at=%s WHERE id=%s",
-                        (Jsonb(_prog), dep("now_ts")(), resource_id),
-                    )
-        except Exception:
-            pass
-
-    try:
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # ── Stage 1: ModelScope download ────────────────────────────────
-        _prog.update(phase="downloading", files_done=0, files_total=0, bytes_done=0, pct=0, current_file="")
-        _flush()
-
-        ms_repo_type = "dataset" if repo_type == "dataset" else "model"
-
-        def _parse_ms_progress(text: str) -> None:
-            m = re.search(r"Got (\d+) files, start to download", text)
-            if m:
-                _prog["files_total"] = int(m.group(1))
-            m = re.search(r"Processing (\d+) items:\s+(\d+)%", text)
-            if m:
-                _prog["files_total"] = max(int(_prog.get("files_total") or 0), int(m.group(1)))
-                _prog["pct"] = int(m.group(2))
-            m = re.search(r"Downloading \[([^\]]+)\]:\s+(\d+)%", text)
-            if m:
-                _prog["current_file"] = m.group(1).strip()[-60:]
-
-        class _ProgressCapture(io.TextIOBase):
-            def __init__(self):
-                self._buf = ""
-
-            def write(self, s: str) -> int:
-                if not s:
-                    return 0
-                self._buf += s
-                parts = re.split(r"[\r\n]", self._buf)
-                self._buf = parts[-1]
-                for part in parts[:-1]:
-                    if part.strip():
-                        _parse_ms_progress(part)
-                return len(s)
-
-            def flush(self) -> None:
-                if self._buf.strip():
-                    _parse_ms_progress(self._buf)
-                self._buf = ""
-
-        def _do_download() -> None:
-            from modelscope.hub.snapshot_download import snapshot_download
-            kwargs: dict[str, Any] = dict(
-                model_id=ms_repo_id,
-                repo_type=ms_repo_type,
-                local_dir=temp_dir,
-                revision=ms_revision or None,
-            )
-            if ms_token:
-                kwargs["token"] = ms_token
-            capture = _ProgressCapture()
-            with contextlib.redirect_stdout(capture), contextlib.redirect_stderr(capture):
-                snapshot_download(**kwargs)
-            capture.flush()
-
-        async def _poll_ms() -> None:
-            while True:
-                await asyncio.sleep(3)
-                try:
-                    files_done, bytes_done, latest_file = _scan_visible_files([temp_dir])
-                    _prog["files_done"] = files_done
-                    _prog["bytes_done"] = bytes_done
-                    if latest_file and not _prog.get("current_file"):
-                        _prog["current_file"] = latest_file
-                    if _prog.get("files_total"):
-                        approx_pct = min(99, int(files_done * 100 / max(1, int(_prog["files_total"]))))
-                        _prog["pct"] = max(int(_prog.get("pct") or 0), approx_pct)
-                except OSError:
-                    pass
-                _flush()
-
-        _poll_task = asyncio.create_task(_poll_ms())
-        try:
-            await asyncio.to_thread(_do_download)
-        finally:
-            _poll_task.cancel()
-            try:
-                await _poll_task
-            except asyncio.CancelledError:
-                pass
-
-        # ── Stage 2: SFTP push to storage node ──────────────────────────
-        connect_kwargs = _shared_resource_ssh_kwargs(node)
-
-        entries = [
-            os.path.join(temp_dir, e)
-            for e in os.listdir(temp_dir)
-            if e not in _HF_EXCLUDE
-        ]
-
-        upload_files_total, upload_bytes_total, _ = _scan_visible_files(entries)
-        _prog.update(
-            phase="uploading",
-            pct=0,
-            current_file="",
-            files_done=0,
-            files_total=upload_files_total,
-            bytes_done=0,
-            bytes_total=upload_bytes_total,
-        )
-        _flush()
-
-        _sftp_state: dict[str, Any] = {"current_file": "", "bytes_done": 0, "files_done": 0}
-        _sftp_seen: set[str] = set()
-        _sftp_transferred: dict[str, int] = {}
-        bandwidth_limit_mbps = _transfer_bandwidth_limit_mbps()
-
-        def _sftp_progress(src: str, dst: str, transferred: int, total: int) -> None:
-            _sftp_state["current_file"] = os.path.basename(src)[:60]
-            prev = _sftp_transferred.get(src, 0)
-            if transferred > prev:
-                _sftp_state["bytes_done"] += transferred - prev
-                _sftp_transferred[src] = transferred
-            if transferred >= total and src not in _sftp_seen:
-                _sftp_seen.add(src)
-                _sftp_state["files_done"] += 1
-
-        async def _poll_sftp() -> None:
-            while True:
-                await asyncio.sleep(3)
-                _prog["current_file"] = _sftp_state.get("current_file", "")
-                _prog["files_done"] = int(_sftp_state.get("files_done") or 0)
-                _prog["bytes_done"] = int(_sftp_state.get("bytes_done") or 0)
-                total = int(_prog.get("bytes_total") or 0)
-                if total > 0:
-                    _prog["pct"] = min(99, int(_prog["bytes_done"] * 100 / total))
-                _flush()
-
-        _sftp_poll = asyncio.create_task(_poll_sftp())
-        async with asyncssh.connect(**connect_kwargs) as ssh:
-            await ssh.run(f"mkdir -p {shlex.quote(target_path)}", check=True)
-            if entries:
-                async with ssh.start_sftp_client() as sftp:
-                    await _upload_entries_incremental(
-                        ssh,
-                        sftp,
-                        temp_dir=temp_dir,
-                        entries=entries,
-                        target_path=target_path,
-                        sftp_state=_sftp_state,
-                        sftp_seen=_sftp_seen,
-                        sftp_transferred=_sftp_transferred,
-                        progress_handler=_sftp_progress,
-                        bandwidth_limit_mbps=bandwidth_limit_mbps,
-                    )
-        _sftp_poll.cancel()
-        try:
-            await _sftp_poll
-        except asyncio.CancelledError:
-            pass
-
-        _prog.update(phase="done", pct=100, current_file="", files_done=upload_files_total, bytes_done=upload_bytes_total)
-        _flush(status="ready")
-        schedule_shared_resource_auto_verify(resource_id, node, target_path)
-
-    except Exception as exc:
-        keep_staging = True
-        _prog.update(phase="error")
-        _flush(status="failed", error=str(exc))
-
-    finally:
-        if not keep_staging:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    hf_endpoint: str = "",
+    hf_download_engine: str = "auto",
+) -> dict[str, Any]:
+    # Keep staging beside the final target. On TrueNAS/ZFS, datasets/models may
+    # be separate mountpoints, so root-level staging can make os.Rename fail
+    # with EXDEV during activation.
+    staging_path = f"{os.path.dirname(target_path).rstrip('/')}/.{resource['id']}.partial"
+    task = dep("enqueue_node_task")(
+        conn,
+        node["id"],
+        None,
+        "download_shared_resource",
+        {
+            "resource_id": resource["id"],
+            "resource_type": resource["resource_type"],
+            "name": resource["name"],
+            "version": resource["version"],
+            "source": source,
+            "repo_id": repo_id,
+            "revision": revision,
+            "token": token,
+            "repo_type": repo_type,
+            "target_path": target_path,
+            "staging_path": staging_path,
+            "hf_endpoint": hf_endpoint,
+            "hf_download_engine": hf_download_engine,
+        },
+    )
+    progress = {
+        "phase": "queued",
+        "pct": 0,
+        "current_file": "",
+        "node": node["hostname"],
+        "task_id": task["id"],
+        "runner": "storage-agent",
+    }
+    conn.execute(
+        """
+        UPDATE shared_resources
+        SET request_status = 'downloading',
+            check_error = '',
+            download_progress = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (Jsonb(progress), dep("now_ts")(), resource["id"]),
+    )
+    return task
 
 
 STORAGE_SETTING_KEYS = {
     "dataset_base_path": "/data/datasets",
-    "model_base_path": "/data/models/huggingface",
+    "model_base_path": "/data/models",
     "user_base_path": "/data/users",
     "hf_endpoint": "",
     "hf_endpoint_enabled": "0",
+    "hf_download_engine": "auto",
 }
 
 
@@ -1268,6 +897,7 @@ def public_storage_settings(settings: dict) -> dict:
         "user_base_path": settings["user_base_path"],
         "hf_endpoint": settings["hf_endpoint"],
         "hf_endpoint_enabled": settings["hf_endpoint_enabled"] == "1",
+        "hf_download_engine": settings.get("hf_download_engine") or "auto",
     }
 
 
@@ -1314,8 +944,12 @@ def register_data_routes(app, deps: dict[str, Any]):
             hf_endpoint = payload.hf_endpoint.strip()
             if hf_endpoint and not re.fullmatch(r"https?://[A-Za-z0-9._:/-]{1,200}", hf_endpoint):
                 raise HTTPException(status_code=400, detail="HF 镜像站地址不合法")
+            hf_download_engine = payload.hf_download_engine.strip().lower() or "auto"
+            if hf_download_engine not in ("auto", "sdk", "hfd"):
+                raise HTTPException(status_code=400, detail="HF 下载引擎不合法")
             conn.execute(upsert_sql, ("hf_endpoint", hf_endpoint, ts))
             conn.execute(upsert_sql, ("hf_endpoint_enabled", "1" if payload.hf_endpoint_enabled else "0", ts))
+            conn.execute(upsert_sql, ("hf_download_engine", hf_download_engine, ts))
             audit(conn, actor["username"], "update", "system-settings:storage", payload.model_dump())
             return public_storage_settings(get_storage_settings(conn))
 
@@ -1853,6 +1487,132 @@ def register_data_routes(app, deps: dict[str, Any]):
             rows = conn.execute("SELECT * FROM shared_resources ORDER BY resource_type, name, version").fetchall()
             return [public_shared_resource(row) for row in rows]
 
+    @app.post("/api/data/shared-resources/migrate-provider-layout", status_code=202)
+    def migrate_shared_resources_provider_layout(dry_run: bool = False, create_symlink: bool = True):
+        require_admin()
+        with db() as conn:
+            actor = current_user(conn)
+            settings = get_storage_settings(conn)
+            resources = conn.execute("SELECT * FROM shared_resources ORDER BY resource_type, name, version").fetchall()
+            results: list[dict[str, Any]] = []
+            for resource in resources:
+                node = select_storage_node_for_path(conn, resource["source_path"])
+                if not node:
+                    results.append(
+                        {
+                            "resource_id": resource["id"],
+                            "name": resource["name"],
+                            "version": resource["version"],
+                            "status": "skipped",
+                            "reason": "没有 online 的 storage/mixed 节点",
+                            "old_path": resource["source_path"],
+                            "new_path": "",
+                        }
+                    )
+                    continue
+                try:
+                    candidate = _resource_provider_layout_candidate(resource, settings, node)
+                except HTTPException as exc:
+                    results.append(
+                        {
+                            "resource_id": resource["id"],
+                            "name": resource["name"],
+                            "version": resource["version"],
+                            "status": "skipped",
+                            "reason": str(exc.detail),
+                            "old_path": resource["source_path"],
+                            "new_path": "",
+                            "node": node["hostname"],
+                        }
+                    )
+                    continue
+                candidate.update({"name": resource["name"], "version": resource["version"], "resource_type": resource["resource_type"]})
+                if candidate["status"] != "candidate":
+                    results.append(candidate)
+                    continue
+                old_source_path = str(resource["source_path"])
+                new_source_path = str(candidate["new_path"])
+                old_actual_path = source_path_for_node(old_source_path, node)
+                new_actual_path = source_path_for_node(new_source_path, node)
+                candidate.update(
+                    {
+                        "old_source_path": old_source_path,
+                        "new_source_path": new_source_path,
+                        "old_actual_path": old_actual_path,
+                        "new_actual_path": new_actual_path,
+                    }
+                )
+                if dry_run:
+                    results.append(candidate)
+                    continue
+                existing = conn.execute(
+                    """
+                    SELECT id, status FROM node_tasks
+                    WHERE task_type = 'migrate_shared_resource_path'
+                      AND payload->>'resource_id' = %s
+                      AND status IN ('pending', 'claimed')
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (str(resource["id"]),),
+                ).fetchone()
+                if existing:
+                    candidate.update({"status": "already_queued", "task_id": existing["id"], "task_status": existing["status"]})
+                    results.append(candidate)
+                    continue
+                ts = now_ts()
+                task = enqueue_node_task(
+                    conn,
+                    node["id"],
+                    None,
+                    "migrate_shared_resource_path",
+                    {
+                        "resource_id": resource["id"],
+                        "resource_type": resource["resource_type"],
+                        "name": resource["name"],
+                        "version": resource["version"],
+                        "old_path": old_actual_path,
+                        "new_path": new_actual_path,
+                        "old_source_path": old_source_path,
+                        "new_source_path": new_source_path,
+                        "create_symlink": create_symlink,
+                    },
+                )
+                conn.execute(
+                    """
+                    UPDATE shared_resources
+                    SET check_status = 'checking',
+                        check_error = '',
+                        download_progress = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        Jsonb(
+                            {
+                                "phase": "migrating",
+                                "pct": 0,
+                                "task_id": task["id"],
+                                "node": node["hostname"],
+                                "from": old_source_path,
+                                "to": new_source_path,
+                            }
+                        ),
+                        ts,
+                        resource["id"],
+                    ),
+                )
+                audit(
+                    conn,
+                    actor["username"],
+                    "migrate-provider-layout",
+                    f"shared-resource:{resource['id']}",
+                    {"node": node["hostname"], "old_path": old_source_path, "new_path": new_source_path, "task_id": task["id"]},
+                )
+                candidate.update({"status": "queued", "task": public_task(task), "task_id": task["id"]})
+                results.append(candidate)
+            return {"dry_run": dry_run, "create_symlink": create_symlink, "items": results}
+
     @app.post("/api/data/shared-resources", status_code=201)
     def create_shared_resource(payload: SharedResourceInput):
         require_admin()
@@ -1995,16 +1755,54 @@ def register_data_routes(app, deps: dict[str, Any]):
             audit(conn, "admin", "verify", f"shared-resource:{resource_id}", {"node": node["hostname"], "path": source_path})
             return public_task(task)
 
+    @app.post("/api/data/shared-resources/{resource_id}/finalize-manual", status_code=202)
+    def finalize_manual_shared_resource(resource_id: int):
+        require_admin()
+        with db() as conn:
+            current_user(conn)
+            resource = conn.execute("SELECT * FROM shared_resources WHERE id = %s", (resource_id,)).fetchone()
+            if not resource:
+                raise HTTPException(status_code=404, detail="共享资源不存在")
+            progress = resource.get("download_progress") if isinstance(resource.get("download_progress"), dict) else {}
+            if not str(resource.get("source_url") or "").startswith("hf://") or progress.get("phase") != "manual_ready":
+                raise HTTPException(status_code=400, detail="该资源不是等待归档的 Hugging Face 手动下载任务")
+            node = select_storage_node_for_path(conn, resource["source_path"])
+            if not node:
+                raise HTTPException(status_code=400, detail="没有 online 的 storage/mixed 节点可执行归档校验")
+            source_path = source_path_for_node(resource["source_path"], node)
+            task = enqueue_shared_resource_verify_task(
+                conn,
+                resource,
+                node,
+                source_path,
+                allow_offline_manifest=True,
+                manual_finalize=True,
+            )
+            conn.execute(
+                "UPDATE shared_resources SET request_status='checking', updated_at=%s WHERE id=%s",
+                (now_ts(), resource_id),
+            )
+            audit(conn, "admin", "finalize-manual", f"shared-resource:{resource_id}",
+                  {"node": node["hostname"], "path": source_path, "task_id": task["id"]})
+            return public_task(task)
+
     @app.post("/api/data/resource-requests", status_code=202)
     async def request_shared_resource(payload: SharedResourceRequestInput):
         actor = current_user(None)
         name = payload.name.strip()
         version = payload.version.strip() or "default"
+        download_mode = payload.download_mode.strip().lower() or "automatic"
+        if download_mode not in ("automatic", "manual"):
+            raise HTTPException(status_code=400, detail="下载方式不合法")
+        if download_mode == "manual":
+            require_admin()
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{1,80}", name):
             raise HTTPException(status_code=400, detail="资源名称不合法")
         source = payload.source.strip().lower() or "huggingface"
         if source not in ("huggingface", "modelscope"):
             raise HTTPException(status_code=400, detail="source 不合法，应为 huggingface 或 modelscope")
+        if source == "modelscope" and download_mode == "manual":
+            raise HTTPException(status_code=400, detail="ModelScope 使用平台自动下载即可")
         repo_type = "dataset" if payload.resource_type == "dataset" else "model"
         tags = normalize_shared_resource_tags(payload.tags)
 
@@ -2028,61 +1826,117 @@ def register_data_routes(app, deps: dict[str, Any]):
 
         with db() as conn:
             settings = get_storage_settings(conn)
-            hf_endpoint = settings["hf_endpoint"] if settings["hf_endpoint_enabled"] == "1" else ""
+            configured_hf_endpoint = settings["hf_endpoint"] if settings["hf_endpoint_enabled"] == "1" else ""
+            requested_hf_endpoint = payload.hf_endpoint.strip().rstrip("/")
+            if requested_hf_endpoint and not re.fullmatch(r"https?://[A-Za-z0-9._:/-]{1,200}", requested_hf_endpoint):
+                raise HTTPException(status_code=400, detail="HF 下载端点不合法")
+            hf_endpoint = requested_hf_endpoint if source == "huggingface" and download_mode == "manual" else configured_hf_endpoint
+            hf_download_engine = settings.get("hf_download_engine") or "auto"
             if payload.resource_type == "dataset":
-                base = settings["dataset_base_path"].rstrip("/")
+                base = _shared_resource_base_path(payload.resource_type, settings)
                 mount_path = f"/datasets/{name}"
             else:
-                base = settings["model_base_path"].rstrip("/")
+                base = _shared_resource_base_path(payload.resource_type, settings)
                 mount_path = f"/models/{name}"
-            platform_path = f"{base}/{name}/{version}"
+            platform_path = _shared_resource_storage_path(base, version, name)
             node = select_storage_node_for_path(conn, platform_path)
             if not node:
                 raise HTTPException(status_code=400, detail="没有在线存储节点")
+            if str(node.get("incus_status") or "").lower() in ("", "unavailable"):
+                raise HTTPException(status_code=400, detail=f"存储节点 {node['hostname']} 未上报可用 Incus，无法使用下载容器")
             ts = now_ts()
+            initial_status = "preparing_manual_download" if download_mode == "manual" else "downloading"
             row = conn.execute(
-                     """INSERT INTO shared_resources (resource_type,name,version,source_path,mount_path,tags,readonly,sync_policy,enabled,source_url,request_status,requested_by,created_at,updated_at)
-                         VALUES (%s,%s,%s,%s,%s,%s,TRUE,'manual',TRUE,%s,'downloading',%s,%s,%s)
-                         ON CONFLICT (resource_type,name,version) DO UPDATE SET source_url=EXCLUDED.source_url,tags=EXCLUDED.tags,request_status='downloading',requested_by=EXCLUDED.requested_by,updated_at=EXCLUDED.updated_at RETURNING *""",
-                     (payload.resource_type, name, version, platform_path, mount_path, tags, source_url, actor["id"], ts, ts),
+                     """INSERT INTO shared_resources (resource_type,name,version,source_path,mount_path,tags,readonly,sync_policy,enabled,source_url,source_endpoint,request_status,requested_by,check_status,check_error,created_at,updated_at)
+                         VALUES (%s,%s,%s,%s,%s,%s,TRUE,'manual',TRUE,%s,%s,%s,%s,'unknown','',%s,%s)
+                         ON CONFLICT (resource_type,name,version) DO UPDATE SET
+                             source_url=EXCLUDED.source_url,source_endpoint=EXCLUDED.source_endpoint,tags=EXCLUDED.tags,
+                             request_status=EXCLUDED.request_status,requested_by=EXCLUDED.requested_by,
+                             check_status='unknown',check_error='',updated_at=EXCLUDED.updated_at RETURNING *""",
+                     (payload.resource_type, name, version, platform_path, mount_path, tags, source_url, hf_endpoint, initial_status, actor["id"], ts, ts),
             ).fetchone()
             target = source_path_for_node(platform_path, node)
             audit(conn, actor["username"], f"request-{source}-download", f"shared-resource:{row['id']}",
-                  {"repo_id": ms_repo_id if source == "modelscope" else hf_repo_id})
-
-        # 在后端事件循环中启动后台下载任务（不阻塞请求）
-        if source == "modelscope":
-            asyncio.create_task(
-                run_queued_shared_resource_download(
-                    row["id"],
-                    lambda: backend_ms_download_and_sync(
-                        row["id"],
-                        ms_repo_id,
-                        ms_revision,
-                        ms_token,
-                        repo_type,
-                        node,
-                        target,
-                    ),
+                  {"repo_id": ms_repo_id if source == "modelscope" else hf_repo_id, "download_mode": download_mode})
+            manual_download: dict[str, Any] | None = None
+            if download_mode == "manual":
+                endpoint_prefix = f"HF_ENDPOINT={shlex.quote(hf_endpoint)} " if hf_endpoint else ""
+                dataset_arg = " --dataset" if repo_type == "dataset" else ""
+                manual_body = (
+                    "HFD_AUTH=()\n"
+                    "[ -n \"${HF_TOKEN:-}\" ] && HFD_AUTH=(--hf_username token-user --hf_token \"$HF_TOKEN\")\n"
+                    f"test \"$(cat /srv/resource-staging/.cluster-resource-id 2>/dev/null)\" = {row['id']} || "
+                    "{ echo '下载目录已被其他任务切换，请在平台重新打开当前任务'; exit 1; }\n"
+                    f"{endpoint_prefix}hfd {shlex.quote(hf_repo_id)}{dataset_arg} "
+                    f"--revision {shlex.quote(hf_revision)} --local-dir /srv/resource-staging \"${{HFD_AUTH[@]}}\""
                 )
-            )
-        else:
-            asyncio.create_task(
-                run_queued_shared_resource_download(
-                    row["id"],
-                    lambda: backend_hf_download_and_sync(
-                        row["id"],
-                        hf_repo_id,
-                        hf_revision,
-                        hf_token,
-                        hf_endpoint,
-                        repo_type,
-                        node,
-                        target,
-                    ),
+                manual_command = (
+                    "flock --wait 1209600 /run/lock/cluster-resource-download.lock "
+                    f"bash -lc {shlex.quote(manual_body)}"
                 )
-            )
-        return {"resource": public_shared_resource(row)}
+                container = conn.execute(
+                    "SELECT id FROM containers WHERE node_id=%s AND name='cluster-resource-downloader' ORDER BY id DESC LIMIT 1",
+                    (node["id"],),
+                ).fetchone()
+                container_id = int(container["id"]) if container else 0
+                task = enqueue_node_task(
+                    conn,
+                    node["id"],
+                    container_id or None,
+                    "prepare_shared_resource_download",
+                    {
+                        "resource_id": row["id"],
+                        "resource_type": row["resource_type"],
+                        "name": row["name"],
+                        "version": row["version"],
+                        "source": source,
+                        "repo_id": hf_repo_id,
+                        "revision": hf_revision,
+                        "repo_type": repo_type,
+                        "target_path": target,
+                        "staging_path": target,
+                        "hf_endpoint": hf_endpoint,
+                        "hf_download_engine": "hfd",
+                        "container_id": container_id,
+                        "manual_command": manual_command,
+                    },
+                )
+                progress = {
+                    "phase": "preparing_manual",
+                    "pct": 0,
+                    "task_id": task["id"],
+                    "node": node["hostname"],
+                    "container_id": container_id,
+                    "container_name": "cluster-resource-downloader",
+                    "container_path": "/srv/resource-staging",
+                    "target_path": target,
+                    "manual_command": manual_command,
+                }
+                conn.execute(
+                    "UPDATE shared_resources SET download_progress=%s,updated_at=%s WHERE id=%s",
+                    (Jsonb(progress), ts, row["id"]),
+                )
+                manual_download = {
+                    "container_id": container_id,
+                    "container_name": "cluster-resource-downloader",
+                    "node": node["hostname"],
+                    "container_path": "/srv/resource-staging",
+                    "target_path": target,
+                    "command": manual_command,
+                    "hf_endpoint": hf_endpoint,
+                }
+            elif source == "modelscope":
+                task = enqueue_shared_resource_download_task(
+                    conn, row, node, source, ms_repo_id, ms_revision, ms_token, repo_type, target
+                )
+            else:
+                task = enqueue_shared_resource_download_task(
+                    conn, row, node, source, hf_repo_id, hf_revision, hf_token, repo_type, target, hf_endpoint, hf_download_engine
+                )
+            audit(conn, "system", "task-created", f"node-task:{task['id']}",
+                  {"type": task["task_type"], "resource_id": row["id"], "node": node["hostname"]})
+            row = conn.execute("SELECT * FROM shared_resources WHERE id = %s", (row["id"],)).fetchone()
+        return {"resource": public_shared_resource(row), "task_id": task["id"], "manual_download": manual_download}
 
     @app.get("/api/data/shared-resources/{resource_id}/files")
     def shared_resource_files(resource_id: int, relative_path: str = ""):
@@ -2205,8 +2059,3 @@ def register_data_routes(app, deps: dict[str, Any]):
                 raise HTTPException(status_code=404, detail="共享资源不存在")
             conn.execute("DELETE FROM shared_resources WHERE id = %s", (resource_id,))
             audit(conn, actor["username"], "delete", f"shared-resource:{resource_id}", {"name": resource["name"], "version": resource["version"]})
-        # 清理该资源的后端暂存目录（断点续下缓存）
-        for _prefix in ("hf-", "ms-"):
-            _staging = os.path.join(HF_STAGING_DIR, f"{_prefix}{resource_id}")
-            if os.path.isdir(_staging):
-                shutil.rmtree(_staging, ignore_errors=True)

@@ -25,6 +25,12 @@ PLATFORM_SETTING_DEFAULTS = {
     "sso_default_group": "member",
     "platform_timezone": "Asia/Shanghai",
     "transfer_bandwidth_limit_mbps": "0",
+    "agent_metrics_interval_seconds": "2",
+    "agent_heartbeat_interval_seconds": "15",
+    "agent_container_interval_seconds": "15",
+    "agent_storage_interval_seconds": "60",
+    "agent_inventory_interval_seconds": "300",
+    "agent_task_poll_interval_seconds": "5",
     "webhook_enabled": "0",
     "webhook_url": "",
     "webhook_secret": "",
@@ -107,6 +113,15 @@ def get_platform_settings(conn) -> dict[str, Any]:
         "sso_default_group": sso_group if sso_group in GROUP_NAMES else "member",
         "platform_timezone": raw["platform_timezone"] or "Asia/Shanghai",
         "transfer_bandwidth_limit_mbps": max(0, int(raw["transfer_bandwidth_limit_mbps"] or "0")),
+        "agent_metrics_interval_seconds": max(1, int(raw["agent_metrics_interval_seconds"] or "2")),
+        "agent_heartbeat_interval_seconds": max(5, int(raw["agent_heartbeat_interval_seconds"] or "15")),
+        "agent_container_interval_seconds": max(5, int(raw["agent_container_interval_seconds"] or "15")),
+        "agent_storage_interval_seconds": max(30, int(raw["agent_storage_interval_seconds"] or "60")),
+        "agent_inventory_interval_seconds": max(60, int(raw["agent_inventory_interval_seconds"] or "300")),
+        "agent_task_poll_interval_seconds": max(1, int(raw["agent_task_poll_interval_seconds"] or "5")),
+        "webhook_enabled": setting_to_bool(raw["webhook_enabled"]),
+        "webhook_url": raw["webhook_url"],
+        "webhook_secret": raw["webhook_secret"],
         "sso_provider_enabled": setting_to_bool(raw["sso_provider_enabled"]),
         "sso_provider_type": raw["sso_provider_type"] if raw["sso_provider_type"] in SSO_PROVIDER_TYPES else "oidc",
         "sso_provider_name": raw["sso_provider_name"] or "casdoor",
@@ -122,6 +137,18 @@ def get_platform_settings(conn) -> dict[str, Any]:
         "sso_oidc_client_secret": raw["sso_oidc_client_secret"],
         "sso_oidc_scopes": raw["sso_oidc_scopes"] or "openid profile email",
         "sso_casdoor_admin_owner": raw["sso_casdoor_admin_owner"] or "built-in",
+    }
+
+
+def get_agent_collection_config(conn) -> dict[str, int]:
+    settings = get_platform_settings(conn)
+    return {
+        "metrics_interval_seconds": settings["agent_metrics_interval_seconds"],
+        "heartbeat_interval_seconds": settings["agent_heartbeat_interval_seconds"],
+        "container_interval_seconds": settings["agent_container_interval_seconds"],
+        "storage_interval_seconds": settings["agent_storage_interval_seconds"],
+        "inventory_interval_seconds": settings["agent_inventory_interval_seconds"],
+        "task_poll_interval_seconds": settings["agent_task_poll_interval_seconds"],
     }
 
 
@@ -141,6 +168,15 @@ def platform_settings_to_rows(settings: dict[str, Any]) -> dict[str, str]:
         "sso_default_group": settings["sso_default_group"] if settings["sso_default_group"] in GROUP_NAMES else "member",
         "platform_timezone": settings["platform_timezone"].strip() or "Asia/Shanghai",
         "transfer_bandwidth_limit_mbps": str(max(0, int(settings["transfer_bandwidth_limit_mbps"] or 0))),
+        "agent_metrics_interval_seconds": str(int(settings["agent_metrics_interval_seconds"])),
+        "agent_heartbeat_interval_seconds": str(int(settings["agent_heartbeat_interval_seconds"])),
+        "agent_container_interval_seconds": str(int(settings["agent_container_interval_seconds"])),
+        "agent_storage_interval_seconds": str(int(settings["agent_storage_interval_seconds"])),
+        "agent_inventory_interval_seconds": str(int(settings["agent_inventory_interval_seconds"])),
+        "agent_task_poll_interval_seconds": str(int(settings["agent_task_poll_interval_seconds"])),
+        "webhook_enabled": bool_to_setting(bool(settings["webhook_enabled"])),
+        "webhook_url": settings["webhook_url"].strip(),
+        "webhook_secret": settings["webhook_secret"].strip(),
         "sso_provider_enabled": bool_to_setting(bool(settings["sso_provider_enabled"])),
         "sso_provider_type": settings["sso_provider_type"] if settings["sso_provider_type"] in SSO_PROVIDER_TYPES else "oidc",
         "sso_provider_name": settings["sso_provider_name"].strip() or "casdoor",

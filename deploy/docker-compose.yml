@@ -33,13 +33,15 @@ services:
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-change-me-now}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
       AGENT_RELEASE_MAX_MB: ${AGENT_RELEASE_MAX_MB:-100}
-      # HuggingFace 下载代理（能访问 huggingface.co 的 HTTP 代理，格式: http://host:port）
+      HTTPX_TIMEOUT: ${HTTPX_TIMEOUT:-60.0}
+      # HuggingFace 下载代理（可选，格式: http://host:port 或 socks5://host:port）
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
       # 用于通过 Docker 编译 agent 二进制文件
       AGENT_SOURCE_HOST_PATH: ${AGENT_SOURCE_HOST_PATH:-/mnt/data/apps/server-vps/agent}
-      # Agent HTTP 文件 API 鉴权 token（设为与 CLUSTER_NODE_TOKEN 相同的值即可）
+      # Agent HTTP 文件 API 的集群共享 token（节点侧使用 CLUSTER_AGENT_FILES_TOKEN）
+      # 不要与每台节点独立的 CLUSTER_NODE_TOKEN 混用
       # 配置后后端会优先用 HTTP 调 agent 列目录（< 5ms），无需 SSH 冷启动
       NODE_AGENT_TOKEN: ${NODE_AGENT_TOKEN:-}
       NODE_AGENT_FILES_PORT: ${NODE_AGENT_FILES_PORT:-8082}
@@ -50,7 +52,6 @@ services:
       - "8080"
     volumes:
       - agent-releases:/var/lib/cluster-agent-releases
-      - hf-staging:/tmp/hf-staging
       - /var/run/docker.sock:/var/run/docker.sock
     privileged: true
     # 限制 backend 的 CPU 使用量，防止模型同步任务抢占 API 响应（0 = 不限制）
@@ -131,4 +132,3 @@ services:
 volumes:
   postgres-data:
   agent-releases:
-  hf-staging:
