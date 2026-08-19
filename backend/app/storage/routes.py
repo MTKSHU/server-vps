@@ -19,7 +19,6 @@ def register_storage_routes(app, deps: dict[str, Any]):
     db = deps["db"]
     mark_stale_nodes = deps["mark_stale_nodes"]
     public_storage_image_file = deps["public_storage_image_file"]
-    current_user = deps["current_user"]
     find_node_incus_image = deps["find_node_incus_image"]
     storage_image_base_name = deps["storage_image_base_name"]
     storage_root_for_node = deps["storage_root_for_node"]
