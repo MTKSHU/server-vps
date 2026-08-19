@@ -148,7 +148,9 @@ server-vps 不内置或反代 Casdoor。平台默认使用本地账号；如需�
 - [docs/deployment.md](docs/deployment.md)：管理节点部署、环境变量、升级和排障。
 - [docs/authentication.md](docs/authentication.md)：本地账号、可选平台自助注册、外部 OIDC/CAS SSO。
 - [docs/node-onboarding.md](docs/node-onboarding.md)：GPU/存储节点接入。
+- [docs/nvidia-docker-image.md](docs/nvidia-docker-image.md)：Ubuntu 24.04 NVIDIA Docker Incus 镜像的构建、分发和验收。
 - [docs/storage-user-data-sync.md](docs/storage-user-data-sync.md)：用户目录、公开资源、模型资源、节点缓存和同步。
+- [docs/nfs-home-rollout.md](docs/nfs-home-rollout.md)：NFS 持久 Home 上线。
 - [docs/architecture.md](docs/architecture.md)：当前架构和模块边界。
 
 ## 开发

@@ -8,7 +8,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from ..auth import authenticate_token, is_admin_user, websocket_token
 from psycopg.types.json import Jsonb
 from ..schemas import AgentMetricsInput, AgentTaskClaim, AgentTaskProgress, AgentTaskResult, NodeRegistration
-from ..platform_settings import get_agent_collection_config
+from ..platform_settings import get_agent_collection_config, get_platform_settings
 from ..agent.tasks import signal_node_task_done
 
 
@@ -125,6 +125,88 @@ def register_agent_routes(app, deps: dict[str, Any]):
                 return True
         return False
 
+    def expire_stalled_container_sync_tasks(conn, node_id: int, ts: int) -> None:
+        """Fail container_data_sync tasks that stopped sending lease heartbeats.
+
+        container_data_sync should periodically call /progress while rsync is running.
+        If claimed_at remains stale for too long, the execution chain is likely wedged.
+        """
+        stale_before = ts - 900
+        stale_tasks = conn.execute(
+            """
+            SELECT *
+            FROM node_tasks
+            WHERE node_id = %s
+              AND task_type = 'container_data_sync'
+              AND status = 'claimed'
+              AND claimed_at > 0
+              AND claimed_at < %s
+            FOR UPDATE SKIP LOCKED
+            """,
+            (node_id, stale_before),
+        ).fetchall()
+        for stale in stale_tasks:
+            error = "container_data_sync stalled: progress heartbeat timeout (>900s); mark failed for safe retry"
+            conn.execute(
+                """
+                UPDATE node_tasks
+                SET status = 'failed',
+                    last_error = %s,
+                    finished_at = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (error, ts, ts, stale["id"]),
+            )
+            sync_task = None
+            if stale["data_sync_task_id"]:
+                sync_task = conn.execute(
+                    "SELECT * FROM data_sync_tasks WHERE id = %s FOR UPDATE",
+                    (stale["data_sync_task_id"],),
+                ).fetchone()
+                if sync_task and sync_task["status"] in ("planned", "running", "verifying", "retrying"):
+                    conn.execute(
+                        """
+                        UPDATE data_sync_tasks
+                        SET status = 'failed',
+                            detail = detail || %s,
+                            finished_at = %s,
+                            updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            Jsonb({
+                                "error": error,
+                                "status": "stalled-timeout",
+                                "node_task_id": stale["id"],
+                            }),
+                            ts,
+                            ts,
+                            stale["data_sync_task_id"],
+                        ),
+                    )
+                if sync_task and sync_task["task_type"] == "shared_resource_upload" and sync_task["resource_id"]:
+                    conn.execute(
+                        """
+                        UPDATE shared_resources
+                        SET request_status = 'failed',
+                            check_status = 'failed',
+                            check_error = %s,
+                            updated_at = %s
+                        WHERE id = %s
+                          AND request_status IN ('uploading', 'finalizing', 'checking')
+                        """,
+                        (error, ts, sync_task["resource_id"]),
+                    )
+            cleanup_container_sync_key(conn, stale)
+            audit(
+                conn,
+                "system",
+                "expire-stalled-container-sync",
+                f"node-task:{stale['id']}",
+                {"node_id": node_id, "data_sync_task_id": stale.get("data_sync_task_id")},
+            )
+
     @app.post("/api/nodes/register", status_code=201)
     def register_node(payload: NodeRegistration):
         with db() as conn:
@@ -140,6 +222,7 @@ def register_agent_routes(app, deps: dict[str, Any]):
                 raise HTTPException(status_code=404, detail="节点不存在")
             payload.hostname = existing["hostname"]
             node = upsert_node(conn, payload)
+            expire_stalled_container_sync_tasks(conn, node["id"], now_ts())
             node["agent_config"] = get_agent_collection_config(conn)
             return node
 
@@ -157,7 +240,10 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     memory_used_gb = %s,
                     load_avg = %s,
                     swap_total_gb = %s,
-                    swap_used_gb = %s
+                    swap_used_gb = %s,
+                    network_interface = %s,
+                    network_rx_bytes_per_sec = %s,
+                    network_tx_bytes_per_sec = %s
                 WHERE id = %s
                 """,
                 (
@@ -169,6 +255,9 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     payload.load_avg,
                     max(0, payload.swap_total_gb),
                     max(0, payload.swap_used_gb),
+                    payload.network_interface.strip()[:64],
+                    max(0, payload.network_rx_bytes_per_sec),
+                    max(0, payload.network_tx_bytes_per_sec),
                     node["id"],
                 ),
             )
@@ -513,6 +602,18 @@ def register_agent_routes(app, deps: dict[str, Any]):
                         "UPDATE containers SET access_status = 'ready', access_error = '', updated_at = %s WHERE id = %s",
                         (ts, task["container_id"]),
                     )
+                if task["task_type"] == "migrate_container_home" and task["container_id"]:
+                    migration_payload = task["payload"] if isinstance(task["payload"], dict) else {}
+                    managed_mount = migration_payload.get("managed_mount") or {}
+                    container_row = conn.execute("SELECT managed_mounts,mounts FROM containers WHERE id=%s", (task["container_id"],)).fetchone()
+                    if container_row and managed_mount:
+                        managed = [item for item in (container_row.get("managed_mounts") or []) if item.get("kind") != "user_home"]
+                        managed.append(managed_mount)
+                        legacy = [item for item in (container_row.get("mounts") or []) if f":{managed_mount.get('target')}" not in item]
+                        suffix = ":ro" if managed_mount.get("readonly") else ":rw"
+                        legacy.append(f"{managed_mount.get('source')}:{managed_mount.get('target')}{suffix}")
+                        conn.execute("UPDATE containers SET managed_mounts=%s,mounts=%s,updated_at=%s WHERE id=%s",
+                                     (Jsonb(managed), Jsonb(legacy), ts, task["container_id"]))
                 if task["task_type"] == "incus_sync_ports" and task["container_id"] and task_payload_has_ssh_port(task):
                     conn.execute(
                         "UPDATE containers SET access_status = 'ready', access_error = '', updated_at = %s WHERE id = %s",
@@ -536,6 +637,21 @@ def register_agent_routes(app, deps: dict[str, Any]):
                         (ts, task["container_id"]),
                     )
                 if task["task_type"] == "incus_delete_container" and task["container_id"]:
+                    deleted_container = conn.execute(
+                        "SELECT owner_id,node_id FROM containers WHERE id=%s", (task["container_id"],)
+                    ).fetchone()
+                    if deleted_container:
+                        other_count = conn.execute(
+                            "SELECT COUNT(*) AS count FROM containers WHERE owner_id=%s AND node_id=%s AND id<>%s AND status!='deleting'",
+                            (deleted_container["owner_id"], deleted_container["node_id"], task["container_id"]),
+                        ).fetchone()["count"]
+                        if other_count == 0:
+                            retention = int(get_platform_settings(conn)["workspace_retention_days"])
+                            conn.execute(
+                                "UPDATE user_workspace_volumes SET cleanup_after=%s,last_used_at=%s,updated_at=%s "
+                                "WHERE user_id=%s AND node_id=%s AND lifecycle='temporary'",
+                                (ts + retention * 86400, ts, ts, deleted_container["owner_id"], deleted_container["node_id"]),
+                            )
                     conn.execute("UPDATE node_tasks SET container_id = NULL WHERE id = %s", (task_id,))
                     conn.execute("DELETE FROM containers WHERE id = %s", (task["container_id"],))
                 if task["task_type"] == "download_shared_resource":
@@ -543,12 +659,16 @@ def register_agent_routes(app, deps: dict[str, Any]):
                     resource_id = int(task_payload.get("resource_id") or 0)
                     target_path = str(task_payload.get("target_path") or "")
                     if resource_id:
+                        selected_source = ""
+                        if task_payload.get("source") == "priority":
+                            selected_source = "modelscope" if "[ok] downloaded from ModelScope" in payload.output else "huggingface"
                         progress = {
                             "phase": "done",
                             "pct": 100,
                             "current_file": "",
                             "task_id": task_id,
                             "node": node["hostname"],
+                            "selected_source": selected_source,
                         }
                         conn.execute(
                             """
@@ -568,6 +688,11 @@ def register_agent_routes(app, deps: dict[str, Any]):
                             for key in ("source", "repo_id", "revision", "token", "repo_type", "hf_endpoint"):
                                 if task_payload.get(key):
                                     verify_payload[key] = task_payload[key]
+                            if task_payload.get("source") == "priority":
+                                # 优先链路无论命中哪个镜像，最终以公开 HF 仓库清单做完整性校验。
+                                verify_payload["source"] = "huggingface"
+                                verify_payload["repo_id"] = task_payload.get("fallback_repo_id") or task_payload.get("repo_id")
+                                verify_payload["revision"] = task_payload.get("fallback_revision") or "main"
                             verify_task = enqueue_node_task(
                                 conn,
                                 task["node_id"],
@@ -849,6 +974,9 @@ def register_agent_routes(app, deps: dict[str, Any]):
                             SET dataset_name = %s,
                                 mountpoint = %s,
                                 quota_gb = %s,
+                                nfs_share_id = %s,
+                                nfs_export_path = %s,
+                                nfs_share_status = %s,
                                 status = 'applied',
                                 last_error = '',
                                 applied_at = %s,
@@ -859,6 +987,9 @@ def register_agent_routes(app, deps: dict[str, Any]):
                                 str(result_detail.get("dataset_name") or task_payload.get("dataset_name") or ""),
                                 str(result_detail.get("mountpoint") or task_payload.get("mountpoint") or ""),
                                 int(result_detail.get("quota_gb") or task_payload.get("quota_gb") or 0),
+                                int(result_detail.get("nfs_share_id") or 0),
+                                str(result_detail.get("nfs_export_path") or result_detail.get("mountpoint") or task_payload.get("mountpoint") or ""),
+                                str(result_detail.get("nfs_share_status") or "manual"),
                                 ts,
                                 ts,
                                 user_id,
@@ -1182,6 +1313,45 @@ def register_agent_routes(app, deps: dict[str, Any]):
                         and sync_task["detail"].get("direction") == "container_to_storage"
                     ):
                         conn.execute("DELETE FROM user_directory_scans WHERE user_id = %s", (sync_task["user_id"],))
+                    if (
+                        sync_task
+                        and sync_task["task_type"] == "shared_resource_upload"
+                        and sync_task["resource_id"]
+                        and task["task_type"] != "verify_data_sync"
+                    ):
+                        resource_id = sync_task["resource_id"]
+                        resource = conn.execute("SELECT * FROM shared_resources WHERE id = %s", (resource_id,)).fetchone()
+                        final_local_path = str(sync_task["detail"].get("final_local_path") or "")
+                        final_platform_path = str(sync_task["detail"].get("final_platform_path") or "")
+                        if resource and final_local_path and final_platform_path:
+                            migrate_task = enqueue_node_task(
+                                conn,
+                                sync_task["target_node_id"],
+                                None,
+                                "migrate_shared_resource_path",
+                                {
+                                    "resource_id": resource_id,
+                                    "resource_type": resource["resource_type"],
+                                    "name": resource["name"],
+                                    "version": resource["version"],
+                                    "old_path": sync_task["target_path"],
+                                    "new_path": final_local_path,
+                                    "old_source_path": resource["source_path"],
+                                    "new_source_path": final_platform_path,
+                                    "create_symlink": False,
+                                },
+                            )
+                            conn.execute(
+                                "UPDATE shared_resources SET request_status = 'finalizing', updated_at = %s WHERE id = %s",
+                                (ts, resource_id),
+                            )
+                            audit(
+                                conn,
+                                "system",
+                                "finalize-upload",
+                                f"shared-resource:{resource_id}",
+                                {"node": sync_task["target_node_id"], "task_id": migrate_task["id"]},
+                            )
                 cleanup_container_sync_key(conn, task)
                 audit(conn, "node-agent", "task-succeeded", f"node-task:{task_id}", {"type": task["task_type"]})
             else:

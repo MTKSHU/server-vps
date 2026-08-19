@@ -38,10 +38,13 @@ import {
   getSharedResources,
   getContainerSyncRules,
   getContainerSyncTasks,
+  mountContainerPublicResources,
+  unmountContainerPublicResources,
   syncContainerNodeCache,
   runContainerSync,
   runContainerSyncRule,
   saveContainerSyncRule,
+  uploadContainerAsResource,
   updateContainerPort,
   updateContainerResources,
   publishContainerImage,
@@ -174,6 +177,17 @@ const syncUploadForm = reactive({
   container_path: "/workspace",
   storage_relative_path: "",
   conflict_policy: "overwrite" as "overwrite" | "skip",
+});
+const resourceUploadForm = reactive({
+  resource_type: "dataset" as "dataset" | "huggingface_model" | "pytorch_model",
+  name: "",
+  version: "",
+  tags: [] as string[],
+  container_path: "/workspace",
+  conflict_policy: "overwrite" as "overwrite" | "skip",
+  source: "" as "" | "huggingface" | "modelscope",
+  repo_id: "",
+  revision: "",
 });
 const syncRuleForm = reactive({
   name: "定时上传",
@@ -421,6 +435,14 @@ function conflictPolicyLabel(value: string) {
   return value === "skip" ? t("containers.skipExisting") : t("containers.overwrite");
 }
 
+function publicResourceMounts(row: Container | null) {
+  return (row?.managed_mounts || []).filter((mount) => mount.kind === "shared_resource" || mount.kind === "node_cache");
+}
+
+function mountSourceLabel(kind: string) {
+  return kind === "node_cache" ? "节点本地缓存" : kind === "shared_resource" ? "NFS 共享存储" : kind;
+}
+
 function columnLabel(column: { key: string; label: string }) {
   const keyMap: Record<string, string> = {
     owner: "containers.owner",
@@ -481,8 +503,8 @@ function syncProgressText(row: DataSyncTask): string {
   return parts.join("  ");
 }
 
-const cachedDatasets = computed(() => publicResources.value.filter((item) => item.resource_type === "dataset" && item.enabled));
-const cachedModels = computed(() => publicResources.value.filter((item) => item.resource_type !== "dataset" && item.enabled));
+const cachedDatasets = computed(() => publicResources.value.filter((item) => item.resource_type === "dataset" && item.enabled && item.request_status === "ready"));
+const cachedModels = computed(() => publicResources.value.filter((item) => item.resource_type !== "dataset" && item.enabled && item.request_status === "ready"));
 
 async function openSyncDialog(row: Container) {
   selectedContainer.value = row;
@@ -570,6 +592,46 @@ async function submitNodeCacheMount(resourceIds: number[]) {
   }
 }
 
+async function submitPublicResourceMount(resourceIds: number[]) {
+  if (!selectedContainer.value) return;
+  if (!resourceIds.length) {
+    ElMessage.warning("请先选择至少一个公开资源");
+    return;
+  }
+  const containerId = selectedContainer.value.id;
+  syncSubmitting.value = true;
+  try {
+    await mountContainerPublicResources(containerId, resourceIds);
+    ElMessage.success("公开资源热挂载任务已提交；本地缓存就绪时优先使用缓存，否则使用只读 NFS");
+    await load(false);
+    selectedContainer.value = containers.value.find((item) => item.id === containerId) || selectedContainer.value;
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "公开资源挂载失败");
+  } finally {
+    syncSubmitting.value = false;
+  }
+}
+
+async function removePublicResourceMount(mountPath: string) {
+  if (!selectedContainer.value) return;
+  const path = (mountPath || "").trim();
+  if (!path) return;
+  await ElMessageBox.confirm(`确认移除挂载 ${path}？`, "移除公开资源挂载", { type: "warning" });
+  const containerId = selectedContainer.value.id;
+  syncSubmitting.value = true;
+  try {
+    await unmountContainerPublicResources(containerId, [path]);
+    ElMessage.success("已提交移除挂载任务");
+    await load(false);
+    selectedContainer.value = containers.value.find((item) => item.id === containerId) || selectedContainer.value;
+    await refreshSyncData();
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : "移除挂载失败");
+  } finally {
+    syncSubmitting.value = false;
+  }
+}
+
 async function submitUploadSync() {
   if (!selectedContainer.value) return;
   syncSubmitting.value = true;
@@ -582,6 +644,35 @@ async function submitUploadSync() {
       conflict_policy: syncUploadForm.conflict_policy,
     });
     ElMessage.success("上传同步任务已提交");
+    await refreshSyncData();
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "提交失败");
+  } finally {
+    syncSubmitting.value = false;
+  }
+}
+
+async function submitResourceUpload() {
+  if (!selectedContainer.value) return;
+  if (!resourceUploadForm.name.trim()) {
+    ElMessage.warning("请填写本地集合名称");
+    return;
+  }
+  syncSubmitting.value = true;
+  try {
+    await uploadContainerAsResource(selectedContainer.value.id, {
+      resource_type: resourceUploadForm.resource_type,
+      name: resourceUploadForm.name,
+      version: resourceUploadForm.version || "default",
+      tags: resourceUploadForm.tags,
+      container_path: resourceUploadForm.container_path,
+      conflict_policy: resourceUploadForm.conflict_policy,
+      source: resourceUploadForm.source,
+      repo_id: resourceUploadForm.repo_id,
+      revision: resourceUploadForm.revision,
+    });
+    ElMessage.success("已开始从容器拉取数据，完成后将自动归档为公开资源并校验，可在下方“任务记录”中查看进度");
+    Object.assign(resourceUploadForm, { name: "", version: "", tags: [], source: "", repo_id: "", revision: "" });
     await refreshSyncData();
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "提交失败");
@@ -994,8 +1085,29 @@ onBeforeUnmount(() => {
     </template>
   </el-dialog>
 
-	  <el-dialog v-model="syncDialogVisible" :title="t('containers.syncSettings', { name: selectedContainer?.name || '' })" width="920px">
+	  <el-dialog v-model="syncDialogVisible" class="sync-settings-dialog" :title="t('containers.syncSettings', { name: selectedContainer?.name || '' })" width="920px">
 	    <div v-loading="syncLoading">
+        <el-table v-if="publicResourceMounts(selectedContainer).length" :data="publicResourceMounts(selectedContainer)" size="small" style="margin-bottom:16px">
+          <el-table-column label="当前公开资源挂载" prop="target" min-width="300" />
+          <el-table-column label="实际来源" width="150">
+            <template #default="{ row }"><el-tag :type="row.kind === 'node_cache' ? 'success' : 'warning'">{{ mountSourceLabel(row.kind) }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="权限" width="100">
+            <template #default="{ row }">{{ row.readonly ? '只读' : '读写' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="130" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                size="small"
+                type="danger"
+                :icon="Delete"
+                :loading="syncSubmitting"
+                @click="removePublicResourceMount(row.target)"
+              >移除挂载</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-alert v-else title="当前容器没有新格式的公开资源挂载记录；legacy 挂载无法从平台记录可靠判断来源。" type="info" :closable="false" style="margin-bottom:16px" />
         <el-tabs>
           <el-tab-pane :label="t('containers.downloadToContainer')">
             <el-form :model="syncDownloadForm" label-position="top" class="sync-form">
@@ -1014,7 +1126,7 @@ onBeforeUnmount(() => {
                   <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
                 </el-radio-group>
               </el-form-item>
-              <el-button type="primary" :icon="Download" :loading="syncSubmitting" @click="submitDownloadSync">{{ t("containers.runDownload") }}</el-button>
+              <el-button data-keep-label="true" type="primary" :icon="Download" :loading="syncSubmitting" @click="submitDownloadSync">{{ t("containers.runDownload") }}</el-button>
             </el-form>
           </el-tab-pane>
           <el-tab-pane :label="t('containers.localPublicDatasetMount')">
@@ -1030,7 +1142,10 @@ onBeforeUnmount(() => {
                 </el-select>
                   <small class="field-hint">{{ t('containers.syncToCurrentNodeHint', { node: selectedContainer?.node || '-' }) }}</small>
               </el-form-item>
-                <el-button type="primary" :icon="RefreshRight" :loading="syncSubmitting" @click="submitNodeCacheMount(selectedNodeCacheDatasetIds)">{{ t("containers.syncSelectedResources") }}</el-button>
+                <div class="sync-action-row">
+                  <el-button data-keep-label="true" type="primary" :icon="Connection" :loading="syncSubmitting" @click="submitPublicResourceMount(selectedNodeCacheDatasetIds)">直接只读挂载（缓存优先/NFS）</el-button>
+                  <el-button data-keep-label="true" :icon="RefreshRight" :loading="syncSubmitting" @click="submitNodeCacheMount(selectedNodeCacheDatasetIds)">同步到节点本地缓存</el-button>
+                </div>
             </el-form>
           </el-tab-pane>
           <el-tab-pane :label="t('containers.localPublicModelMount')">
@@ -1046,7 +1161,10 @@ onBeforeUnmount(() => {
                 </el-select>
                   <small class="field-hint">{{ t('containers.syncToCurrentNodeHint', { node: selectedContainer?.node || '-' }) }}</small>
               </el-form-item>
-                <el-button type="primary" :icon="RefreshRight" :loading="syncSubmitting" @click="submitNodeCacheMount(selectedNodeCacheModelIds)">{{ t("containers.syncSelectedResources") }}</el-button>
+                <div class="sync-action-row">
+                  <el-button data-keep-label="true" type="primary" :icon="Connection" :loading="syncSubmitting" @click="submitPublicResourceMount(selectedNodeCacheModelIds)">直接只读挂载（缓存优先/NFS）</el-button>
+                  <el-button data-keep-label="true" :icon="RefreshRight" :loading="syncSubmitting" @click="submitNodeCacheMount(selectedNodeCacheModelIds)">同步到节点本地缓存</el-button>
+                </div>
             </el-form>
           </el-tab-pane>
 	        <el-tab-pane :label="t('containers.uploadToMyFiles')">
@@ -1066,7 +1184,53 @@ onBeforeUnmount(() => {
 	                <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
 	              </el-radio-group>
 	            </el-form-item>
-	            <el-button type="primary" :icon="Upload" :loading="syncSubmitting" @click="submitUploadSync">{{ t("containers.runUpload") }}</el-button>
+	            <el-button data-keep-label="true" type="primary" :icon="Upload" :loading="syncSubmitting" @click="submitUploadSync">{{ t("containers.runUpload") }}</el-button>
+	          </el-form>
+	        </el-tab-pane>
+	        <el-tab-pane label="上传为公开数据集/模型">
+	          <el-alert
+	            type="info"
+	            :closable="false"
+	            title="先在本容器内下载/准备好数据，再在此登记名称与来源。平台会从容器拉取数据到存储节点，完成后自动归档并校验（若填写来源仓库 ID，会额外核对目录结构、文件数量与哈希）。"
+	            style="margin-bottom:12px"
+	          />
+	          <el-form :model="resourceUploadForm" label-position="top" class="sync-form">
+	            <el-form-item label="容器内数据路径">
+	              <el-input v-model="resourceUploadForm.container_path" placeholder="/workspace/my-dataset" />
+	            </el-form-item>
+	            <el-form-item label="资源类型">
+	              <el-radio-group v-model="resourceUploadForm.resource_type">
+	                <el-radio-button value="dataset">数据集</el-radio-button>
+	                <el-radio-button value="huggingface_model">模型</el-radio-button>
+	              </el-radio-group>
+	            </el-form-item>
+	            <el-form-item label="本地集合名称">
+	              <el-input v-model="resourceUploadForm.name" placeholder="小写字母/数字/连字符" />
+	            </el-form-item>
+	            <el-form-item label="提供者">
+	              <el-input v-model="resourceUploadForm.version" placeholder="例如自己的用户名或团队名（默认 default）" />
+	            </el-form-item>
+	            <el-form-item label="标签">
+	              <el-select v-model="resourceUploadForm.tags" multiple filterable allow-create style="width:100%" placeholder="选择或输入标签" />
+	            </el-form-item>
+	            <el-form-item label="冲突处理">
+	              <el-radio-group v-model="resourceUploadForm.conflict_policy">
+	                <el-radio value="overwrite">{{ t("containers.overwrite") }}</el-radio>
+	                <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
+	              </el-radio-group>
+	            </el-form-item>
+	            <el-form-item label="来源核验（可选）">
+	              <el-radio-group v-model="resourceUploadForm.source">
+	                <el-radio-button value="">自定义数据（不核验来源）</el-radio-button>
+	                <el-radio-button value="huggingface">HuggingFace 仓库</el-radio-button>
+	                <el-radio-button value="modelscope">ModelScope 仓库</el-radio-button>
+	              </el-radio-group>
+	            </el-form-item>
+	            <template v-if="resourceUploadForm.source">
+	              <el-form-item label="仓库 ID"><el-input v-model="resourceUploadForm.repo_id" placeholder="例如 owner/repo-name" /></el-form-item>
+	              <el-form-item label="Revision"><el-input v-model="resourceUploadForm.revision" placeholder="默认 main / master" /></el-form-item>
+	            </template>
+	            <el-button data-keep-label="true" type="primary" :icon="Upload" :loading="syncSubmitting" @click="submitResourceUpload">开始上传并注册</el-button>
 	          </el-form>
 	        </el-tab-pane>
 	        <el-tab-pane :label="t('containers.scheduledUpload')">
@@ -1100,7 +1264,7 @@ onBeforeUnmount(() => {
                 <el-radio value="skip">{{ t("containers.skipExisting") }}</el-radio>
               </el-radio-group>
             </el-form-item>
-            <el-button type="primary" :icon="Select" @click="submitSyncRule">{{ t("containers.saveRule") }}</el-button>
+            <el-button data-keep-label="true" type="primary" :icon="Select" @click="submitSyncRule">{{ t("containers.saveRule") }}</el-button>
 	          </el-form>
           <el-table :data="syncRules" stripe style="margin-top:16px">
             <el-table-column prop="name" :label="t('containers.name')" min-width="140" />
@@ -1109,10 +1273,12 @@ onBeforeUnmount(() => {
             <el-table-column :label="t('containers.conflictPolicy')" width="120"><template #default="{ row }">{{ conflictPolicyLabel(row.conflict_policy) }}</template></el-table-column>
             <el-table-column :label="t('containers.time')" width="150"><template #default="{ row }">{{ scheduleLabel(row) }}</template></el-table-column>
             <el-table-column :label="t('containers.status')" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? t("containers.enabled") : t("containers.disabled") }}</el-tag></template></el-table-column>
-            <el-table-column :label="t('containers.actions')" width="160" fixed="right">
+            <el-table-column :label="t('containers.actions')" width="210" fixed="right">
 	              <template #default="{ row }">
-	                <el-button size="small" :icon="Position" @click="runRule(row)">{{ t("containers.runNow") }}</el-button>
-	                <el-button size="small" type="danger" :icon="Delete" @click="removeRule(row)">{{ t("containers.delete") }}</el-button>
+	                <div class="sync-table-actions">
+	                  <el-button size="small" :icon="Position" @click="runRule(row)">{{ t("containers.runNow") }}</el-button>
+	                  <el-button size="small" type="danger" :icon="Delete" @click="removeRule(row)">{{ t("containers.delete") }}</el-button>
+	                </div>
 	              </template>
 	            </el-table-column>
 	          </el-table>
@@ -1220,6 +1386,28 @@ onBeforeUnmount(() => {
 
 .sync-form {
   max-width: 640px;
+}
+
+.sync-action-row,
+.sync-table-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sync-action-row :deep(.el-button),
+.sync-table-actions :deep(.el-button) {
+  width: auto;
+  min-width: max-content;
+  margin-left: 0;
+}
+
+:deep(.sync-settings-dialog .el-button > span) {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .path-picker-row {

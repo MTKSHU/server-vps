@@ -52,7 +52,7 @@ const storageQuotaGb = ref(0);
 const activeTab = ref(typeof route.query.tab === "string" ? route.query.tab : "files");
 const requestVisible = ref(false);
 const requesting = ref(false);
-const requestForm = reactive({ resource_type: "dataset" as SharedResource["resource_type"], name: "", version: "default", tags: [] as string[], source: "modelscope" as "huggingface" | "modelscope", download_mode: "automatic" as "automatic" | "manual", hf_repo_id: "", hf_revision: "main", hf_token: "", hf_endpoint: "", ms_repo_id: "", ms_revision: "master", ms_token: "" });
+const requestForm = reactive({ resource_type: "dataset" as SharedResource["resource_type"], name: "", version: "default", tags: [] as string[], source: "priority" as "priority" | "huggingface" | "modelscope", download_mode: "automatic" as "automatic" | "manual", hf_repo_id: "", hf_revision: "main", hf_token: "", hf_endpoint: "", ms_repo_id: "", ms_revision: "master", ms_token: "", priority_ms_repo_id: "", priority_hf_repo_id: "" });
 const manualGuideVisible = ref(false);
 const manualGuide = ref<ManualResourceDownload | null>(null);
 const manualResourceID = ref(0);
@@ -91,12 +91,19 @@ const manualTargetPreview = computed(() => {
   return `${base.replace(/\/$/, "")}/${requestForm.version || "default"}/${requestForm.name || "resource"}`;
 });
 watch(() => requestForm.source, (source) => {
-  if (source === "modelscope") requestForm.download_mode = "automatic";
+  if (source !== "huggingface") requestForm.download_mode = "automatic";
 });
-watch(() => requestForm.hf_repo_id, (repoID) => {
-  const [provider, name] = repoID.trim().split("/");
-  if (provider && (!requestForm.version || requestForm.version === "default")) requestForm.version = provider;
-  if (name && !requestForm.name) requestForm.name = name;
+function syncRepositoryMetadata(repoID: string) {
+  const [provider, name, extra] = repoID.trim().split("/");
+  if (!provider || !name || extra !== undefined) return;
+  requestForm.version = provider;
+  requestForm.name = name;
+}
+watch(() => requestForm.hf_repo_id, syncRepositoryMetadata);
+watch(() => requestForm.ms_repo_id, syncRepositoryMetadata);
+watch(() => requestForm.priority_ms_repo_id, (repoID) => {
+  syncRepositoryMetadata(repoID);
+  if (!requestForm.priority_hf_repo_id) requestForm.priority_hf_repo_id = repoID;
 });
 
 // 搜索/筛选状态
@@ -217,6 +224,8 @@ function gbValue(value: number): string {
   return value >= 100 ? `${Math.round(value)} GB` : `${value.toFixed(1)} GB`;
 }
 function sourceLabel(row: SharedResource) {
+  if (row.download_progress?.selected_source === "modelscope") return "ModelScope（自动优选）";
+  if (row.download_progress?.selected_source === "huggingface") return "HuggingFace 镜像（自动回退）";
   const url = row.source_url || "";
   if (url.startsWith("ms://")) return "ModelScope";
   if (url.startsWith("hf://")) return "HuggingFace";
@@ -512,7 +521,7 @@ async function submitRequest() {
     } else {
       ElMessage.success("已在后台开始下载，稍后刷新查看状态");
     }
-    Object.assign(requestForm, { name: "", version: "default", tags: [], download_mode: "automatic", hf_repo_id: "", hf_revision: "main", hf_token: "", hf_endpoint: settingsForm.hf_endpoint_enabled ? settingsForm.hf_endpoint : "", ms_repo_id: "", ms_revision: "master", ms_token: "" });
+    Object.assign(requestForm, { name: "", version: "default", tags: [], source: "priority", download_mode: "automatic", hf_repo_id: "", hf_revision: "main", hf_token: "", hf_endpoint: settingsForm.hf_endpoint_enabled ? settingsForm.hf_endpoint : "", ms_repo_id: "", ms_revision: "master", ms_token: "", priority_ms_repo_id: "", priority_hf_repo_id: "" });
     await load();
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : "提交失败，请重试");
@@ -963,8 +972,13 @@ function storageStatusType(status: string | undefined): string {
   if (status === 'warning') return 'warning';
   return 'info';
 }
-function checkStatusLabel(row: { request_status?: string; check_status?: string }): string {
-  if (row.request_status === 'failed') return t("storage.downloadFailed");
+function checkStatusLabel(row: { request_status?: string; check_status?: string; download_progress?: { phase?: string } }): string {
+  if (row.request_status === 'failed') {
+    const phase = row.download_progress?.phase || '';
+    // 仅下载阶段报错时显示“下载失败”；校验失败保持通用失败文案，避免误导。
+    if (phase === 'error' || phase === 'downloading' || phase === 'uploading') return t("storage.downloadFailed");
+    return t("status.failed");
+  }
   if (row.request_status === 'preparing_manual_download') return "正在准备下载容器";
   if (row.request_status === 'awaiting_manual_download') return "等待手动下载";
   const map: Record<string, string> = { ok: 'status.ready', failed: 'status.failed', unknown: 'nodes.unknown', checking: 'status.verifying' };
@@ -1429,11 +1443,19 @@ function checkStatusType(row: { request_status?: string; check_status?: string }
         </el-form-item>
         <el-form-item label="下载源">
           <el-radio-group v-model="requestForm.source">
+            <el-radio value="priority">自动优选（ModelScope → HF 镜像）</el-radio>
             <el-radio value="modelscope">ModelScope（推荐，国内可直连）</el-radio>
             <el-radio value="huggingface">HuggingFace（可用镜像或代理）</el-radio>
           </el-radio-group>
         </el-form-item>
-        <template v-if="requestForm.source === 'modelscope'">
+        <template v-if="requestForm.source === 'priority'">
+          <el-alert type="success" :closable="false" title="仅支持公开仓库。平台先尝试 ModelScope，失败后自动切换到 Hugging Face 镜像；不会使用系统代理。" style="margin-bottom:12px"/>
+          <el-form-item label="ModelScope 仓库 ID"><el-input v-model="requestForm.priority_ms_repo_id" placeholder="例如 Qwen/Qwen3-8B"/></el-form-item>
+          <el-form-item label="Hugging Face 仓库 ID"><el-input v-model="requestForm.priority_hf_repo_id" placeholder="通常与上方相同，也可单独填写"/></el-form-item>
+          <el-form-item label="ModelScope Revision"><el-input v-model="requestForm.ms_revision" placeholder="默认 master"/></el-form-item>
+          <el-form-item label="Hugging Face Revision"><el-input v-model="requestForm.hf_revision" placeholder="默认 main"/></el-form-item>
+        </template>
+        <template v-else-if="requestForm.source === 'modelscope'">
           <el-alert type="success" :closable="false" title="ModelScope（魔搭）在国内可直连，无需代理。仓库 ID 格式同 HuggingFace，如 AI-ModelScope/bert-base-uncased。" style="margin-bottom:12px"/>
           <el-form-item label="ModelScope 仓库 ID"><el-input v-model="requestForm.ms_repo_id" placeholder="例如 AI-ModelScope/bert-base-uncased"/></el-form-item>
           <el-form-item label="Revision（分支/Tag）"><el-input v-model="requestForm.ms_revision" placeholder="默认 master"/></el-form-item>

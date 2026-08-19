@@ -6,6 +6,7 @@ import re
 from fastapi import HTTPException
 
 from ..config import AGENT_RELEASE_DIR, SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER
+from ..platform_settings import get_platform_settings
 
 
 def _read_sync_private_key() -> str:
@@ -296,6 +297,8 @@ def ensure_user_zfs_dataset_task(
         )
         return None
     mountpoint = source_path_for_node(row["home_path"], node)
+    platform_settings = get_platform_settings(conn)
+    shared_owner = int(platform_settings["nfs_idmap_base"]) + 1000
     conn.execute(
         """
         INSERT INTO user_storage_datasets (
@@ -324,10 +327,14 @@ def ensure_user_zfs_dataset_task(
             "mountpoint": mountpoint,
             "quota_gb": int(row["storage_quota_gb"] or 0),
             "dataset_name": "",
-            "uid": 0,
-            "gid": 0,
-            "mode": "0750",
+            "uid": shared_owner,
+            "gid": shared_owner,
+            "mode": "0700",
             "reason": reason,
+            "sentinel": platform_settings["nfs_sentinel"],
+            "sentinel_signature": platform_settings["nfs_sentinel_signature"],
+            "ensure_nfs_share": platform_settings["truenas_nfs_auto_share"],
+            "nfs_share_template_path": platform_settings["nfs_users_export"],
         },
     )
 

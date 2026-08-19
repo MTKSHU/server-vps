@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from .auth import create_session, token_hash, verify_password, hash_password, role_for_group
+from .auth_policy import password_change_enabled
 from .platform_settings import get_platform_settings
 from .schemas import LoginInput, PasswordChangeInput, RegisterInput
 from .sso.registry import load_providers
@@ -28,6 +29,7 @@ def register_auth_routes(app, deps):
         return {
             "local_login_enabled": settings["local_login_enabled"],
             "sso_login_enabled": sso_enabled,
+            "password_change_enabled": password_change_enabled(settings, sso_enabled),
             "registration_enabled": registration_mode != "disabled",
             "registration_mode": registration_mode,
             "default_register_group": settings["platform_registration_default_group"],
@@ -140,9 +142,13 @@ def register_auth_routes(app, deps):
 
     @app.put("/api/me/password")
     def change_password(payload: PasswordChangeInput):
-        if len(payload.new_password) < 10:
-            raise HTTPException(status_code=400, detail="新密码至少需要 10 个字符")
         with db() as conn:
+            settings = get_platform_settings(conn)
+            sso_enabled = bool(load_providers(settings))
+            if not password_change_enabled(settings, sso_enabled):
+                raise HTTPException(status_code=403, detail="密码由 OIDC 统一认证服务管理，请前往统一认证平台修改")
+            if len(payload.new_password) < 10:
+                raise HTTPException(status_code=400, detail="新密码至少需要 10 个字符")
             user = current_user(conn)
             stored = conn.execute("SELECT password_hash FROM users WHERE id=%s", (user["id"],)).fetchone()
             if not verify_password(payload.current_password, stored["password_hash"]):

@@ -17,33 +17,43 @@ const summary = ref<Summary | null>(null);
 const gpus = ref<Gpu[]>([]);
 const hardwareRows = ref<NodeHardware[]>([]);
 const currentTs = ref(Math.floor(Date.now() / 1000));
-// 每个节点的 CPU% 历史（node.id → number[]）
-const cpuHistory = ref(new Map<number, number[]>());
+type NetworkHistory = { rx: number[]; tx: number[] };
+const networkHistory = ref(new Map<number, NetworkHistory>());
 let refreshTimer: number | undefined;
 let clockTimer: number | undefined;
 
-function pushCpuHistory(nodes: NodeHardware[]) {
-  const map = cpuHistory.value;
-  for (const node of nodes) {
-    const history = map.get(node.id) ?? [];
-    history.push(Math.min(100, Math.max(0, node.cpu_usage_percent ?? 0)));
-    if (history.length > SPARKLINE_MAX) history.splice(0, history.length - SPARKLINE_MAX);
-    map.set(node.id, history);
-  }
-  // 触发响应式更新
-  cpuHistory.value = new Map(map);
+function networkRate(node: NodeHardware, direction: "rx" | "tx") {
+  if (node.status !== "online") return 0;
+  const value = direction === "rx" ? node.network_rx_bytes_per_sec : node.network_tx_bytes_per_sec;
+  return Math.max(0, Number(value ?? 0));
 }
 
-// SVG area chart: 折线下方填充，上方空白
-// 返回 { linePoints, areaPoints } 用于 polyline 和 polygon
-function sparklinePoints(data: number[], w = 80, h = 28): { linePoints: string; areaPoints: string } {
-  if (data.length < 2) return { linePoints: "", areaPoints: "" };
+function pushNetworkHistory(nodes: NodeHardware[]) {
+  const map = networkHistory.value;
+  for (const node of nodes) {
+    const history = map.get(node.id) ?? { rx: [], tx: [] };
+    history.rx.push(networkRate(node, "rx"));
+    history.tx.push(networkRate(node, "tx"));
+    if (history.rx.length > SPARKLINE_MAX) history.rx.splice(0, history.rx.length - SPARKLINE_MAX);
+    if (history.tx.length > SPARKLINE_MAX) history.tx.splice(0, history.tx.length - SPARKLINE_MAX);
+    map.set(node.id, history);
+  }
+  networkHistory.value = new Map(map);
+}
+
+function networkSparklinePoints(data: number[], maxValue: number, w = 280, h = 34): string {
+  if (data.length < 2) return "";
   const step = w / (data.length - 1);
-  const pts = data.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / 100) * h).toFixed(1)}`);
-  const linePoints = pts.join(" ");
-  // 面积图：上方折线点 + 右下角 + 左下角 构成填充多边形
-  const areaPoints = [...pts, `${w.toFixed(1)},${h}`, `0,${h}`].join(" ");
-  return { linePoints, areaPoints };
+  return data.map((value, index) => `${(index * step).toFixed(1)},${(h - (value / maxValue) * h).toFixed(1)}`).join(" ");
+}
+
+function networkChart(nodeID: number) {
+  const history = networkHistory.value.get(nodeID) ?? { rx: [], tx: [] };
+  const maxValue = Math.max(1, ...history.rx, ...history.tx);
+  return {
+    rx: networkSparklinePoints(history.rx, maxValue),
+    tx: networkSparklinePoints(history.tx, maxValue),
+  };
 }
 
 function sparklineColor(lastPct: number): string {
@@ -198,7 +208,7 @@ async function refreshMonitor() {
     summary.value = summaryResult;
     gpus.value = gpuResult;
     hardwareRows.value = hwResult;
-    pushCpuHistory(hwResult);
+    pushNetworkHistory(hwResult);
   } finally {
     monitorRefreshing.value = false;
   }
@@ -211,7 +221,7 @@ async function loadInitial() {
     summary.value = summaryResult;
     gpus.value = gpuResult;
     hardwareRows.value = hardwareResult;
-    pushCpuHistory(hardwareResult);
+    pushNetworkHistory(hardwareResult);
   } finally {
     loading.value = false;
   }
@@ -357,6 +367,29 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <div class="metric-section metric-section-network">
+            <div class="metric-section-title">
+              <span>{{ t("dashboard.network") }}</span>
+              <span v-if="node.network_interface" class="network-interface">{{ node.network_interface }}</span>
+            </div>
+            <div class="network-values">
+              <div>
+                <span class="network-direction network-rx">↓ {{ t("dashboard.receive") }}</span>
+                <strong>{{ formatBytes(networkRate(node, "rx")) }}/s</strong>
+              </div>
+              <div>
+                <span class="network-direction network-tx">↑ {{ t("dashboard.transmit") }}</span>
+                <strong>{{ formatBytes(networkRate(node, "tx")) }}/s</strong>
+              </div>
+            </div>
+            <svg viewBox="0 0 280 34" preserveAspectRatio="none" class="network-sparkline" :aria-label="t('dashboard.networkTrend')">
+              <line x1="0" y1="33.5" x2="280" y2="33.5" stroke="var(--el-border-color-lighter)" />
+              <polyline v-if="networkChart(node.id).rx" :points="networkChart(node.id).rx" fill="none" stroke="var(--el-color-success)" stroke-width="1.8" vector-effect="non-scaling-stroke" />
+              <polyline v-if="networkChart(node.id).tx" :points="networkChart(node.id).tx" fill="none" stroke="var(--el-color-primary)" stroke-width="1.8" vector-effect="non-scaling-stroke" />
+            </svg>
+            <div class="network-trend-caption">{{ t("dashboard.networkTrend") }}</div>
+          </div>
+
           <div v-if="nodeGpus(node).length" class="metric-section metric-section-gpu">
             <div class="metric-section-title">
               <span>{{ t("dashboard.gpu") }}</span>
@@ -471,6 +504,10 @@ onUnmounted(() => {
   --section-accent: #8b5cf6;
 }
 
+.metric-section-network {
+  --section-accent: #0891b2;
+}
+
 .metric-section-gpu {
   --section-accent: var(--el-color-danger);
 }
@@ -491,6 +528,57 @@ onUnmounted(() => {
   height: 7px;
   border-radius: 50%;
   background: var(--section-accent, var(--el-color-primary));
+}
+
+.network-interface {
+  margin-left: auto;
+  font-weight: 400;
+  font-family: monospace;
+  color: var(--el-text-color-placeholder);
+}
+
+.network-values {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.network-values > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.network-values strong {
+  color: var(--el-text-color-primary);
+}
+
+.network-direction {
+  font-weight: 500;
+}
+
+.network-rx {
+  color: var(--el-color-success);
+}
+
+.network-tx {
+  color: var(--el-color-primary);
+}
+
+.network-sparkline {
+  display: block;
+  width: 100%;
+  height: 34px;
+}
+
+.network-trend-caption {
+  margin-top: 2px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--el-text-color-placeholder);
 }
 
 .metric-row {

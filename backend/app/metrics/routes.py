@@ -1,6 +1,20 @@
 from typing import Any
 import asyncio
 import time
+from ..platform_settings import effective_node_shared_storage_mode, get_platform_settings
+
+
+def _nfs_unavailable(node: dict, settings: dict, has_managed_mounts: bool) -> bool:
+    if effective_node_shared_storage_mode(node, settings) != "enabled":
+        return False
+    if node["status"] != "online" or node.get("node_type") not in ("compute", "mixed"):
+        return False
+    if node.get("nfs_healthy"):
+        return False
+    return not (
+        node.get("nfs_error") == "managed NFS is not mounted"
+        and not has_managed_mounts
+    )
 
 
 def _build_alerts_standalone(conn, all_nodes: list, all_containers: list) -> list[dict]:
@@ -8,6 +22,12 @@ def _build_alerts_standalone(conn, all_nodes: list, all_containers: list) -> lis
     alerts = []
     now = int(time.time())
     stale_cutoff = now - 300
+    settings = get_platform_settings(conn)
+    nodes_with_managed_mounts = {
+        container["node_id"]
+        for container in all_containers
+        if container.get("managed_mounts")
+    }
 
     for node in all_nodes:
         if node["status"] != "online":
@@ -23,6 +43,10 @@ def _build_alerts_standalone(conn, all_nodes: list, all_containers: list) -> lis
                 alerts.append({"level": "warning", "type": "disk_full",
                                 "message": f"节点 {node['hostname']} 磁盘使用率 {int(used_pct * 100)}%，建议清理",
                                 "node_id": node["id"]})
+        if _nfs_unavailable(node, settings, node["id"] in nodes_with_managed_mounts):
+            alerts.append({"level": "error", "type": "nfs_unavailable",
+                           "message": f"节点 {node['hostname']} 的托管 NFS 未就绪：{node.get('nfs_error') or '未知错误'}",
+                           "node_id": node["id"]})
 
     try:
         row = conn.execute("SELECT COUNT(*) FROM shared_resources WHERE request_status = 'pending'").fetchone()
@@ -30,6 +54,21 @@ def _build_alerts_standalone(conn, all_nodes: list, all_containers: list) -> lis
         if pending_count > 0:
             alerts.append({"level": "info", "type": "pending_resources",
                             "message": f"有 {pending_count} 个共享资源请求待管理员审批", "node_id": None})
+    except Exception:
+        pass
+
+    try:
+        expiring = conn.execute(
+            "SELECT volume_name,cleanup_after FROM user_workspace_volumes "
+            "WHERE lifecycle='temporary' AND status='active' AND cleanup_after>%s AND cleanup_after<=%s "
+            "ORDER BY cleanup_after LIMIT 5",
+            (now, now + 7 * 86400),
+        ).fetchall()
+        if expiring:
+            names = "、".join(row["volume_name"] for row in expiring[:3])
+            alerts.append({"level": "warning", "type": "workspace_expiring",
+                           "message": f"临时 workspace {names} 将在 7 天内清理，请先迁移需保留的数据",
+                           "node_id": None})
     except Exception:
         pass
 
@@ -120,13 +159,14 @@ def register_metrics_routes(app, deps: dict[str, Any]):
             mark_stale_nodes(conn)
             nodes = conn.execute(
                 """
-                SELECT id, hostname, status, cpu_model, cpu_total, cpu_cores, cpu_sockets,
+                SELECT id, hostname, display_order, status, cpu_model, cpu_total, cpu_cores, cpu_sockets,
                        cpu_temperature_c, memory_total_gb, disk_total_gb,
                        cpu_used, memory_used_gb, disk_used_gb, last_seen, uptime_seconds, load_avg,
                        cpu_usage_percent, swap_total_gb, swap_used_gb,
+                       network_interface, network_rx_bytes_per_sec, network_tx_bytes_per_sec,
                        cuda_driver_api_version
                 FROM nodes
-                ORDER BY hostname
+                ORDER BY display_order, hostname
                 """
             ).fetchall()
             result = []
@@ -170,7 +210,8 @@ def register_metrics_routes(app, deps: dict[str, Any]):
             rows = conn.execute(
                 """
                 SELECT sampled_at, cpu_pct, memory_pct, disk_pct,
-                       gpu_avg_pct, gpu_avg_vram_pct, temperature_c
+                       gpu_avg_pct, gpu_avg_vram_pct, temperature_c,
+                       network_rx_bytes_per_sec, network_tx_bytes_per_sec, network_interface
                 FROM node_metrics_snapshots
                 WHERE node_id = %s AND sampled_at >= %s
                 ORDER BY sampled_at ASC
@@ -217,15 +258,20 @@ def register_metrics_routes(app, deps: dict[str, Any]):
                         else:
                             gpu_avg_pct = gpu_avg_vram_pct = 0
                         temperature_c = int(node.get("cpu_temperature_c") or 0)
+                        network_rx_bytes_per_sec = max(0, float(node.get("network_rx_bytes_per_sec") or 0))
+                        network_tx_bytes_per_sec = max(0, float(node.get("network_tx_bytes_per_sec") or 0))
+                        network_interface = str(node.get("network_interface") or "")[:64]
                         conn.execute(
                             """
                             INSERT INTO node_metrics_snapshots
                                 (node_id, sampled_at, cpu_pct, memory_pct, disk_pct,
-                                 gpu_avg_pct, gpu_avg_vram_pct, temperature_c)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                 gpu_avg_pct, gpu_avg_vram_pct, temperature_c,
+                                 network_rx_bytes_per_sec, network_tx_bytes_per_sec, network_interface)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (nid, ts, cpu_pct, memory_pct, disk_pct,
-                             gpu_avg_pct, gpu_avg_vram_pct, temperature_c),
+                             gpu_avg_pct, gpu_avg_vram_pct, temperature_c,
+                             network_rx_bytes_per_sec, network_tx_bytes_per_sec, network_interface),
                         )
                     # 清理 7 天以上的旧数据
                     cutoff = ts - 7 * 86400

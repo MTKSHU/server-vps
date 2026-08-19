@@ -67,8 +67,8 @@ func cloudInitUserData(username string, sshKeys ...string) string {
 	var builder strings.Builder
 	builder.WriteString("#cloud-config\n")
 	builder.WriteString("users:\n")
-	builder.WriteString("  - default\n")
 	builder.WriteString(fmt.Sprintf("  - name: %s\n", username))
+	builder.WriteString("    uid: 1000\n")
 	builder.WriteString("    groups: sudo\n")
 	builder.WriteString("    shell: /bin/bash\n")
 	builder.WriteString("    sudo: ALL=(ALL) NOPASSWD:ALL\n")
@@ -87,6 +87,34 @@ func cloudInitUserData(username string, sshKeys ...string) string {
 	return builder.String()
 }
 
+func homeSkeletonSeedScript() string {
+	return `set -eu
+home_dir=$1
+skel_dir=${2:-/etc/skel}
+
+if [ ! -d "$skel_dir" ]; then
+  exit 0
+fi
+
+# The shared home may already contain user data from another container. Copy
+# only missing top-level entries so image defaults are added without replacing
+# anything the user has created or changed.
+for source in "$skel_dir"/* "$skel_dir"/.[!.]* "$skel_dir"/..?*; do
+  if [ ! -e "$source" ] && [ ! -L "$source" ]; then
+    continue
+  fi
+  name=${source##*/}
+  target=$home_dir/$name
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    continue
+  fi
+  # Concurrent starts for the same shared home are harmless: another
+  # container may win the copy between the existence check and cp.
+  cp -R -- "$source" "$target" 2>/dev/null || [ -e "$target" ] || [ -L "$target" ]
+done
+`
+}
+
 func initializeContainerSSHWithMounts(container string, username string, mounts []string, sshKeys ...string) error {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -97,21 +125,31 @@ func initializeContainerSSHWithMounts(container string, username string, mounts 
 		return fmt.Errorf("ssh public key is empty")
 	}
 	encodedKey := base64.StdEncoding.EncodeToString([]byte(sshKey))
+	encodedSkeletonSeed := base64.StdEncoding.EncodeToString([]byte(homeSkeletonSeedScript()))
 	script := fmt.Sprintf(`
 set -eu
 user=%s
 key_b64=%s
+skel_seed_b64=%s
 
 if ! id "$user" >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then
-    useradd -m -s /bin/bash "$user"
+    useradd -u 1000 -m -s /bin/bash "$user"
   elif command -v adduser >/dev/null 2>&1; then
-    adduser -D -s /bin/sh "$user"
+    adduser -D -u 1000 -s /bin/sh "$user"
   fi
+fi
+
+if ! id "$user" >/dev/null 2>&1 || [ "$(id -u "$user")" != "1000" ] || [ "$(id -g "$user")" != "1000" ]; then
+  echo "platform SSH user must have UID/GID 1000:1000" >&2
+  exit 1
 fi
 
 if command -v usermod >/dev/null 2>&1; then
   usermod -aG sudo "$user" 2>/dev/null || usermod -aG wheel "$user" 2>/dev/null || true
+  if getent group docker >/dev/null 2>&1; then
+    usermod -aG docker "$user"
+  fi
 fi
 
 home_dir=$(getent passwd "$user" 2>/dev/null | cut -d: -f6 || true)
@@ -120,6 +158,26 @@ if [ -z "$home_dir" ]; then
   mkdir -p "$home_dir"
 fi
 chown "$user:$user" "$home_dir" 2>/dev/null || chown "$user" "$home_dir" 2>/dev/null || true
+
+# A bind-mounted NFS home is commonly owned by the mapped UID (for example
+# host UID 1001000), so container root cannot safely populate it. Run the
+# skeleton copy as the platform user (UID/GID 1000:1000).
+skel_seed_file=$(mktemp)
+printf '%%s' "$skel_seed_b64" | base64 -d > "$skel_seed_file"
+chmod 0755 "$skel_seed_file"
+seed_ok=0
+if command -v runuser >/dev/null 2>&1; then
+  runuser -u "$user" -- sh "$skel_seed_file" "$home_dir" && seed_ok=1
+elif command -v su >/dev/null 2>&1; then
+  su -s /bin/sh "$user" -c 'sh "$1" "$2"' sh "$skel_seed_file" "$home_dir" && seed_ok=1
+elif command -v setpriv >/dev/null 2>&1; then
+  setpriv --reuid=1000 --regid=1000 --clear-groups sh "$skel_seed_file" "$home_dir" && seed_ok=1
+fi
+rm -f "$skel_seed_file"
+if [ "$seed_ok" -ne 1 ]; then
+  echo "failed to seed missing files from /etc/skel into $home_dir as $user" >&2
+  exit 1
+fi
 if [ -d /workspace ]; then
   chmod 1777 /workspace 2>/dev/null || chmod 0777 /workspace 2>/dev/null || true
 fi
@@ -224,7 +282,7 @@ elif command -v rc-service >/dev/null 2>&1; then
 else
   /usr/sbin/sshd 2>/dev/null || true
 fi
-`, shellSingleQuote(username), shellSingleQuote(encodedKey))
+`, shellSingleQuote(username), shellSingleQuote(encodedKey), shellSingleQuote(encodedSkeletonSeed))
 	_, err := runCommandCombined("incus", "exec", container, "--", "sh", "-lc", script)
 	return err
 }
@@ -240,7 +298,11 @@ func syncContainerSSHKeys(payload IncusSSHKeysPayload) (err error) {
 	}
 	wasStopped := status == "stopped"
 	if wasStopped {
-		removeContainerHomeMounts(name, payload.SSHUsername)
+		if len(payload.ManagedMounts) == 0 {
+			removeContainerHomeMounts(name, payload.SSHUsername)
+		} else if err := validateActiveManagedMounts(payload.ManagedMounts); err != nil {
+			return err
+		}
 		if err := ensureContainerRunning(name, 60*time.Second); err != nil {
 			return err
 		}
@@ -571,6 +633,9 @@ func executeIncusCreate(payload IncusCreatePayload, storagePool string, dataPath
 	if payload.Image == "" {
 		payload.Image = "images:ubuntu/24.04"
 	}
+	if err := ensureSharedStorage(payload.SharedStorage, payload.ManagedMounts); err != nil {
+		return "", err
+	}
 	if runCommand("incus", "info", payload.Name) == "" {
 		// Use 'init' (create without starting) so all devices can be configured
 		// before the container starts, avoiding hot-add delays that cause incus exec to hang.
@@ -582,7 +647,12 @@ func executeIncusCreate(payload IncusCreatePayload, storagePool string, dataPath
 			"-c", fmt.Sprintf("limits.cpu=%d", payload.CPUCores),
 			"-c", fmt.Sprintf("limits.memory=%dGiB", payload.MemoryGB),
 			"-c", "security.nesting=true",
+			"-c", "security.syscalls.intercept.mknod=true",
+			"-c", "security.syscalls.intercept.setxattr=true",
 			"-c", "user.user-data=" + cloudInitUserData(payload.SSHUsername, payload.SSHKey),
+		}
+		if payload.SharedStorage.Enabled && payload.SharedStorage.IDMapBase >= 65536 {
+			args = append(args, "-c", fmt.Sprintf("security.idmap.base=%d", payload.SharedStorage.IDMapBase))
 		}
 		if len(payload.GPUs) > 0 {
 			args = append(args, "-c", "nvidia.runtime=true")
@@ -636,24 +706,39 @@ func executeIncusCreate(payload IncusCreatePayload, storagePool string, dataPath
 				return "", err
 			}
 		}
-		for index, mount := range payload.Mounts {
-			source, target, readonly := parseMount(mount)
-			if source == "" || target == "" {
-				continue
+		if len(payload.ManagedMounts) > 0 {
+			for index, mount := range payload.ManagedMounts {
+				if err := validateManagedMount(mount); err != nil {
+					return "", err
+				}
+				args := []string{"disk", "source=" + mount.Source, "path=" + mount.Target, fmt.Sprintf("required=%t", mount.Required)}
+				if mount.Readonly {
+					args = append(args, "readonly=true")
+				}
+				if err := addOrReplaceDevice(payload.Name, safeDeviceName("managed", index, mount.Target), args...); err != nil {
+					return "", fmt.Errorf("attach managed mount %s: %w", mount.Target, err)
+				}
 			}
-			if isContainerHomePath(target, payload.SSHUsername) {
-				fmt.Fprintf(os.Stderr, "%s skip container home mount %s -> %s\n", time.Now().Format(time.RFC3339), source, target)
-				continue
-			}
-			if err := ensureMountSource(source, dataPath); err != nil {
-				return "", err
-			}
-			args := []string{"disk", "source=" + source, "path=" + target}
-			if readonly {
-				args = append(args, "readonly=true")
-			}
-			if err := addOrReplaceDevice(payload.Name, safeDeviceName("disk", index, target), args...); err != nil {
-				return "", err
+		} else {
+			for index, mount := range payload.Mounts {
+				source, target, readonly := parseMount(mount)
+				if source == "" || target == "" {
+					continue
+				}
+				if isContainerHomePath(target, payload.SSHUsername) {
+					fmt.Fprintf(os.Stderr, "%s skip container home mount %s -> %s\n", time.Now().Format(time.RFC3339), source, target)
+					continue
+				}
+				if err := ensureMountSource(source, dataPath); err != nil {
+					return "", err
+				}
+				args := []string{"disk", "source=" + source, "path=" + target}
+				if readonly {
+					args = append(args, "readonly=true")
+				}
+				if err := addOrReplaceDevice(payload.Name, safeDeviceName("disk", index, target), args...); err != nil {
+					return "", err
+				}
 			}
 		}
 		// workspace: named Incus storage volume mounted at /workspace (reusable across containers)
@@ -668,7 +753,9 @@ func executeIncusCreate(payload IncusCreatePayload, storagePool string, dataPath
 			}
 		}
 	}
-	removeContainerHomeMounts(payload.Name, payload.SSHUsername)
+	if len(payload.ManagedMounts) == 0 {
+		removeContainerHomeMounts(payload.Name, payload.SSHUsername)
+	}
 	// Start or wait for the container before incus exec; retries may find an
 	// existing stopped instance from a previous failed create attempt.
 	if err := ensureContainerRunning(payload.Name, 60*time.Second); err != nil {
@@ -746,6 +833,11 @@ func executeIncusLifecycle(payload IncusLifecyclePayload) (string, error) {
 		return "", fmt.Errorf("container name is empty")
 	}
 	operation := strings.ToLower(strings.TrimSpace(payload.Operation))
+	if operation == "start" || operation == "restart" {
+		if err := ensureSharedStorage(payload.SharedStorage, payload.ManagedMounts); err != nil {
+			return "", err
+		}
+	}
 	status := incusContainerStatus(name)
 	switch operation {
 	case "start":

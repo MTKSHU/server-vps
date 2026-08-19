@@ -1,6 +1,7 @@
 from typing import Any
 
 from ..config import RESOURCE_CONTAINER_STATUSES, RUNNING_CONTAINER_STATUSES
+from ..platform_settings import effective_node_shared_storage_mode
 from ..schemas import ContainerCreate
 from ..storage.services import node_has_incus_image, storage_image_available
 
@@ -50,7 +51,15 @@ def requested_gpus_for_node(conn, node: dict[str, Any], gpu_ids: list[int]) -> l
     by_id = {row["id"]: row for row in rows}
     return [by_id[gpu_id] for gpu_id in gpu_ids if gpu_id in by_id]
 
-def select_node_and_gpus(conn, image: dict[str, Any], payload: ContainerCreate, allowed_node_ids: set[int] | None = None):
+def select_node_and_gpus(
+    conn,
+    image: dict[str, Any],
+    payload: ContainerCreate,
+    allowed_node_ids: set[int] | None = None,
+    *,
+    shared_storage_settings: dict[str, Any] | None = None,
+    user_id: int | None = None,
+):
     compatible_pools = set(image["compatible_pools"].split(","))
     candidates = []
     reasons = []
@@ -90,6 +99,27 @@ def select_node_and_gpus(conn, image: dict[str, Any], payload: ContainerCreate, 
                 f"{hostname}: 驱动池 {node['driver_pool']} 不兼容镜像 {image['name']}，需要 {image['compatible_pools']}"
             )
             continue
+        effective_storage_mode = effective_node_shared_storage_mode(
+            node, shared_storage_settings or {"shared_storage_mode": "disabled"}, user_id
+        )
+        capabilities = set(node.get("capabilities") or [])
+        if (effective_storage_mode == "enabled" or payload.resources) and "managed_nfs_mounts_v1" not in capabilities:
+            reasons.append(f"{hostname}: agent 尚不支持托管挂载")
+            continue
+        if effective_storage_mode == "enabled" and "per_user_nfs_exports_v1" not in capabilities:
+            reasons.append(f"{hostname}: agent 尚不支持每用户独立 NFS 导出")
+            continue
+        unavailable_resources = []
+        for selection in payload.resources:
+            cache = conn.execute(
+                "SELECT 1 FROM node_resource_cache WHERE node_id=%s AND resource_id=%s AND status='ready' AND local_path!=''",
+                (node["id"], selection.resource_id),
+            ).fetchone()
+            if not cache and effective_storage_mode != "enabled":
+                unavailable_resources.append(str(selection.resource_id))
+        if unavailable_resources:
+            reasons.append(f"{hostname}: 资源 {','.join(unavailable_resources)} 无 ready 本地缓存，且该节点 NFS 已禁用")
+            continue
         image_ref = image["incus_ref"] or image["id"]
         if not node_has_incus_image(conn, node["id"], image_ref):
             if not storage_image_available(conn, image_ref):
@@ -123,7 +153,8 @@ def select_node_and_gpus(conn, image: dict[str, Any], payload: ContainerCreate, 
             continue
         available_cpu = node["cpu_total"] - node["cpu_used"]
         available_memory = node["memory_total_gb"] - node["reserved_memory_gb"] - node["memory_used_gb"]
-        available_disk = node["disk_total_gb"] - node["reserved_disk_gb"] - node["disk_used_gb"]
+        reserved_floor = max(float(node["disk_total_gb"]) * 0.15, 100.0)
+        available_disk = node["disk_total_gb"] - max(float(node["reserved_disk_gb"]), reserved_floor) - node["disk_used_gb"]
         if payload.cpu_cores > available_cpu:
             reasons.append(f"{hostname}: CPU 上限不足，可用 {available_cpu} 核，请求 {payload.cpu_cores} 核")
             continue

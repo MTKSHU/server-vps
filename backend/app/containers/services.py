@@ -44,6 +44,8 @@ def incus_create_payload(
     ports: list[dict[str, Any]],
     workspace_volume_name: str = "",
     workspace_volume_gb: int = 0,
+    managed_mounts: list[dict[str, Any]] | None = None,
+    shared_storage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "container_id": container["id"],
@@ -56,6 +58,8 @@ def incus_create_payload(
         # Keep the combined value for rolling upgrades of older node agents.
         "ssh_key": managed_ssh_keys(container["ssh_key"]),
         "mounts": container["mounts"],
+        "managed_mounts": managed_mounts if managed_mounts is not None else (container.get("managed_mounts") or []),
+        "shared_storage": shared_storage or {},
         "gpus": [
             {
                 "slot": gpu["slot"],
@@ -84,12 +88,16 @@ def incus_create_payload(
         "workspace_volume_gb": workspace_volume_gb,
     }
 
-def incus_lifecycle_payload(container: dict[str, Any], operation: str) -> dict[str, Any]:
+def incus_lifecycle_payload(
+    container: dict[str, Any], operation: str, shared_storage: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return {
         "container_id": container["id"],
         "name": container["name"],
         "operation": operation,
         "previous_status": container["status"],
+        "managed_mounts": container.get("managed_mounts") or [],
+        "shared_storage": shared_storage or {},
     }
 
 def usage_for_user(conn, user_id: int) -> dict[str, int]:

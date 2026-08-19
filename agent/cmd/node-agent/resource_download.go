@@ -18,6 +18,43 @@ import (
 
 const downloaderContainerName = "cluster-resource-downloader"
 
+func waitForDownloaderNetworkRouteScript() string {
+	return `
+set -eu
+for i in $(seq 1 30); do
+  ip -4 route show default | grep -q . && exit 0
+  sleep 2
+done
+echo "downloader container did not obtain an IPv4 default route from incusbr0" >&2
+exit 1
+`
+}
+
+func resourceDownloaderNetworkOverrideArgs() []string {
+	return []string{"config", "device", "override", downloaderContainerName, "eth0", "parent=incusbr0", "nictype=bridged", "name=eth0"}
+}
+
+func ensureResourceDownloaderNetwork() error {
+	// Custom Incus default profiles may attach containers to a host bridge that
+	// has no DHCP service. Keep a working profile-provided network when it has an
+	// IPv4 default route, otherwise fall back to Incus' managed NAT bridge.
+	if _, err := runCommandCombinedTimeout(10*time.Second, "incus", "exec", downloaderContainerName, "--", "sh", "-lc", "ip -4 route show default | grep -q ."); err == nil {
+		return nil
+	}
+	if _, err := runCommandCombinedTimeout(10*time.Second, "incus", "network", "show", "incusbr0"); err != nil {
+		return fmt.Errorf("downloader container has no IPv4 default route and managed network incusbr0 is unavailable: %w", err)
+	}
+	// device override copies the inherited nictype property, so override the
+	// bridge parent directly; Incus rejects combining nictype with network=.
+	if output, err := runCommandCombinedTimeout(30*time.Second, "incus", resourceDownloaderNetworkOverrideArgs()...); err != nil {
+		return fmt.Errorf("attach downloader container to incusbr0: %w; %s", err, output)
+	}
+	if output, err := runCommandCombinedTimeout(70*time.Second, "incus", "exec", downloaderContainerName, "--", "sh", "-lc", waitForDownloaderNetworkRouteScript()); err != nil {
+		return fmt.Errorf("wait for downloader container network: %w; %s", err, output)
+	}
+	return nil
+}
+
 func ensureResourceDownloaderContainer(payload DownloadSharedResourcePayload, storagePool string) error {
 	if err := os.MkdirAll(payload.StagingPath, 0755); err != nil {
 		return fmt.Errorf("mkdir staging path: %w", err)
@@ -39,6 +76,9 @@ func ensureResourceDownloaderContainer(payload DownloadSharedResourcePayload, st
 		_, _ = runCommandCombined("incus", "config", "set", downloaderContainerName, "user.cluster-role", "resource_downloader")
 	}
 	if err := ensureContainerRunning(downloaderContainerName, 2*time.Minute); err != nil {
+		return err
+	}
+	if err := ensureResourceDownloaderNetwork(); err != nil {
 		return err
 	}
 	// A previous agent process may have exited while its Incus exec kept running.
@@ -194,14 +234,16 @@ func reportDownloadProgress(server string, args cliArgs, hostname string, taskID
 
 func downloadScript(payload DownloadSharedResourcePayload) (string, error) {
 	config := map[string]string{
-		"resource_id": fmt.Sprintf("%d", payload.ResourceID),
-		"source":      strings.TrimSpace(payload.Source),
-		"repo_id":     strings.TrimSpace(payload.RepoID),
-		"revision":    strings.TrimSpace(payload.Revision),
-		"token":       strings.TrimSpace(payload.Token),
-		"repo_type":   strings.TrimSpace(payload.RepoType),
-		"hf_endpoint": strings.TrimSpace(payload.HFEndpoint),
-		"hf_engine":   strings.TrimSpace(payload.HFDownloadEngine),
+		"resource_id":       fmt.Sprintf("%d", payload.ResourceID),
+		"source":            strings.TrimSpace(payload.Source),
+		"repo_id":           strings.TrimSpace(payload.RepoID),
+		"revision":          strings.TrimSpace(payload.Revision),
+		"token":             strings.TrimSpace(payload.Token),
+		"repo_type":         strings.TrimSpace(payload.RepoType),
+		"hf_endpoint":       strings.TrimSpace(payload.HFEndpoint),
+		"hf_engine":         strings.TrimSpace(payload.HFDownloadEngine),
+		"fallback_repo_id":  strings.TrimSpace(payload.FallbackRepoID),
+		"fallback_revision": strings.TrimSpace(payload.FallbackRevision),
 	}
 	if config["repo_id"] == "" {
 		return "", fmt.Errorf("repo_id is empty")
@@ -265,7 +307,49 @@ source = cfg.get("source") or "huggingface"
 repo_type = cfg.get("repo_type") or "model"
 revision = cfg.get("revision") or None
 token = cfg.get("token") or None
-if source == "modelscope":
+if source == "priority":
+    errors = []
+    try:
+        from modelscope import snapshot_download as ms_snapshot_download
+        print(f"[modelscope] downloading {cfg['repo_id']} -> {local_dir}", flush=True)
+        ms_snapshot_download(
+            cfg["repo_id"],
+            repo_type="dataset" if repo_type == "dataset" else "model",
+            revision=revision or "master",
+            local_dir=local_dir,
+            endpoint="https://modelscope.cn",
+        )
+        print("[ok] downloaded from ModelScope", flush=True)
+        raise SystemExit(0)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        errors.append(f"ModelScope: {type(exc).__name__}: {exc}")
+        print(f"[warn] ModelScope failed, switching to Hugging Face mirror: {exc}", flush=True)
+    try:
+        from huggingface_hub import snapshot_download as hf_snapshot_download
+        for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+            os.environ.pop(key, None)
+        endpoint = (cfg.get("hf_endpoint") or "https://hf-mirror.com").rstrip("/")
+        os.environ["HF_ENDPOINT"] = endpoint
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        fallback_repo_id = cfg.get("fallback_repo_id") or cfg["repo_id"]
+        print(f"[hf-mirror] downloading {fallback_repo_id} -> {local_dir} (endpoint={endpoint})", flush=True)
+        hf_snapshot_download(
+            repo_id=fallback_repo_id,
+            repo_type="dataset" if repo_type == "dataset" else "model",
+            revision=cfg.get("fallback_revision") or "main",
+            local_dir=local_dir,
+            endpoint=endpoint,
+        )
+        print("[ok] downloaded from Hugging Face mirror", flush=True)
+        raise SystemExit(0)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        errors.append(f"Hugging Face mirror: {type(exc).__name__}: {exc}")
+        raise RuntimeError("all public download sources failed: " + " | ".join(errors)) from exc
+elif source == "modelscope":
     from modelscope.hub.snapshot_download import snapshot_download
     snapshot_download(
         model_id=cfg["repo_id"],

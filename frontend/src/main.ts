@@ -15,7 +15,11 @@ function enhanceIconButtons(root: ParentNode = document) {
     const icon = button.querySelector(".el-icon");
     const label = button.querySelector("span");
     const text = label?.textContent?.trim() || "";
-    if (!icon || !label || !text || button.dataset.keepLabel === "true") return;
+    if (button.dataset.keepLabel === "true") {
+      button.classList.remove("icon-button-compact");
+      return;
+    }
+    if (!icon || !label || !text) return;
     button.classList.add("icon-button-compact");
     button.setAttribute("title", text);
     button.setAttribute("aria-label", text);

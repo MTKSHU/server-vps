@@ -423,6 +423,7 @@ def public_shared_resource(row: dict[str, Any]) -> dict[str, Any]:
         "mount_path": row["mount_path"],
         "tags": list(row.get("tags") or []),
         "readonly": row["readonly"],
+        "nfs_available": row.get("nfs_available", True),
         "sync_policy": row["sync_policy"],
         "enabled": row["enabled"],
         "size_bytes": row["size_bytes"],
@@ -821,6 +822,8 @@ def enqueue_shared_resource_download_task(
     target_path: str,
     hf_endpoint: str = "",
     hf_download_engine: str = "auto",
+    fallback_repo_id: str = "",
+    fallback_revision: str = "main",
 ) -> dict[str, Any]:
     # Keep staging beside the final target. On TrueNAS/ZFS, datasets/models may
     # be separate mountpoints, so root-level staging can make os.Rename fail
@@ -845,6 +848,8 @@ def enqueue_shared_resource_download_task(
             "staging_path": staging_path,
             "hf_endpoint": hf_endpoint,
             "hf_download_engine": hf_download_engine,
+            "fallback_repo_id": fallback_repo_id,
+            "fallback_revision": fallback_revision,
         },
     )
     progress = {
@@ -1799,17 +1804,30 @@ def register_data_routes(app, deps: dict[str, Any]):
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{1,80}", name):
             raise HTTPException(status_code=400, detail="资源名称不合法")
         source = payload.source.strip().lower() or "huggingface"
-        if source not in ("huggingface", "modelscope"):
-            raise HTTPException(status_code=400, detail="source 不合法，应为 huggingface 或 modelscope")
-        if source == "modelscope" and download_mode == "manual":
-            raise HTTPException(status_code=400, detail="ModelScope 使用平台自动下载即可")
+        if source not in ("priority", "huggingface", "modelscope"):
+            raise HTTPException(status_code=400, detail="source 不合法，应为 priority、huggingface 或 modelscope")
+        if source in ("priority", "modelscope") and download_mode == "manual":
+            raise HTTPException(status_code=400, detail="该下载源仅支持平台自动下载")
         repo_type = "dataset" if payload.resource_type == "dataset" else "model"
         tags = normalize_shared_resource_tags(payload.tags)
 
         with db() as _tc:
             upsert_tag_options(_tc, tags)
 
-        if source == "modelscope":
+        if source == "priority":
+            ms_repo_id = (payload.priority_ms_repo_id or payload.ms_repo_id).strip()
+            hf_repo_id = (payload.priority_hf_repo_id or payload.hf_repo_id).strip()
+            repo_pattern = r"[A-Za-z0-9][\w.-]{0,95}/[A-Za-z0-9][\w.-]{0,95}"
+            if not re.fullmatch(repo_pattern, ms_repo_id):
+                raise HTTPException(status_code=400, detail="ModelScope 仓库 ID 不合法，格式应为 owner/repo-name")
+            if not re.fullmatch(repo_pattern, hf_repo_id):
+                raise HTTPException(status_code=400, detail="HuggingFace 仓库 ID 不合法，格式应为 owner/repo-name")
+            ms_revision = re.sub(r"[^\w./-]", "", payload.ms_revision.strip()) or "master"
+            hf_revision = re.sub(r"[^\w./-]", "", payload.hf_revision.strip()) or "main"
+            # 公开下载链路不接收凭据；source_url 使用 HF 标识，以便完成后做远端清单校验。
+            ms_token = hf_token = ""
+            source_url = f"hf://{hf_repo_id}@{hf_revision}"
+        elif source == "modelscope":
             ms_repo_id = payload.ms_repo_id.strip()
             if not re.fullmatch(r"[A-Za-z0-9][\w.-]{0,95}/[A-Za-z0-9][\w.-]{0,95}", ms_repo_id):
                 raise HTTPException(status_code=400, detail="ModelScope 仓库 ID 不合法，格式应为 owner/repo-name")
@@ -1830,7 +1848,7 @@ def register_data_routes(app, deps: dict[str, Any]):
             requested_hf_endpoint = payload.hf_endpoint.strip().rstrip("/")
             if requested_hf_endpoint and not re.fullmatch(r"https?://[A-Za-z0-9._:/-]{1,200}", requested_hf_endpoint):
                 raise HTTPException(status_code=400, detail="HF 下载端点不合法")
-            hf_endpoint = requested_hf_endpoint if source == "huggingface" and download_mode == "manual" else configured_hf_endpoint
+            hf_endpoint = requested_hf_endpoint if source == "huggingface" and download_mode == "manual" else (configured_hf_endpoint or ("https://hf-mirror.com" if source == "priority" else ""))
             hf_download_engine = settings.get("hf_download_engine") or "auto"
             if payload.resource_type == "dataset":
                 base = _shared_resource_base_path(payload.resource_type, settings)
@@ -1925,6 +1943,11 @@ def register_data_routes(app, deps: dict[str, Any]):
                     "command": manual_command,
                     "hf_endpoint": hf_endpoint,
                 }
+            elif source == "priority":
+                task = enqueue_shared_resource_download_task(
+                    conn, row, node, source, ms_repo_id, ms_revision, "", repo_type, target,
+                    hf_endpoint, "sdk", fallback_repo_id=hf_repo_id, fallback_revision=hf_revision,
+                )
             elif source == "modelscope":
                 task = enqueue_shared_resource_download_task(
                     conn, row, node, source, ms_repo_id, ms_revision, ms_token, repo_type, target

@@ -29,6 +29,7 @@ export interface SSOProvider {
 export interface AuthConfig {
   local_login_enabled: boolean;
   sso_login_enabled: boolean;
+  password_change_enabled: boolean;
   registration_enabled: boolean;
   registration_mode: "platform" | "sso" | "disabled";
   default_register_group: string;
@@ -46,6 +47,19 @@ export interface PlatformSettings {
   sso_default_group: "platform_admin" | "admin" | "member" | "guest";
   platform_timezone: string;
   transfer_bandwidth_limit_mbps: number;
+  shared_storage_mode: "disabled" | "canary" | "enabled";
+  shared_storage_canary_user_ids: number[];
+  nfs_server: string;
+  nfs_users_export: string;
+  nfs_datasets_export: string;
+  nfs_models_export: string;
+  nfs_mount_options: string;
+  nfs_sentinel: string;
+  nfs_sentinel_signature: string;
+  nfs_idmap_base: number;
+	truenas_nfs_auto_share: boolean;
+  workspace_default_gb: number;
+  workspace_retention_days: number;
   agent_metrics_interval_seconds: number;
   agent_heartbeat_interval_seconds: number;
   agent_container_interval_seconds: number;
@@ -146,6 +160,7 @@ export interface Gpu {
 
 export interface Node {
   id: number;
+  display_order: number;
   hostname: string;
   ip: string;
   node_type: "compute" | "storage" | "app" | "mixed";
@@ -160,6 +175,7 @@ export interface Node {
   max_cpu_per_container: number;
   max_memory_gb_per_container: number;
   max_disk_gb_per_container: number;
+  root_disk_gb: number;
   reserved_memory_gb: number;
   reserved_disk_gb: number;
   allow_port_mapping: boolean;
@@ -173,6 +189,13 @@ export interface Node {
   sync_ip: string;
   sync_ssh_port: number;
   resource_cache_base: string;
+  shared_storage_mode: "inherit" | "disabled" | "enabled";
+  nfs_healthy: boolean;
+  nfs_latency_ms: number;
+  nfs_error: string;
+  nfs_checked_at: number;
+  nfs_last_success_at: number;
+  capabilities: string[];
   cpu_model: string;
   cpu_total: number;
   cpu_cores: number;
@@ -207,6 +230,7 @@ export interface Node {
 
 export interface NodeHardware {
   id: number;
+  display_order: number;
   hostname: string;
   status: string;
   cpu_model: string;
@@ -225,6 +249,9 @@ export interface NodeHardware {
   cpu_usage_percent: number;
   swap_total_gb: number;
   swap_used_gb: number;
+  network_interface: string;
+  network_rx_bytes_per_sec: number;
+  network_tx_bytes_per_sec: number;
   cuda_driver_api_version: string;
   containers_running: number;
   containers_total: number;
@@ -279,10 +306,20 @@ export interface Container {
   ssh_username: string;
   ip: string;
   mounts: string[];
+  managed_mounts: ManagedMount[];
   created_at: number;
   updated_at: number;
   gpus: Gpu[];
   ports: ContainerPort[];
+}
+
+export interface ManagedMount {
+  kind: "legacy" | "user_home" | "shared_resource" | "node_cache" | "scratch";
+  source: string;
+  target: string;
+  readonly: boolean;
+  required: boolean;
+  export?: string;
 }
 
 export interface ContainerPort {
@@ -416,6 +453,7 @@ export interface SharedResource {
   mount_path: string;
   tags: string[];
   readonly: boolean;
+  nfs_available: boolean;
   sync_policy: "manual" | "on_create" | "prewarm";
   enabled: boolean;
   size_bytes: number;
@@ -443,6 +481,7 @@ export interface SharedResource {
     container_path?: string;
     target_path?: string;
     manual_command?: string;
+    selected_source?: "modelscope" | "huggingface" | "";
   } | null;
 }
 
@@ -605,6 +644,13 @@ export function getNodes() {
   return request<Node[]>("/api/nodes");
 }
 
+export function updateNodeOrder(nodeIds: number[]) {
+  return request<{ ok: boolean; node_ids: number[] }>("/api/nodes/order", {
+    method: "PUT",
+    body: JSON.stringify({ node_ids: nodeIds })
+  });
+}
+
 export function getNodeHardware() {
   return request<NodeHardware[]>("/api/metrics/node-hardware");
 }
@@ -617,6 +663,9 @@ export interface MetricsSnapshot {
   gpu_avg_pct: number;
   gpu_avg_vram_pct: number;
   temperature_c: number;
+  network_rx_bytes_per_sec: number;
+  network_tx_bytes_per_sec: number;
+  network_interface: string;
 }
 
 export function getNodeMetricsHistory(nodeId: number, hours: number) {
@@ -977,7 +1026,7 @@ export interface ManualResourceDownload {
   hf_endpoint: string;
 }
 
-export function requestSharedResource(payload: { resource_type: SharedResource["resource_type"]; name: string; version: string; source: string; download_mode: "automatic" | "manual"; tags: string[]; hf_repo_id: string; hf_revision: string; hf_token: string; hf_endpoint: string; ms_repo_id: string; ms_revision: string; ms_token: string }) {
+export function requestSharedResource(payload: { resource_type: SharedResource["resource_type"]; name: string; version: string; source: string; download_mode: "automatic" | "manual"; tags: string[]; hf_repo_id: string; hf_revision: string; hf_token: string; hf_endpoint: string; ms_repo_id: string; ms_revision: string; ms_token: string; priority_ms_repo_id: string; priority_hf_repo_id: string }) {
   return postJson<{ resource: SharedResource; task_id: number; manual_download: ManualResourceDownload | null }>("/api/data/resource-requests", payload);
 }
 
@@ -1054,6 +1103,18 @@ export function syncContainerNodeCache(containerId: number, resourceIds: number[
     `/api/containers/${containerId}/sync-node-cache`,
     { resource_ids: resourceIds },
   );
+}
+
+export function mountContainerPublicResources(containerId: number, resourceIds: number[]) {
+  return postJson<ContainerTask>(`/api/containers/${containerId}/mount-public-resources`, {
+    resource_ids: resourceIds,
+  });
+}
+
+export function unmountContainerPublicResources(containerId: number, mountPaths: string[]) {
+  return postJson<ContainerTask>(`/api/containers/${containerId}/unmount-public-resources`, {
+    mount_paths: mountPaths,
+  });
 }
 
 export function clearResourceCache(nodeId: number, resourceId: number) {
@@ -1189,4 +1250,21 @@ export function deleteContainerSyncRule(containerId: number, ruleId: number) {
 
 export function runContainerSyncRule(containerId: number, ruleId: number) {
   return postJson<ContainerSyncResponse>(`/api/containers/${containerId}/sync-rules/${ruleId}/run`, {});
+}
+
+export function uploadContainerAsResource(containerId: number, payload: {
+  resource_type: SharedResource["resource_type"];
+  name: string;
+  version: string;
+  tags: string[];
+  container_path: string;
+  conflict_policy: "overwrite" | "skip";
+  source?: "" | "huggingface" | "modelscope";
+  repo_id?: string;
+  revision?: string;
+}) {
+  return postJson<{ resource: SharedResource; sync_task: DataSyncTask; node_task: { id: number } }>(
+    `/api/containers/${containerId}/upload-as-resource`,
+    payload,
+  );
 }

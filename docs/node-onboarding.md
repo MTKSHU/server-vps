@@ -30,6 +30,8 @@ incus network list
 incus profile show default
 ```
 
+如计划运行「Incus 容器内的 NVIDIA Docker」，节点 Incus 还必须包含 nesting AppArmor 修复（至少 6.0.6 LTS，或相应更新的非 LTS 版本），详见 [nvidia-docker-image.md](nvidia-docker-image.md)。
+
 建议统一：
 
 ```text

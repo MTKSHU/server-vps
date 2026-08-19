@@ -29,7 +29,7 @@ NODE_AGENT_FILES_PORT = int(os.environ.get("NODE_AGENT_FILES_PORT", "8082"))
 NODE_AGENT_TOKEN = os.environ.get("NODE_AGENT_TOKEN", "")
 
 # Root disk size (/) for every container - fixed, not user-configurable
-CONTAINER_ROOT_DISK_GB = int(os.environ.get("CONTAINER_ROOT_DISK_GB", "50"))
+CONTAINER_ROOT_DISK_GB = int(os.environ.get("CONTAINER_ROOT_DISK_GB", "100"))
 
 RESOURCE_CONTAINER_STATUSES = (
     "provisioning",

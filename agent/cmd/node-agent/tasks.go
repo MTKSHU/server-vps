@@ -10,6 +10,16 @@ import (
 
 func executeTask(task *AgentTask, args cliArgs, server string, hostname string) TaskResultRequest {
 	switch task.Type {
+	case "migrate_container_home":
+		var payload ContainerHomeMigrationPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeContainerHomeMigration(payload)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
 	case "incus_create_container":
 		var payload IncusCreatePayload
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -90,6 +100,9 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
 		if hasSSHPort(payload.Ports) {
+			if err := validateActiveManagedMounts(payload.ManagedMounts); err != nil {
+				return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+			}
 			if err := initializeContainerSSHWithMounts(payload.Name, payload.SSHUsername, payload.Mounts, payload.SSHKey); err != nil {
 				return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 			}
@@ -346,6 +359,16 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
 		output, err := executeApplyResourceMounts(payload, args.dataPath)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "remove_resource_mounts":
+		var payload RemoveResourceMountsPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeRemoveResourceMounts(payload)
 		if err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}

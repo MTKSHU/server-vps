@@ -1,0 +1,13 @@
+[Unit]
+Description=Prepare Incus NVIDIA proc entries for nested Docker
+After=local-fs.target
+Before=docker.service
+ConditionPathExists=/dev/nvidiactl
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nvidia-docker-incus-setup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -44,6 +44,38 @@ func TestDownloadScriptPreservesResourceCheckpointAndValidatesHFD(t *testing.T) 
 	}
 }
 
+func TestDownloadScriptPublicPriorityFallback(t *testing.T) {
+	script, err := downloadScript(DownloadSharedResourcePayload{
+		ResourceID: 9, Source: "priority", RepoID: "owner/ms-repo", Revision: "master",
+		FallbackRepoID: "owner/hf-repo", FallbackRevision: "main",
+		RepoType: "dataset", HFEndpoint: "https://hf-mirror.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`source == "priority"`,
+		`ModelScope failed, switching to Hugging Face mirror`,
+		`HF_HUB_DISABLE_XET`,
+		`("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")`,
+		`cfg.get("fallback_repo_id")`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("priority downloader script missing %q", expected)
+		}
+	}
+}
+
+func TestDownloaderNetworkFallbackWaitsForIPv4DefaultRoute(t *testing.T) {
+	if !strings.Contains(waitForDownloaderNetworkRouteScript(), "ip -4 route show default") {
+		t.Fatal("downloader network fallback must wait for an IPv4 default route")
+	}
+	args := strings.Join(resourceDownloaderNetworkOverrideArgs(), " ")
+	if !strings.Contains(args, "parent=incusbr0") || strings.Contains(args, "network=incusbr0") {
+		t.Fatalf("downloader network override uses incompatible Incus device properties: %s", args)
+	}
+}
+
 func TestRollingOutputKeepsTailWithinLimit(t *testing.T) {
 	var output rollingOutput
 	output.WriteLine(strings.Repeat("a", downloaderOutputLimit))

@@ -3695,6 +3695,53 @@
         }
       }
     },
+    "/api/containers/{container_id}/migrate-home": {
+      "post": {
+        "summary": "Migrate Container Home",
+        "operationId": "migrate_container_home_api_containers__container_id__migrate_home_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerHomeMigrationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/containers/{container_id}/ssh-access/retry": {
       "post": {
         "summary": "Retry Container Ssh Access",
@@ -3983,6 +4030,54 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ContainerSyncInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/upload-as-resource": {
+      "post": {
+        "summary": "Upload Container As Resource",
+        "description": "用户已在自己容器内下载/准备好数据后，一步注册为公开数据集/模型并从容器拉取到存储节点。\n\n复用 enqueue_container_sync 的 container_to_storage 链路（含跨节点临时密钥），\n暂存到与最终目录同级的 .{resource_id}.partial，成功后由\nmigrate_shared_resource_path 原子切换到正式目录并自动触发校验。",
+        "operationId": "upload_container_as_resource_api_containers__container_id__upload_as_resource_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerResourceUploadInput"
               }
             }
           }
@@ -4324,6 +4419,54 @@
         ],
         "responses": {
           "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/containers/{container_id}/mount-public-resources": {
+      "post": {
+        "summary": "Mount Container Public Resources",
+        "description": "给已有容器追加只读公开资源；节点缓存就绪时优先缓存，否则使用托管 NFS。",
+        "operationId": "mount_container_public_resources_api_containers__container_id__mount_public_resources_post",
+        "parameters": [
+          {
+            "name": "container_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Container Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerNodeCacheMountInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
@@ -4933,6 +5076,42 @@
         }
       }
     },
+    "/api/nodes/metrics": {
+      "post": {
+        "summary": "Report Node Metrics",
+        "operationId": "report_node_metrics_api_nodes_metrics_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentMetricsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/nodes/tasks/claim": {
       "post": {
         "summary": "Claim Node Task",
@@ -5067,6 +5246,86 @@
   },
   "components": {
     "schemas": {
+      "AgentMetricsInput": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "title": "Uptime Seconds",
+            "default": 0
+          },
+          "cpu_usage_percent": {
+            "type": "number",
+            "title": "Cpu Usage Percent",
+            "default": 0
+          },
+          "cpu_temperature_c": {
+            "type": "integer",
+            "title": "Cpu Temperature C",
+            "default": 0
+          },
+          "memory_total_gb": {
+            "type": "integer",
+            "title": "Memory Total Gb",
+            "default": 1
+          },
+          "memory_used_gb": {
+            "type": "integer",
+            "title": "Memory Used Gb",
+            "default": 0
+          },
+          "load_avg": {
+            "type": "number",
+            "title": "Load Avg",
+            "default": 0
+          },
+          "swap_total_gb": {
+            "type": "number",
+            "title": "Swap Total Gb",
+            "default": 0
+          },
+          "swap_used_gb": {
+            "type": "number",
+            "title": "Swap Used Gb",
+            "default": 0
+          },
+          "network_interface": {
+            "type": "string",
+            "title": "Network Interface",
+            "default": ""
+          },
+          "network_rx_bytes_per_sec": {
+            "type": "number",
+            "title": "Network Rx Bytes Per Sec",
+            "default": 0
+          },
+          "network_tx_bytes_per_sec": {
+            "type": "number",
+            "title": "Network Tx Bytes Per Sec",
+            "default": 0
+          },
+          "gpus": {
+            "items": {
+              "$ref": "#/components/schemas/GPUReport"
+            },
+            "type": "array",
+            "title": "Gpus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "hostname"
+        ],
+        "title": "AgentMetricsInput"
+      },
       "AgentTaskClaim": {
         "properties": {
           "token": {
@@ -5396,6 +5655,17 @@
         ],
         "title": "ContainerExecCreate"
       },
+      "ContainerHomeMigrationInput": {
+        "properties": {
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "ContainerHomeMigrationInput"
+      },
       "ContainerNodeCacheMountInput": {
         "properties": {
           "resource_ids": {
@@ -5511,6 +5781,13 @@
             },
             "type": "array",
             "title": "Mounts"
+          },
+          "managed_mounts": {
+            "items": {
+              "$ref": "#/components/schemas/ManagedMount"
+            },
+            "type": "array",
+            "title": "Managed Mounts"
           },
           "created_at": {
             "type": "integer",
@@ -5729,6 +6006,71 @@
           "gpu_count"
         ],
         "title": "ContainerResourceUpdate"
+      },
+      "ContainerResourceUploadInput": {
+        "properties": {
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "dataset",
+              "huggingface_model",
+              "pytorch_model"
+            ],
+            "title": "Resource Type",
+            "default": "dataset"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "default"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "container_path": {
+            "type": "string",
+            "title": "Container Path"
+          },
+          "conflict_policy": {
+            "type": "string",
+            "enum": [
+              "overwrite",
+              "skip"
+            ],
+            "title": "Conflict Policy",
+            "default": "overwrite"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          },
+          "repo_id": {
+            "type": "string",
+            "title": "Repo Id",
+            "default": ""
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "container_path"
+        ],
+        "title": "ContainerResourceUploadInput",
+        "description": "用户在自己容器中准备好数据后，上传到存储节点并注册为公开数据集/模型。"
       },
       "ContainerStateReport": {
         "properties": {
@@ -6376,6 +6718,51 @@
         ],
         "title": "LoginInput"
       },
+      "ManagedMount": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "user_home",
+              "shared_resource",
+              "node_cache",
+              "scratch"
+            ],
+            "title": "Kind",
+            "default": "legacy"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "readonly": {
+            "type": "boolean",
+            "title": "Readonly",
+            "default": false
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": true
+          },
+          "export": {
+            "type": "string",
+            "title": "Export",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target"
+        ],
+        "title": "ManagedMount"
+      },
       "NodeConfigInput": {
         "properties": {
           "node_type": {
@@ -6432,6 +6819,11 @@
           "max_disk_gb_per_container": {
             "type": "integer",
             "title": "Max Disk Gb Per Container",
+            "default": 0
+          },
+          "root_disk_gb": {
+            "type": "integer",
+            "title": "Root Disk Gb",
             "default": 0
           },
           "reserved_memory_gb": {
@@ -6500,6 +6892,16 @@
             "type": "string",
             "title": "Resource Cache Base",
             "default": ""
+          },
+          "shared_storage_mode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "disabled",
+              "enabled"
+            ],
+            "title": "Shared Storage Mode",
+            "default": "inherit"
           }
         },
         "type": "object",
@@ -6578,6 +6980,11 @@
             "title": "Max Disk Gb Per Container",
             "default": 0
           },
+          "root_disk_gb": {
+            "type": "integer",
+            "title": "Root Disk Gb",
+            "default": 0
+          },
           "reserved_memory_gb": {
             "type": "integer",
             "title": "Reserved Memory Gb",
@@ -6644,6 +7051,48 @@
             "type": "string",
             "title": "Resource Cache Base",
             "default": ""
+          },
+          "shared_storage_mode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "disabled",
+              "enabled"
+            ],
+            "title": "Shared Storage Mode",
+            "default": "inherit"
+          },
+          "nfs_healthy": {
+            "type": "boolean",
+            "title": "Nfs Healthy",
+            "default": false
+          },
+          "nfs_latency_ms": {
+            "type": "number",
+            "title": "Nfs Latency Ms",
+            "default": 0
+          },
+          "nfs_error": {
+            "type": "string",
+            "title": "Nfs Error",
+            "default": ""
+          },
+          "nfs_checked_at": {
+            "type": "integer",
+            "title": "Nfs Checked At",
+            "default": 0
+          },
+          "nfs_last_success_at": {
+            "type": "integer",
+            "title": "Nfs Last Success At",
+            "default": 0
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
           },
           "cpu_model": {
             "type": "string",
@@ -6718,6 +7167,21 @@
           "swap_used_gb": {
             "type": "number",
             "title": "Swap Used Gb",
+            "default": 0
+          },
+          "network_interface": {
+            "type": "string",
+            "title": "Network Interface",
+            "default": ""
+          },
+          "network_rx_bytes_per_sec": {
+            "type": "number",
+            "title": "Network Rx Bytes Per Sec",
+            "default": 0
+          },
+          "network_tx_bytes_per_sec": {
+            "type": "number",
+            "title": "Network Tx Bytes Per Sec",
             "default": 0
           },
           "os_version": {
@@ -6920,6 +7384,17 @@
               }
             ],
             "title": "Storage Volumes"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "nfs_health": {
+            "type": "object",
+            "title": "Nfs Health"
           }
         },
         "type": "object",
@@ -7009,6 +7484,108 @@
             "type": "integer",
             "title": "Transfer Bandwidth Limit Mbps",
             "default": 0
+          },
+          "shared_storage_mode": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "canary",
+              "enabled"
+            ],
+            "title": "Shared Storage Mode",
+            "default": "disabled"
+          },
+          "shared_storage_canary_user_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Shared Storage Canary User Ids"
+          },
+          "nfs_server": {
+            "type": "string",
+            "title": "Nfs Server",
+            "default": ""
+          },
+          "nfs_users_export": {
+            "type": "string",
+            "title": "Nfs Users Export",
+            "default": ""
+          },
+          "nfs_datasets_export": {
+            "type": "string",
+            "title": "Nfs Datasets Export",
+            "default": ""
+          },
+          "nfs_models_export": {
+            "type": "string",
+            "title": "Nfs Models Export",
+            "default": ""
+          },
+          "nfs_mount_options": {
+            "type": "string",
+            "title": "Nfs Mount Options",
+            "default": "hard,_netdev,noatime,vers=4.1,proto=tcp"
+          },
+          "nfs_sentinel": {
+            "type": "string",
+            "title": "Nfs Sentinel",
+            "default": ".server-vps-nfs"
+          },
+          "nfs_sentinel_signature": {
+            "type": "string",
+            "title": "Nfs Sentinel Signature",
+            "default": ""
+          },
+          "nfs_idmap_base": {
+            "type": "integer",
+            "title": "Nfs Idmap Base",
+            "default": 1000000
+          },
+          "truenas_nfs_auto_share": {
+            "type": "boolean",
+            "title": "Truenas Nfs Auto Share",
+            "default": false
+          },
+          "workspace_default_gb": {
+            "type": "integer",
+            "title": "Workspace Default Gb",
+            "default": 100
+          },
+          "workspace_retention_days": {
+            "type": "integer",
+            "title": "Workspace Retention Days",
+            "default": 30
+          },
+          "agent_metrics_interval_seconds": {
+            "type": "integer",
+            "title": "Agent Metrics Interval Seconds",
+            "default": 2
+          },
+          "agent_heartbeat_interval_seconds": {
+            "type": "integer",
+            "title": "Agent Heartbeat Interval Seconds",
+            "default": 15
+          },
+          "agent_container_interval_seconds": {
+            "type": "integer",
+            "title": "Agent Container Interval Seconds",
+            "default": 15
+          },
+          "agent_storage_interval_seconds": {
+            "type": "integer",
+            "title": "Agent Storage Interval Seconds",
+            "default": 60
+          },
+          "agent_inventory_interval_seconds": {
+            "type": "integer",
+            "title": "Agent Inventory Interval Seconds",
+            "default": 300
+          },
+          "agent_task_poll_interval_seconds": {
+            "type": "integer",
+            "title": "Agent Task Poll Interval Seconds",
+            "default": 5
           },
           "webhook_enabled": {
             "type": "boolean",

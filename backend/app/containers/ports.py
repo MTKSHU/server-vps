@@ -136,6 +136,7 @@ def incus_ports_payload(container: dict[str, Any], ports: list[dict[str, Any]]) 
         "ssh_username": container["ssh_username"],
         "ssh_key": managed_ssh_keys(container["ssh_key"]),
         "mounts": container["mounts"] or [],
+        "managed_mounts": container.get("managed_mounts") or [],
         "ports": [public_port_payload(port) for port in ports],
     }
 

@@ -8,7 +8,8 @@
 2. [authentication.md](authentication.md)：理解默认本地账号、个人 API Token、可选平台自助注册、外部 OIDC/CAS SSO 和 Casdoor 待审导入。
 3. [node-onboarding.md](node-onboarding.md)：把 GPU/存储节点接入平台。
 4. [storage-user-data-sync.md](storage-user-data-sync.md)：理解用户目录、共享数据、模型资源和同步任务。
-5. [architecture.md](architecture.md)：查看组件职责、数据流和当前架构边界。
+5. [nfs-home-rollout.md](nfs-home-rollout.md)：部署 NFS 持久 Home 和 canary。
+6. [architecture.md](architecture.md)：查看组件职责、数据流和当前架构边界。
 
 ## 部署
 
@@ -22,12 +23,14 @@
 ## 节点接入
 
 - [node-onboarding.md](node-onboarding.md)：当前 GPU/存储节点接入流程，以 Web 控制台生成的 join token、环境文件和 systemd service 为准。
+- [nvidia-docker-image.md](nvidia-docker-image.md)：构建和分发预装 Docker Engine 与 NVIDIA Container Toolkit 的 Ubuntu 24.04 Incus 镜像。
 - [new-gpu-node-onboarding.md](new-gpu-node-onboarding.md)：旧版新 GPU 机器接入手册的兼容入口，已指向当前节点接入文档。
 - [truenas-scale-storage-node-deployment.md](truenas-scale-storage-node-deployment.md)：TrueNAS SCALE 存储节点部署与接入说明。
 
 ## 存储与同步
 
 - [storage-user-data-sync.md](storage-user-data-sync.md)：用户 Home、公开数据集、模型资源、资源请求、节点本地缓存、Scratch、Workspace 卷和跨节点同步。
+- [nfs-home-rollout.md](nfs-home-rollout.md)：共享 NFS、迁移、回滚和验收。
 - [storage-zfs-quota-plan.md](storage-zfs-quota-plan.md)：用户目录 ZFS dataset 与 quota 方案、迁移步骤和平台记录。
 
 ## 架构设计

@@ -113,6 +113,15 @@ func executeMigrateSharedResourcePath(payload MigrateSharedResourcePathPayload) 
 		}
 	}
 
+	// 旧布局是 {base}/{name}/{provider}，rename 后 {base}/{name} 可能变成空目录。
+	// os.Remove 只在目录为空时才会成功，不会误删仍有内容的目录（如未创建 symlink 的其它资源共享的
+	// name 目录，或 legacy_custom 布局下 oldPath 本身就是 base 目录的情况）。
+	if !pathExists(oldPath) {
+		if legacyParent := filepath.Dir(oldPath); os.Remove(legacyParent) == nil {
+			result["removed_empty_legacy_dir"] = legacyParent
+		}
+	}
+
 	result["status"] = "migrated"
 	out, _ := json.Marshal(result)
 	return string(out), nil

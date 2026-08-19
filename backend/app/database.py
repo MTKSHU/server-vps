@@ -88,6 +88,7 @@ def init_schema():
                 mount_path TEXT NOT NULL,
                 tags TEXT[] NOT NULL DEFAULT '{}',
                 readonly BOOLEAN NOT NULL DEFAULT TRUE,
+                nfs_available BOOLEAN NOT NULL DEFAULT TRUE,
                 sync_policy TEXT NOT NULL DEFAULT 'manual',
                 enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 size_bytes BIGINT NOT NULL DEFAULT 0,
@@ -107,20 +108,7 @@ def init_schema():
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS requested_by BIGINT REFERENCES users(id) ON DELETE SET NULL;
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS upload_name TEXT NOT NULL DEFAULT '';
             ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
-            CREATE TABLE IF NOT EXISTS node_resource_cache (
-                id BIGSERIAL PRIMARY KEY,
-                node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-                resource_id BIGINT NOT NULL REFERENCES shared_resources(id) ON DELETE CASCADE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                local_path TEXT NOT NULL DEFAULT '',
-                synced_at INTEGER NOT NULL DEFAULT 0,
-                size_bytes BIGINT NOT NULL DEFAULT 0,
-                error TEXT NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER NOT NULL DEFAULT 0,
-                UNIQUE (node_id, resource_id),
-                CONSTRAINT node_resource_cache_status_check CHECK (status IN ('pending', 'syncing', 'ready', 'failed'))
-            );
+            ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS nfs_available BOOLEAN NOT NULL DEFAULT TRUE;
             CREATE TABLE IF NOT EXISTS nodes (
                 id BIGSERIAL PRIMARY KEY,
                 hostname TEXT NOT NULL UNIQUE,
@@ -138,12 +126,15 @@ def init_schema():
                 max_cpu_per_container INTEGER NOT NULL DEFAULT 0,
                 max_memory_gb_per_container INTEGER NOT NULL DEFAULT 0,
                 max_disk_gb_per_container INTEGER NOT NULL DEFAULT 0,
+                root_disk_gb INTEGER NOT NULL DEFAULT 0,
                 reserved_memory_gb INTEGER NOT NULL DEFAULT 0,
                 reserved_disk_gb INTEGER NOT NULL DEFAULT 0,
                 allow_port_mapping BOOLEAN NOT NULL DEFAULT TRUE,
                 max_ports_per_container INTEGER NOT NULL DEFAULT 8,
                 scheduler_weight INTEGER NOT NULL DEFAULT 0,
+                display_order INTEGER NOT NULL DEFAULT 2147483647,
                 labels JSONB NOT NULL DEFAULT '[]',
+                shared_storage_mode TEXT NOT NULL DEFAULT 'inherit',
                 wol_mac TEXT NOT NULL DEFAULT '',
                 wol_broadcast TEXT NOT NULL DEFAULT '255.255.255.255',
                 cpu_model TEXT NOT NULL DEFAULT '',
@@ -162,8 +153,25 @@ def init_schema():
                 incus_status TEXT NOT NULL DEFAULT 'unknown',
                 agent_version TEXT NOT NULL DEFAULT '',
                 uptime_seconds INTEGER NOT NULL DEFAULT 0,
+                network_interface TEXT NOT NULL DEFAULT '',
+                network_rx_bytes_per_sec REAL NOT NULL DEFAULT 0,
+                network_tx_bytes_per_sec REAL NOT NULL DEFAULT 0,
                 node_token TEXT NOT NULL DEFAULT '',
                 registered_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS node_resource_cache (
+                id BIGSERIAL PRIMARY KEY,
+                node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                resource_id BIGINT NOT NULL REFERENCES shared_resources(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                local_path TEXT NOT NULL DEFAULT '',
+                synced_at INTEGER NOT NULL DEFAULT 0,
+                size_bytes BIGINT NOT NULL DEFAULT 0,
+                error TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (node_id, resource_id),
+                CONSTRAINT node_resource_cache_status_check CHECK (status IN ('pending', 'syncing', 'ready', 'failed'))
             );
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS agent_update_channel TEXT NOT NULL DEFAULT 'stable';
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS agent_auto_update BOOLEAN NOT NULL DEFAULT TRUE;
@@ -178,6 +186,9 @@ def init_schema():
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS cpu_sockets INTEGER NOT NULL DEFAULT 1;
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS cpu_temperature_c INTEGER NOT NULL DEFAULT 0;
             ALTER TABLE nodes ADD COLUMN IF NOT EXISTS uptime_seconds INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE nodes ADD COLUMN IF NOT EXISTS network_interface TEXT NOT NULL DEFAULT '';
+            ALTER TABLE nodes ADD COLUMN IF NOT EXISTS network_rx_bytes_per_sec REAL NOT NULL DEFAULT 0;
+            ALTER TABLE nodes ADD COLUMN IF NOT EXISTS network_tx_bytes_per_sec REAL NOT NULL DEFAULT 0;
             ALTER TABLE nodes ALTER COLUMN disk_total_gb TYPE REAL USING disk_total_gb::real;
             ALTER TABLE nodes ALTER COLUMN disk_used_gb TYPE REAL USING disk_used_gb::real;
             CREATE TABLE IF NOT EXISTS quota_profile_node_access (
@@ -204,6 +215,9 @@ def init_schema():
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+			ALTER TABLE user_storage_datasets ADD COLUMN IF NOT EXISTS nfs_share_id BIGINT NOT NULL DEFAULT 0;
+			ALTER TABLE user_storage_datasets ADD COLUMN IF NOT EXISTS nfs_export_path TEXT NOT NULL DEFAULT '';
+			ALTER TABLE user_storage_datasets ADD COLUMN IF NOT EXISTS nfs_share_status TEXT NOT NULL DEFAULT 'manual';
             CREATE TABLE IF NOT EXISTS agent_releases (
                 version TEXT NOT NULL,
                 architecture TEXT NOT NULL DEFAULT 'amd64',
@@ -494,11 +508,13 @@ def init_schema():
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS max_cpu_per_container INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS max_memory_gb_per_container INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS max_disk_gb_per_container INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS root_disk_gb INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS reserved_memory_gb INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS reserved_disk_gb INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS allow_port_mapping BOOLEAN NOT NULL DEFAULT TRUE")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS max_ports_per_container INTEGER NOT NULL DEFAULT 8")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS scheduler_weight INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 2147483647")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS labels JSONB NOT NULL DEFAULT '[]'")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS wol_mac TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS wol_broadcast TEXT NOT NULL DEFAULT '255.255.255.255'")
@@ -519,6 +535,9 @@ def init_schema():
                SELECT container_id,'realtime_sync','storage_to_container',name || '（存储到容器）',container_path,storage_relative_path,resource_id,interval_minutes,enabled,last_run_at,created_at,updated_at
                FROM container_sync_rules WHERE rule_type='realtime_bidirectional'"""
         )
+        conn.execute("ALTER TABLE user_storage_datasets ADD COLUMN IF NOT EXISTS nfs_share_id BIGINT NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE user_storage_datasets ADD COLUMN IF NOT EXISTS nfs_export_path TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE user_storage_datasets ADD COLUMN IF NOT EXISTS nfs_share_status TEXT NOT NULL DEFAULT 'manual'")
         conn.execute("UPDATE container_sync_rules SET rule_type='realtime_sync',direction='container_to_storage',name=name || '（容器到存储）' WHERE rule_type='realtime_bidirectional'")
         conn.execute("ALTER TABLE container_sync_rules ADD CONSTRAINT container_sync_rules_type_check CHECK (rule_type IN ('scheduled_upload', 'realtime_sync', 'resource_pull'))")
         conn.execute("ALTER TABLE container_sync_rules DROP CONSTRAINT IF EXISTS container_sync_rules_direction_check")
@@ -547,6 +566,7 @@ def init_schema():
         conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS checked_at INTEGER NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS download_progress JSONB NOT NULL DEFAULT '{}'")
         conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS source_endpoint TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE shared_resources ADD COLUMN IF NOT EXISTS nfs_available BOOLEAN NOT NULL DEFAULT TRUE")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS ssh_user TEXT NOT NULL DEFAULT 'root'")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS ssh_port INTEGER NOT NULL DEFAULT 22")
         conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS sync_ip TEXT NOT NULL DEFAULT ''")
@@ -630,6 +650,14 @@ def init_schema():
                 "INSERT INTO resource_tag_options (tag, created_at) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (_t, ts_now),
             )
+        # Persist the safe rollout defaults explicitly. Existing administrator
+        # choices are preserved by ON CONFLICT DO NOTHING.
+        conn.execute(
+            "INSERT INTO system_settings(key,value,updated_at) VALUES "
+            "('shared_storage_mode','disabled',%s) "
+            "ON CONFLICT(key) DO NOTHING",
+            (ts_now,),
+        )
                 # 项目/组能力已从当前产品阶段移除；清理旧版本遗留结构和数据。
         conn.execute("DROP TABLE IF EXISTS container_projects")
         conn.execute("ALTER TABLE containers DROP COLUMN IF EXISTS data_profile")
@@ -698,6 +726,17 @@ def init_schema():
                 created_at INTEGER NOT NULL
             )"""
         )
+        conn.execute("ALTER TABLE user_workspace_volumes ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'legacy-persistent'")
+        conn.execute("ALTER TABLE user_workspace_volumes ADD COLUMN IF NOT EXISTS last_used_at INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE user_workspace_volumes ADD COLUMN IF NOT EXISTS cleanup_after INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS nfs_healthy BOOLEAN NOT NULL DEFAULT FALSE")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS nfs_latency_ms REAL NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS nfs_error TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS nfs_checked_at INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS nfs_last_success_at INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS capabilities JSONB NOT NULL DEFAULT '[]'")
+        conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS shared_storage_mode TEXT NOT NULL DEFAULT 'inherit'")
+        conn.execute("ALTER TABLE containers ADD COLUMN IF NOT EXISTS managed_mounts JSONB NOT NULL DEFAULT '[]'")
         # 容器到期时间
         conn.execute("ALTER TABLE containers ADD COLUMN IF NOT EXISTS expires_at INTEGER NOT NULL DEFAULT 0")
         # 节点指标历史（轻量监控）
@@ -711,8 +750,20 @@ def init_schema():
                 disk_pct REAL NOT NULL DEFAULT 0,
                 gpu_avg_pct REAL NOT NULL DEFAULT 0,
                 gpu_avg_vram_pct REAL NOT NULL DEFAULT 0,
+                network_rx_bytes_per_sec REAL NOT NULL DEFAULT 0,
+                network_tx_bytes_per_sec REAL NOT NULL DEFAULT 0,
+                network_interface TEXT NOT NULL DEFAULT '',
                 temperature_c INTEGER NOT NULL DEFAULT 0
             )"""
+        )
+        conn.execute(
+            "ALTER TABLE node_metrics_snapshots ADD COLUMN IF NOT EXISTS network_rx_bytes_per_sec REAL NOT NULL DEFAULT 0"
+        )
+        conn.execute(
+            "ALTER TABLE node_metrics_snapshots ADD COLUMN IF NOT EXISTS network_tx_bytes_per_sec REAL NOT NULL DEFAULT 0"
+        )
+        conn.execute(
+            "ALTER TABLE node_metrics_snapshots ADD COLUMN IF NOT EXISTS network_interface TEXT NOT NULL DEFAULT ''"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS node_metrics_snapshots_node_time_idx "

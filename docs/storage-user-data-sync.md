@@ -87,6 +87,22 @@ NODE_AGENT_FILES_PORT=8082
 
 旧目录迁移接口为 `POST /api/data/shared-resources/migrate-provider-layout`。建议先用 `dry_run=true` 预览候选项，再正式执行；迁移任务由 storage/mixed 节点 agent 在本地执行，默认会在旧路径留下兼容 symlink，并在迁移后自动校验资源。
 
+## 从容器上传自定义数据集/模型
+
+除了平台自动从 HuggingFace/ModelScope 下载，用户也可以先在自己的容器里下载/准备好任意数据（含完全自定义的数据集或模型权重），再通过下面任一方式一步注册为公开资源：
+
+- 前端：容器页面「同步设置」对话框新增「上传为公开数据集/模型」标签页。
+- 脚本：`scripts/cluster-upload-resource.sh`（在容器内执行，需要个人 API Token，见 [authentication.md](authentication.md)），提交后持续轮询打印拉取进度和归档/校验结果，方便用户全程监督、随时了解失败原因。
+
+后端接口 `POST /api/containers/{container_id}/upload-as-resource`：
+
+1. 校验容器归属（本人或管理员）与命名（同名资源仅允许发起者在 `uploading`/`failed` 状态下重新提交）。
+2. 以 `enabled=TRUE, request_status='uploading'` 创建（或复用）`shared_resources` 记录，`source_path` 先指向与最终目录同级的 `.{resource_id}.partial` 暂存目录。
+3. 复用容器同步链路（`data_sync_tasks.task_type='shared_resource_upload'`），跨节点时同样通过一次性临时 SSH 密钥从容器直接 rsync 到存储节点暂存目录，无需在容器内预置任何到存储节点的常驻凭据。
+4. 拉取成功后，后端自动下发 `migrate_shared_resource_path` 任务把暂存目录原子切换为正式目录，并按现有逻辑自动触发 `verify_shared_resource`：留空 `source` 时只做本地完整性检查；若额外提供 `source`(huggingface/modelscope) + `repo_id` + `revision`，则和平台自动下载的资源一样核对目录结构、文件数量与哈希。
+
+删除权限与平台其它公开资源一致（仅管理员），上传发起人身份记录在 `shared_resources.requested_by`。
+
 ## 节点本地资源缓存
 
 节点配置中的 `resource_cache_base` 用于设置公开资源本地缓存根目录；为空时使用节点数据盘根目录下的默认 shared-cache 路径。

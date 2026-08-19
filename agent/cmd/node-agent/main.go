@@ -208,12 +208,13 @@ func main() {
 	}()
 
 	// CPU、内存和 GPU 指标使用独立轻量接口，不触发完整节点同步。
+	networkSampler := &networkRateSampler{}
 	go func() {
 		endpoint := strings.TrimRight(args.server, "/") + "/api/nodes/metrics"
 		failures := 0
 		for {
 			time.Sleep(time.Duration(runtimeConfig.get().MetricsIntervalSeconds) * time.Second)
-			_, _, err := postJSON(endpoint, buildMetricsReport(args, hostname))
+			_, _, err := postJSON(endpoint, buildMetricsReport(args, hostname, networkSampler))
 			if err != nil {
 				failures++
 				if failures == 1 || failures%30 == 0 {

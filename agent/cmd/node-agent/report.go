@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/csv"
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -978,6 +979,8 @@ func (collector *payloadCollector) buildPayload() NodeRegistration {
 		collector.refreshContainers(now)
 	}
 	collector.initialized = true
+	collector.cached.Capabilities = []string{"managed_nfs_mounts_v1", "typed_mounts_v1", "per_user_nfs_exports_v1", "managed_nfs_hot_mounts_v1"}
+	collector.cached.NFSHealth = detectNFSHealth()
 	return collector.cached
 }
 
@@ -986,21 +989,113 @@ func buildPayload(args cliArgs) NodeRegistration {
 	return newPayloadCollector(args).buildPayload()
 }
 
-func buildMetricsReport(args cliArgs, hostname string) AgentMetricsReport {
+type networkCounters struct {
+	Interface string
+	RXBytes   uint64
+	TXBytes   uint64
+	SampledAt time.Time
+}
+
+type networkRateSampler struct {
+	previous networkCounters
+}
+
+func parseDefaultRouteInterface(content string) string {
+	selected := ""
+	selectedMetric := int64(math.MaxInt64)
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 || fields[0] == "Iface" || fields[1] != "00000000" || fields[7] != "00000000" {
+			continue
+		}
+		flags, err := strconv.ParseUint(fields[3], 16, 64)
+		if err != nil || flags&1 == 0 {
+			continue
+		}
+		metric, err := strconv.ParseInt(fields[6], 10, 64)
+		if err != nil {
+			metric = math.MaxInt32
+		}
+		if selected == "" || metric < selectedMetric {
+			selected = fields[0]
+			selectedMetric = metric
+		}
+	}
+	return selected
+}
+
+func readUintFile(path string) (uint64, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(content)), 10, 64)
+}
+
+func readDefaultRouteNetworkCounters(now time.Time) (networkCounters, error) {
+	routes, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return networkCounters{}, err
+	}
+	interfaceName := parseDefaultRouteInterface(string(routes))
+	if interfaceName == "" || strings.ContainsAny(interfaceName, `/\\`) {
+		return networkCounters{}, fmt.Errorf("IPv4 default route interface not found")
+	}
+	statisticsPath := filepath.Join("/sys/class/net", interfaceName, "statistics")
+	rxBytes, err := readUintFile(filepath.Join(statisticsPath, "rx_bytes"))
+	if err != nil {
+		return networkCounters{}, err
+	}
+	txBytes, err := readUintFile(filepath.Join(statisticsPath, "tx_bytes"))
+	if err != nil {
+		return networkCounters{}, err
+	}
+	return networkCounters{Interface: interfaceName, RXBytes: rxBytes, TXBytes: txBytes, SampledAt: now}, nil
+}
+
+func calculateNetworkRates(previous, current networkCounters) (float64, float64) {
+	elapsed := current.SampledAt.Sub(previous.SampledAt).Seconds()
+	if previous.Interface == "" || previous.Interface != current.Interface || elapsed <= 0 || current.RXBytes < previous.RXBytes || current.TXBytes < previous.TXBytes {
+		return 0, 0
+	}
+	return float64(current.RXBytes-previous.RXBytes) / elapsed, float64(current.TXBytes-previous.TXBytes) / elapsed
+}
+
+func (sampler *networkRateSampler) sample(now time.Time) (string, float64, float64) {
+	current, err := readDefaultRouteNetworkCounters(now)
+	if err != nil {
+		sampler.previous = networkCounters{}
+		return "", 0, 0
+	}
+	rxRate, txRate := calculateNetworkRates(sampler.previous, current)
+	sampler.previous = current
+	return current.Interface, rxRate, txRate
+}
+
+func buildMetricsReport(args cliArgs, hostname string, networkSampler *networkRateSampler) AgentMetricsReport {
 	gpus, _ := detectNVIDIAGPUs()
 	memoryTotal, memoryUsed := memoryGB()
 	swapTotal, swapUsed := swapGB()
+	networkInterface := ""
+	networkRXRate := 0.0
+	networkTXRate := 0.0
+	if networkSampler != nil {
+		networkInterface, networkRXRate, networkTXRate = networkSampler.sample(time.Now())
+	}
 	return AgentMetricsReport{
-		Token:           args.token,
-		Hostname:        hostname,
-		UptimeSeconds:   uptimeSeconds(),
-		CPUUsagePercent: cpuUsagePercent(),
-		CPUTemperatureC: cpuTemperature(),
-		MemoryTotalGB:   memoryTotal,
-		MemoryUsedGB:    memoryUsed,
-		LoadAvg:         loadAvg(),
-		SwapTotalGB:     swapTotal,
-		SwapUsedGB:      swapUsed,
-		GPUs:            gpus,
+		Token:                   args.token,
+		Hostname:                hostname,
+		UptimeSeconds:           uptimeSeconds(),
+		CPUUsagePercent:         cpuUsagePercent(),
+		CPUTemperatureC:         cpuTemperature(),
+		MemoryTotalGB:           memoryTotal,
+		MemoryUsedGB:            memoryUsed,
+		LoadAvg:                 loadAvg(),
+		SwapTotalGB:             swapTotal,
+		SwapUsedGB:              swapUsed,
+		NetworkInterface:        networkInterface,
+		NetworkRXBytesPerSecond: networkRXRate,
+		NetworkTXBytesPerSecond: networkTXRate,
+		GPUs:                    gpus,
 	}
 }

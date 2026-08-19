@@ -13,13 +13,29 @@ import (
 )
 
 type zfsDatasetResult struct {
-	UserID      int    `json:"user_id"`
-	Username    string `json:"username"`
-	DatasetName string `json:"dataset_name"`
-	Mountpoint  string `json:"mountpoint"`
-	QuotaGB     int    `json:"quota_gb"`
-	Migrated    bool   `json:"migrated"`
-	BackupPath  string `json:"backup_path,omitempty"`
+	UserID         int    `json:"user_id"`
+	Username       string `json:"username"`
+	DatasetName    string `json:"dataset_name"`
+	Mountpoint     string `json:"mountpoint"`
+	QuotaGB        int    `json:"quota_gb"`
+	Migrated       bool   `json:"migrated"`
+	BackupPath     string `json:"backup_path,omitempty"`
+	NFSShareID     int    `json:"nfs_share_id,omitempty"`
+	NFSExportPath  string `json:"nfs_export_path,omitempty"`
+	NFSShareStatus string `json:"nfs_share_status,omitempty"`
+}
+
+type trueNASNFSShare struct {
+	ID           int      `json:"id"`
+	Path         string   `json:"path"`
+	Networks     []string `json:"networks"`
+	Hosts        []string `json:"hosts"`
+	ReadOnly     bool     `json:"ro"`
+	MapRootUser  *string  `json:"maproot_user"`
+	MapRootGroup *string  `json:"maproot_group"`
+	MapAllUser   *string  `json:"mapall_user"`
+	MapAllGroup  *string  `json:"mapall_group"`
+	Security     []string `json:"security"`
 }
 
 func executeEnsureUserZFSDataset(payload UserZFSDatasetPayload) (string, error) {
@@ -96,8 +112,16 @@ func executeEnsureUserZFSDataset(payload UserZFSDatasetPayload) (string, error) 
 		if output, err := runCommandCombined("zfs", "set", "quota="+strconv.Itoa(payload.QuotaGB)+"G", dataset); err != nil {
 			return output, err
 		}
+		// refquota makes statfs/df report the user's dataset limit instead of
+		// the capacity of the entire parent pool.
+		if output, err := runCommandCombined("zfs", "set", "refquota="+strconv.Itoa(payload.QuotaGB)+"G", dataset); err != nil {
+			return output, err
+		}
 	} else {
 		if output, err := runCommandCombined("zfs", "inherit", "quota", dataset); err != nil {
+			return output, err
+		}
+		if output, err := runCommandCombined("zfs", "inherit", "refquota", dataset); err != nil {
 			return output, err
 		}
 	}
@@ -107,11 +131,125 @@ func executeEnsureUserZFSDataset(payload UserZFSDatasetPayload) (string, error) 
 	if payload.UID >= 0 && payload.GID >= 0 {
 		_ = os.Chown(mountpoint, payload.UID, payload.GID)
 	}
+	if payload.Sentinel != "" && payload.SentinelSignature != "" {
+		if !safeSentinel.MatchString(payload.Sentinel) || !safeSentinelSignature.MatchString(payload.SentinelSignature) {
+			return "", fmt.Errorf("invalid NFS sentinel configuration")
+		}
+		sentinelPath := filepath.Join(mountpoint, payload.Sentinel)
+		if err := os.WriteFile(sentinelPath, []byte(payload.SentinelSignature+"\n"), 0o444); err != nil {
+			return "", fmt.Errorf("write NFS sentinel: %w", err)
+		}
+		_ = os.Chown(sentinelPath, payload.UID, payload.GID)
+		_ = os.Chmod(sentinelPath, 0o444)
+	}
 	if mode := parseFileMode(payload.Mode); mode != 0 {
 		_ = os.Chmod(mountpoint, mode)
 	}
+	result.NFSExportPath = mountpoint
+	result.NFSShareStatus = "manual"
+	if payload.EnsureNFSShare {
+		shareID, err := ensureTrueNASUserNFSShare(mountpoint, payload.NFSShareTemplatePath, payload.Username)
+		if err != nil {
+			return "", err
+		}
+		result.NFSShareID = shareID
+		result.NFSShareStatus = "applied"
+	}
 	data, _ := json.Marshal(result)
 	return string(data), nil
+}
+
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func validateTrueNASUserNFSShare(share *trueNASNFSShare, path string) error {
+	if share == nil {
+		return fmt.Errorf("TrueNAS NFS share %s was not found", path)
+	}
+	if len(share.Hosts) == 0 && len(share.Networks) == 0 {
+		return fmt.Errorf("TrueNAS NFS share %s has no hosts or networks restriction", path)
+	}
+	if share.ReadOnly {
+		return fmt.Errorf("TrueNAS NFS share %s is read-only", path)
+	}
+	if strings.EqualFold(optionalStringValue(share.MapRootUser), "root") || strings.EqualFold(optionalStringValue(share.MapAllUser), "root") {
+		return fmt.Errorf("TrueNAS NFS share %s permits root mapping", path)
+	}
+	return nil
+}
+
+func ensureTrueNASUserNFSShare(mountpoint, templatePath, username string) (int, error) {
+	if _, err := exec.LookPath("midclt"); err != nil {
+		return 0, fmt.Errorf("TrueNAS NFS auto-share requires midclt: %w", err)
+	}
+	templatePath = filepath.Clean(strings.TrimSpace(templatePath))
+	if err := validateAbsolutePath(templatePath); err != nil {
+		return 0, fmt.Errorf("invalid NFS share template path: %w", err)
+	}
+	output, err := runCommandCombined("midclt", "call", "sharing.nfs.query")
+	if err != nil {
+		return 0, fmt.Errorf("query TrueNAS NFS shares: %w (%s)", err, strings.TrimSpace(output))
+	}
+	shares := []trueNASNFSShare{}
+	if err := json.Unmarshal([]byte(output), &shares); err != nil {
+		return 0, fmt.Errorf("decode TrueNAS NFS shares: %w", err)
+	}
+	var template *trueNASNFSShare
+	var existing *trueNASNFSShare
+	for index := range shares {
+		sharePath := filepath.Clean(shares[index].Path)
+		if sharePath == filepath.Clean(mountpoint) {
+			existing = &shares[index]
+		}
+		if sharePath == templatePath {
+			template = &shares[index]
+		}
+	}
+	// Once a per-user share exists, it is the authoritative object. Requiring
+	// the bootstrap template on every idempotent reconciliation would break all
+	// existing users after the template is intentionally removed.
+	if existing != nil {
+		if err := validateTrueNASUserNFSShare(existing, mountpoint); err != nil {
+			return 0, err
+		}
+		return existing.ID, nil
+	}
+	if template == nil {
+		return 0, fmt.Errorf("TrueNAS NFS template share %s was not found", templatePath)
+	}
+	if err := validateTrueNASUserNFSShare(template, templatePath); err != nil {
+		return 0, fmt.Errorf("invalid TrueNAS NFS template share %s: %w", templatePath, err)
+	}
+	request := map[string]any{
+		"path":          mountpoint,
+		"comment":       "server-vps user " + username,
+		"networks":      template.Networks,
+		"hosts":         template.Hosts,
+		"ro":            false,
+		"maproot_user":  template.MapRootUser,
+		"maproot_group": template.MapRootGroup,
+		"mapall_user":   template.MapAllUser,
+		"mapall_group":  template.MapAllGroup,
+		"security":      template.Security,
+		"enabled":       true,
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return 0, err
+	}
+	output, err = runCommandCombined("midclt", "call", "sharing.nfs.create", string(encoded))
+	if err != nil {
+		return 0, fmt.Errorf("create TrueNAS NFS share for %s: %w (%s)", username, err, strings.TrimSpace(output))
+	}
+	created := trueNASNFSShare{}
+	if err := json.Unmarshal([]byte(output), &created); err != nil || created.ID <= 0 {
+		return 0, fmt.Errorf("decode created TrueNAS NFS share: %w", err)
+	}
+	return created.ID, nil
 }
 
 func validateAbsolutePath(path string) error {

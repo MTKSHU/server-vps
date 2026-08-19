@@ -13,6 +13,7 @@ import {
   Plus,
   Refresh,
   RefreshRight,
+  Rank,
   Select,
   Setting,
   SwitchButton,
@@ -32,6 +33,7 @@ import {
   deleteNode,
   nodeAction,
   updateNodeConfig,
+  updateNodeOrder,
   getNodeSshPubkey,
   installNodeSshPubkey,
   updateUserPreference,
@@ -49,12 +51,13 @@ const saving = ref(false);
 const addDialogVisible = ref(false);
 const configDialogVisible = ref(false);
 const releasesDialogVisible = ref(false);
-const updateDialogVisible = ref(false);
 const triggeringUpdate = ref(false);
 const editingNode = ref<Node | null>(null);
 const sshPubkey = ref("");
 const pushingPubkey = ref(false);
 const nodes = ref<Node[]>([]);
+const draggingNodeId = ref<number | null>(null);
+const sorting = ref(false);
 const releases = ref<AgentRelease[]>([]);
 const releaseVersion = ref("");
 const releaseChannel = ref<"stable" | "canary">("stable");
@@ -75,6 +78,7 @@ const columnOptions = [
   { key: "gpus", label: "GPU", defaultVisible: true },
   { key: "cuda_version", label: "CUDA", defaultVisible: true },
   { key: "incus_status", label: "Incus", defaultVisible: true },
+  { key: "nfs_status", label: "NFS", defaultVisible: true },
   { key: "agent_version", label: "Agent", defaultVisible: true }
 ];
 const defaultVisibleColumns = columnOptions.filter((column) => column.defaultVisible).map((column) => column.key);
@@ -91,6 +95,7 @@ const configForm = reactive<NodeConfigPayload>({
   max_cpu_per_container: 0,
   max_memory_gb_per_container: 0,
   max_disk_gb_per_container: 0,
+  root_disk_gb: 0,
   reserved_memory_gb: 0,
   reserved_disk_gb: 0,
   allow_port_mapping: true,
@@ -104,6 +109,7 @@ const configForm = reactive<NodeConfigPayload>({
   sync_ip: "",
   sync_ssh_port: 0,
   resource_cache_base: "",
+  shared_storage_mode: "inherit",
 });
 const labelText = ref("");
 const currentTs = ref(Math.floor(Date.now() / 1000));
@@ -244,6 +250,63 @@ async function load() {
   }
 }
 
+function nodeRowClassName({ row }: { row: Node }) {
+  return `node-sort-row node-sort-row-${row.id}`;
+}
+
+function nodeIdFromRow(target: EventTarget | null) {
+  const row = target instanceof Element ? target.closest("tr.node-sort-row") : null;
+  const match = row?.className.match(/node-sort-row-(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function startNodeDrag(event: DragEvent, row: Node) {
+  if (sorting.value) {
+    event.preventDefault();
+    return;
+  }
+  draggingNodeId.value = row.id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(row.id));
+  }
+}
+
+function allowNodeDrop(event: DragEvent) {
+  if (draggingNodeId.value !== null) event.preventDefault();
+}
+
+async function dropNode(event: DragEvent) {
+  event.preventDefault();
+  const sourceId = draggingNodeId.value;
+  const targetId = nodeIdFromRow(event.target);
+  draggingNodeId.value = null;
+  if (sourceId === null || targetId === null || sourceId === targetId) return;
+
+  const previous = [...nodes.value];
+  const next = [...nodes.value];
+  const sourceIndex = next.findIndex((node) => node.id === sourceId);
+  const targetIndex = next.findIndex((node) => node.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [moved] = next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, moved);
+  nodes.value = next;
+  sorting.value = true;
+  try {
+    await updateNodeOrder(next.map((node) => node.id));
+    ElMessage.success(t("nodes.orderSaved"));
+  } catch (error) {
+    nodes.value = previous;
+    ElMessage.error(error instanceof Error ? error.message : t("nodes.orderSaveFailed"));
+  } finally {
+    sorting.value = false;
+  }
+}
+
+function endNodeDrag() {
+  draggingNodeId.value = null;
+}
+
 async function openReleases() {
   releasesDialogVisible.value = true;
   releases.value = await getAgentReleases();
@@ -317,28 +380,6 @@ async function removeRelease(row: AgentRelease) {
   }
 }
 
-async function openAgentUpdate(row: Node, targetVersion?: string) {
-  editingNode.value = row;
-  Object.assign(updateForm, {
-    channel: row.agent_update_channel || "stable",
-    auto_update: row.agent_auto_update ?? true,
-    target_version: targetVersion ?? row.target_agent_version ?? ""
-  });
-  updateDialogVisible.value = true;
-}
-
-async function saveAgentUpdate() {
-  if (!editingNode.value) return;
-  try {
-    await configureAgentUpdate(editingNode.value.id, updateForm);
-    ElMessage.success("Agent 更新策略已保存，更新器将在 15 分钟内自动检查（由 systemd timer 每 15 分钟触发）");
-    updateDialogVisible.value = false;
-    await load();
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "保存失败");
-  }
-}
-
 async function doTriggerUpdate(node: Node) {
   if (!nodeOnline(node)) {
     ElMessage.warning("离线节点不能触发 Agent 更新");
@@ -358,6 +399,11 @@ async function doTriggerUpdate(node: Node) {
 
 function openConfig(row: Node) {
   editingNode.value = row;
+  Object.assign(updateForm, {
+    channel: row.agent_update_channel || "stable",
+    auto_update: row.agent_auto_update ?? true,
+    target_version: row.target_agent_version || ""
+  });
   Object.assign(configForm, {
     node_type: row.node_type,
     schedulable: row.schedulable,
@@ -369,6 +415,7 @@ function openConfig(row: Node) {
     max_cpu_per_container: row.max_cpu_per_container,
     max_memory_gb_per_container: row.max_memory_gb_per_container,
     max_disk_gb_per_container: row.max_disk_gb_per_container,
+    root_disk_gb: row.root_disk_gb,
     reserved_memory_gb: row.reserved_memory_gb,
     reserved_disk_gb: row.reserved_disk_gb,
     allow_port_mapping: row.allow_port_mapping,
@@ -382,30 +429,46 @@ function openConfig(row: Node) {
     sync_ip: row.sync_ip || "",
     sync_ssh_port: row.sync_ssh_port || 0,
     resource_cache_base: row.resource_cache_base || "",
+    shared_storage_mode: row.shared_storage_mode || "inherit",
   });
   labelText.value = (row.labels || []).join(", ");
   getNodeSshPubkey().then((res) => { sshPubkey.value = res.pubkey; }).catch(() => {});
   configDialogVisible.value = true;
 }
 
-async function saveConfig() {
-  if (!editingNode.value) return;
+async function saveConfig(closeDialog = true): Promise<boolean> {
+  if (!editingNode.value) return false;
   saving.value = true;
   try {
     configForm.labels = labelText.value
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+    await configureAgentUpdate(editingNode.value.id, updateForm);
     const updated = await updateNodeConfig(editingNode.value.id, configForm);
     const index = nodes.value.findIndex((node) => node.id === updated.id);
     if (index >= 0) nodes.value[index] = updated;
-    ElMessage.success("节点配置已保存");
-    configDialogVisible.value = false;
+    ElMessage.success("节点配置和 Agent 更新策略已保存");
+    if (closeDialog) configDialogVisible.value = false;
+    return true;
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "保存失败");
+    return false;
   } finally {
     saving.value = false;
   }
+}
+
+async function saveConfigAndTriggerUpdate() {
+  const node = editingNode.value;
+  if (!node || !nodeOnline(node)) {
+    ElMessage.warning("离线节点不能触发 Agent 更新");
+    return;
+  }
+  const saved = await saveConfig(false);
+  if (!saved) return;
+  await doTriggerUpdate(node);
+  configDialogVisible.value = false;
 }
 
 async function shutdownNode(row: Node) {
@@ -550,7 +613,27 @@ onUnmounted(() => {
           </div>
         </div>
       </template>
-      <el-table :data="nodes" stripe>
+      <el-table
+        :data="nodes"
+        :row-class-name="nodeRowClassName"
+        stripe
+        @dragover.capture="allowNodeDrop"
+        @drop.capture="dropNode"
+        @dragend.capture="endNodeDrag"
+      >
+        <el-table-column width="48" fixed align="center">
+          <template #default="{ row }">
+            <el-tooltip :content="t('nodes.dragToSort')" placement="right">
+              <el-icon
+                class="node-drag-handle"
+                :class="{ disabled: sorting }"
+                draggable="true"
+                @dragstart.stop="startNodeDrag($event, row)"
+                @dragend.stop="endNodeDrag"
+              ><Rank /></el-icon>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="hostname" :label="t('nodes.hostname')" min-width="160" fixed />
         <el-table-column
           v-for="column in visibleColumnDefs"
@@ -591,6 +674,12 @@ onUnmounted(() => {
               </div>
             </template>
             <template v-else-if="column.key === 'incus_status'">{{ row.incus_status }}</template>
+            <template v-else-if="column.key === 'nfs_status'">
+              <el-tooltip :content="row.shared_storage_mode === 'disabled' ? '该节点强制使用本地缓存，不为新容器挂载 NFS' : (row.nfs_error === 'managed NFS is not mounted' ? '该节点尚未使用托管 NFS，不代表 NFS 不可用' : (row.nfs_error || `${row.nfs_latency_ms || 0} ms`))">
+                <el-tag v-if="row.shared_storage_mode === 'disabled'" type="info" size="small">本地缓存</el-tag>
+                <el-tag v-else :type="row.nfs_healthy ? 'success' : (row.nfs_error === 'managed NFS is not mounted' ? 'info' : 'warning')" size="small">{{ row.nfs_healthy ? `${Number(row.nfs_latency_ms || 0).toFixed(1)} ms` : (row.nfs_error === 'managed NFS is not mounted' ? '尚未使用' : (row.shared_storage_mode === 'enabled' ? 'NFS 未就绪' : '跟随全局')) }}</el-tag>
+              </el-tooltip>
+            </template>
             <template v-else-if="column.key === 'cuda_version'">
               <el-tag v-if="row.cuda_driver_api_version" class="cuda-tag" effect="dark" round>{{ row.cuda_driver_api_version }}</el-tag>
               <span v-else>—</span>
@@ -677,6 +766,10 @@ onUnmounted(() => {
         <el-form-item :label="t('nodes.maxDiskGb')">
           <el-input-number v-model="configForm.max_disk_gb_per_container" :min="0" :max="100000" />
         </el-form-item>
+        <el-form-item :label="t('nodes.rootDiskGb')">
+          <el-input-number v-model="configForm.root_disk_gb" :min="0" :max="100000" />
+          <small class="field-hint">{{ t('nodes.rootDiskHint') }}</small>
+        </el-form-item>
         <el-form-item :label="t('nodes.reservedMemoryGb')">
           <el-input-number v-model="configForm.reserved_memory_gb" :min="0" :max="8192" />
         </el-form-item>
@@ -731,6 +824,39 @@ onUnmounted(() => {
             {{ t("nodes.resourceCacheBaseHint") }}
           </div>
         </el-form-item>
+        <el-form-item v-if="editingNode?.node_type !== 'storage'" label="共享存储模式" class="wide">
+          <el-select v-model="configForm.shared_storage_mode" style="width:100%">
+            <el-option label="跟随平台全局（inherit）" value="inherit" />
+            <el-option label="强制关闭 NFS，仅使用本地缓存（disabled）" value="disabled" />
+            <el-option label="在此节点启用 NFS（enabled）" value="enabled" />
+          </el-select>
+          <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">
+            只影响新容器的挂载选择；已有容器和 legacy mounts 保持不变。
+          </div>
+        </el-form-item>
+        <el-divider content-position="left" class="wide">Agent 更新策略</el-divider>
+        <el-form-item label="自动更新 Agent">
+          <el-switch v-model="updateForm.auto_update" />
+        </el-form-item>
+        <el-form-item label="Agent 更新通道">
+          <el-select v-model="updateForm.channel" style="width:100%">
+            <el-option label="Stable" value="stable" />
+            <el-option label="Canary" value="canary" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Agent 目标版本" class="wide">
+          <el-select v-model="updateForm.target_version" clearable style="width:100%" placeholder="留空则跟随所选通道的最新版本">
+            <el-option
+              v-for="release in releases"
+              :key="`${release.version}-${release.architecture}`"
+              :label="`${release.version} (${release.channel}/${release.architecture})`"
+              :value="release.version"
+            />
+          </el-select>
+          <div style="margin-top:4px;color:var(--el-color-info);font-size:12px">
+            当前版本：{{ editingNode?.agent_version || '未知' }}。保存策略不会立即升级；需要再点击“立即触发更新”。
+          </div>
+        </el-form-item>
         <el-form-item :label="t('nodes.platformSshKey')" class="wide">
           <el-input :value="sshPubkey || t('nodes.sshKeyMissing')" readonly>
             <template #append>
@@ -742,8 +868,16 @@ onUnmounted(() => {
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button :icon="Close" @click="configDialogVisible = false">{{ t("common.cancel") }}</el-button>
-        <el-button type="primary" :icon="Select" :loading="saving" @click="saveConfig">{{ t("common.save") }}</el-button>
+        <el-button data-keep-label="true" :icon="Close" @click="configDialogVisible = false">{{ t("common.cancel") }}</el-button>
+        <el-button
+          data-keep-label="true"
+          type="warning"
+          :icon="RefreshRight"
+          :loading="saving || triggeringUpdate"
+          :disabled="!editingNode || !nodeOnline(editingNode)"
+          @click="saveConfigAndTriggerUpdate"
+        >保存并立即更新 Agent</el-button>
+        <el-button data-keep-label="true" type="primary" :icon="Select" :loading="saving" @click="saveConfig()">{{ t("common.save") }}</el-button>
       </template>
     </el-dialog>
 
@@ -794,25 +928,6 @@ onUnmounted(() => {
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="updateDialogVisible" :title="t('nodes.agentUpdate', { name: editingNode?.hostname || '' })" width="520px">
-      <el-form label-position="top">
-        <el-form-item :label="t('nodes.autoUpdate')"><el-switch v-model="updateForm.auto_update" /></el-form-item>
-        <el-form-item :label="t('nodes.channel')">
-          <el-select v-model="updateForm.channel"><el-option label="Stable" value="stable" /><el-option label="Canary" value="canary" /></el-select>
-        </el-form-item>
-        <el-form-item :label="t('nodes.targetVersion')">
-          <el-select v-model="updateForm.target_version" clearable :placeholder="t('nodes.targetVersionPlaceholder')">
-            <el-option v-for="release in releases" :key="`${release.version}-${release.architecture}`" :label="`${release.version} (${release.channel})`" :value="release.version" />
-          </el-select>
-        </el-form-item>
-        <el-alert v-if="editingNode?.agent_update_error" type="error" :closable="false" :title="editingNode.agent_update_error" />
-      </el-form>
-      <template #footer>
-        <el-button :icon="Close" @click="updateDialogVisible = false">{{ t("common.cancel") }}</el-button>
-        <el-button type="warning" :icon="RefreshRight" :loading="triggeringUpdate" :disabled="!editingNode" @click="editingNode && doTriggerUpdate(editingNode).then(() => { updateDialogVisible = false })">{{ t("nodes.triggerUpdate") }}</el-button>
-        <el-button type="primary" :icon="Select" @click="saveAgentUpdate">{{ t("nodes.savePolicy") }}</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -822,6 +937,15 @@ onUnmounted(() => {
   background: #0891b2;
   color: #fff;
 }
+
+.node-drag-handle {
+  cursor: grab;
+  color: var(--el-text-color-secondary);
+  font-size: 18px;
+}
+
+.node-drag-handle:active { cursor: grabbing; }
+.node-drag-handle.disabled { cursor: wait; opacity: 0.5; }
 
 .node-action-col {
   display: flex;

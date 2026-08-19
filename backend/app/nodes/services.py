@@ -2,6 +2,7 @@ import re
 from typing import Any
 
 from fastapi import HTTPException
+from psycopg.types.json import Jsonb
 
 from ..config import RESOURCE_CONTAINER_STATUSES, STALE_AFTER_SECONDS
 from ..core import audit, hash_token, now_ts
@@ -113,9 +114,19 @@ def upsert_node(conn, payload: NodeRegistration, actor: str = "node-agent", trus
                 uptime_seconds = %s,
                 node_token = %s,
                 cpu_cores = %s, cpu_sockets = %s, cpu_temperature_c = %s
+                , capabilities = %s
             WHERE id = %s
             """,
-            (*values, node_id),
+            (*values, Jsonb(payload.capabilities), node_id),
+        )
+        nfs_health = payload.nfs_health or {}
+        nfs_healthy = bool(nfs_health.get("healthy"))
+        nfs_checked_at = int(nfs_health.get("checked_at") or 0)
+        conn.execute(
+            "UPDATE nodes SET nfs_healthy=%s,nfs_latency_ms=%s,nfs_error=%s,nfs_checked_at=%s,"
+            "nfs_last_success_at=CASE WHEN %s THEN %s ELSE nfs_last_success_at END WHERE id=%s",
+            (nfs_healthy, float(nfs_health.get("latency_ms") or 0), str(nfs_health.get("error") or "")[:500],
+             nfs_checked_at, nfs_healthy, nfs_checked_at, node_id),
         )
         action = "heartbeat"
     else:
@@ -128,12 +139,22 @@ def upsert_node(conn, payload: NodeRegistration, actor: str = "node-agent", trus
                 os_version, kernel_version, driver_version, cuda_driver_api_version,
                 incus_status, agent_version, uptime_seconds, node_token, registered_at,
                 cpu_cores, cpu_sockets, cpu_temperature_c
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                , capabilities
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (payload.hostname, *values, ts),
+            (payload.hostname, *values, ts, Jsonb(payload.capabilities)),
         ).fetchone()["id"]
         action = "register"
+        nfs_health = payload.nfs_health or {}
+        nfs_healthy = bool(nfs_health.get("healthy"))
+        nfs_checked_at = int(nfs_health.get("checked_at") or 0)
+        conn.execute(
+            "UPDATE nodes SET nfs_healthy=%s,nfs_latency_ms=%s,nfs_error=%s,nfs_checked_at=%s,"
+            "nfs_last_success_at=CASE WHEN %s THEN %s ELSE nfs_last_success_at END WHERE id=%s",
+            (nfs_healthy, float(nfs_health.get("latency_ms") or 0), str(nfs_health.get("error") or "")[:500],
+             nfs_checked_at, nfs_healthy, nfs_checked_at, node_id),
+        )
         if not trusted:
             conn.execute(
                 """

@@ -115,6 +115,30 @@ func TestRefreshDue(t *testing.T) {
 	}
 }
 
+func TestParseDefaultRouteInterfaceUsesLowestMetric(t *testing.T) {
+	routes := `Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+eth1 00000000 0100000A 0003 0 0 200 00000000 0 0 0
+br1 00000000 0100000A 0003 0 0 100 00000000 0 0 0
+eth0 0001A8C0 00000000 0001 0 0 0 00FFFFFF 0 0 0
+`
+	if got := parseDefaultRouteInterface(routes); got != "br1" {
+		t.Fatalf("default route interface = %q, want br1", got)
+	}
+}
+
+func TestCalculateNetworkRates(t *testing.T) {
+	previous := networkCounters{Interface: "br1", RXBytes: 1000, TXBytes: 2000, SampledAt: time.Unix(10, 0)}
+	current := networkCounters{Interface: "br1", RXBytes: 5000, TXBytes: 3000, SampledAt: time.Unix(12, 0)}
+	rxRate, txRate := calculateNetworkRates(previous, current)
+	if rxRate != 2000 || txRate != 500 {
+		t.Fatalf("network rates = (%f, %f), want (2000, 500)", rxRate, txRate)
+	}
+	current.RXBytes = 10
+	if rxRate, txRate = calculateNetworkRates(previous, current); rxRate != 0 || txRate != 0 {
+		t.Fatalf("counter reset rates = (%f, %f), want zero", rxRate, txRate)
+	}
+}
+
 func TestParseIncusInventoryAllowsEmptySuccessfulResult(t *testing.T) {
 	containers, err := parseIncusContainers("")
 	if err != nil || len(containers) != 0 {

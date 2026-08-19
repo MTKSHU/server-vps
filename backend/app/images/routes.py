@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
 from ..schemas import ImageInput
-from ..auth import require_admin
+from ..auth import is_admin_user, require_user
+from .policy import image_available_to_user
 
 _ubuntu_remotes_cache: dict[str, Any] = {"data": None, "expires": 0}
 _LXC_STREAMS_URL = "https://images.linuxcontainers.org/streams/v1/images.json"
@@ -64,13 +65,14 @@ def register_image_routes(app, deps: dict[str, Any]):
 
     @app.get("/api/images", response_model=list[ImageOut])
     def images():
+        user = require_user()
         with db() as conn:
             rows = conn.execute("SELECT * FROM images WHERE enabled = TRUE ORDER BY preferred DESC, name").fetchall()
-            return [public_image(row) for row in rows]
+            return [public_image(row) for row in rows if image_available_to_user(row, user)]
 
     @app.get("/api/image-catalog", response_model=ImageCatalogOut)
     def image_catalog():
-        require_admin()
+        user = require_user()
         with db() as conn:
             platform_images = conn.execute("SELECT * FROM images ORDER BY preferred DESC, enabled DESC, name").fetchall()
             incus_images = conn.execute(
@@ -82,7 +84,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                 """
             ).fetchall()
             return {
-                "images": [public_image(row) for row in platform_images],
+                "images": [public_image(row) for row in platform_images if image_available_to_user(row, user)],
                 "incus_images": [
                     {
                         "node_id": row["node_id"],
@@ -100,10 +102,15 @@ def register_image_routes(app, deps: dict[str, Any]):
 
     @app.post("/api/images", status_code=201)
     def create_image(payload: ImageInput):
-        require_admin()
+        actor = require_user()
         payload = normalize_image_payload(payload)
         ts = now_ts()
         with db() as conn:
+            existing = conn.execute("SELECT * FROM images WHERE id = %s", (payload.id,)).fetchone()
+            if existing and not image_available_to_user(existing, actor):
+                raise HTTPException(status_code=403, detail="系统镜像仅供平台内部任务使用")
+            if not is_admin_user(actor):
+                payload.owner = existing["owner"] if existing else actor["username"]
             row = conn.execute(
                 """
                 INSERT INTO images (
@@ -134,7 +141,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                     ts,
                 ),
             ).fetchone()
-            audit(conn, "admin", "upsert", f"image:{payload.id}", {"incus_ref": payload.incus_ref})
+            audit(conn, actor["username"], "upsert", f"image:{payload.id}", {"incus_ref": payload.incus_ref})
             return public_image(row)
 
     @app.put("/api/images/{image_id}")
@@ -144,8 +151,13 @@ def register_image_routes(app, deps: dict[str, Any]):
 
     @app.delete("/api/images/{image_id}")
     def delete_image(image_id: str):
-        require_admin()
+        actor = require_user()
         with db() as conn:
+            existing = conn.execute("SELECT * FROM images WHERE id = %s", (image_id,)).fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="镜像不存在")
+            if not image_available_to_user(existing, actor):
+                raise HTTPException(status_code=403, detail="系统镜像仅供平台内部任务使用")
             in_use = conn.execute("SELECT 1 FROM containers WHERE image_id = %s LIMIT 1", (image_id,)).fetchone()
             if in_use:
                 row = conn.execute(
@@ -154,17 +166,17 @@ def register_image_routes(app, deps: dict[str, Any]):
                 ).fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="镜像不存在")
-                audit(conn, "admin", "disable", f"image:{image_id}", {})
+                audit(conn, actor["username"], "disable", f"image:{image_id}", {})
                 return public_image(row)
             row = conn.execute("DELETE FROM images WHERE id = %s RETURNING *", (image_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="镜像不存在")
-            audit(conn, "admin", "delete", f"image:{image_id}", {})
+            audit(conn, actor["username"], "delete", f"image:{image_id}", {})
             return {"ok": True}
 
     @app.get("/api/image-catalog/ubuntu-remotes")
     def ubuntu_remote_images():
-        require_admin()
+        require_user()
         now = time.time()
         if _ubuntu_remotes_cache["data"] is not None and now < _ubuntu_remotes_cache["expires"]:
             return _ubuntu_remotes_cache["data"]
@@ -212,7 +224,7 @@ def register_image_routes(app, deps: dict[str, Any]):
 
     @app.post("/api/image-catalog/pull-to-nodes", status_code=202)
     def pull_image_to_nodes(body: dict):
-        require_admin()
+        actor = require_user()
         incus_ref = (body.get("incus_ref") or "").strip()
         if not incus_ref:
             raise HTTPException(status_code=400, detail="incus_ref 不能为空")
@@ -250,12 +262,12 @@ def register_image_routes(app, deps: dict[str, Any]):
                     (node["id"], Jsonb({"image_ref": incus_ref, "alias": alias}), ts, ts),
                 ).fetchone()
                 task_ids.append(row["id"])
-            audit(conn, "admin", "pull", f"remote_image:{incus_ref}", {"node_count": len(nodes)})
+            audit(conn, actor["username"], "pull", f"remote_image:{incus_ref}", {"node_count": len(nodes)})
         return {"task_ids": task_ids, "node_count": len(nodes)}
 
     @app.post("/api/image-catalog/delete-node-image", status_code=202)
     def delete_node_image(body: dict):
-        require_admin()
+        actor = require_user()
         node_id = body.get("node_id")
         image_ref = (body.get("image_ref") or "").strip()
         if not node_id or not image_ref:
@@ -276,7 +288,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                 """,
                 (node_id, Jsonb({"image_ref": image_ref}), ts, ts),
             ).fetchone()
-            audit(conn, "admin", "delete-node-image", f"node:{node_id}", {"image_ref": image_ref})
+            audit(conn, actor["username"], "delete-node-image", f"node:{node_id}", {"image_ref": image_ref})
         return {"task_id": row["id"]}
 
     @app.post("/api/image-catalog/copy-local-image", status_code=202)
@@ -290,7 +302,7 @@ def register_image_routes(app, deps: dict[str, Any]):
           导出完成后 agent 回调自动触发 incus_image_import。
         两种情况任务均写入 node_tasks，可在任务中心查看进度。
         """
-        require_admin()
+        actor = require_user()
         target_node_id = body.get("target_node_id")
         image_ref = (body.get("image_ref") or "").strip()
         if not target_node_id or not image_ref:
@@ -375,7 +387,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                         alias,
                     ),
                 )
-                audit(conn, "admin", "copy-local-image", f"node:{target_node_id}",
+                audit(conn, actor["username"], "copy-local-image", f"node:{target_node_id}",
                       {"alias": alias, "source_node": sf_source["hostname"], "path": "direct-import"})
                 return {
                     "ok": True,
@@ -417,7 +429,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                 INSERT INTO storage_image_files (
                     source_node_id, owner_id, fingerprint, aliases, description, architecture,
                     export_dir, base_name, size_bytes, status, last_error, created_at, updated_at
-                ) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, 0, 'pending', '', %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 'pending', '', %s, %s)
                 ON CONFLICT (source_node_id, fingerprint) DO UPDATE SET
                     status = 'pending',
                     last_error = '',
@@ -426,6 +438,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                 """,
                 (
                     storage_node["id"],          # 存储节点持有此文件
+                    actor["id"],
                     incus_image["fingerprint"],
                     incus_image["aliases"],
                     incus_image["description"],
@@ -460,7 +473,7 @@ def register_image_routes(app, deps: dict[str, Any]):
                     ),
                 },
             )
-            audit(conn, "admin", "copy-local-image", f"node:{target_node_id}",
+            audit(conn, actor["username"], "copy-local-image", f"node:{target_node_id}",
                   {"alias": alias, "source_node": source["hostname"],
                    "storage_node": storage_node["hostname"], "path": "export+push+import"})
             return {

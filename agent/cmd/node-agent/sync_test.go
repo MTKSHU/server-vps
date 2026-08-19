@@ -192,11 +192,15 @@ func TestExecuteSharedResourceVerifyAcceptsNonEmptyDirectory(t *testing.T) {
 
 func TestExecuteSharedResourceVerifyComparesHFManifest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/datasets/owner/repo" {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/datasets/owner/repo":
+			fmt.Fprint(w, `{"sha":"commit-1","siblings":[]}`)
+		case "/api/datasets/owner/repo/tree/main":
+			fmt.Fprint(w, `[{"type":"file","path":"present.bin","size":4},{"type":"file","path":"missing.bin","size":8}]`)
+		default:
 			t.Errorf("unexpected endpoint path: %s", r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"sha":"commit-1","siblings":[]}`)
 	}))
 	defer server.Close()
 
@@ -346,5 +350,71 @@ func TestExecuteSharedResourceVerifyRejectsIncompleteLocalHFMetadata(t *testing.
 	})
 	if err == nil || !strings.Contains(output, "local hfd evidence is invalid") {
 		t.Fatalf("expected missing local metadata to fail finalization, err=%v output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyDetectsHFHashMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/models/owner/repo":
+			fmt.Fprint(w, `{"sha":"commit-1","siblings":[]}`)
+		case "/api/models/owner/repo/tree/main":
+			// remote LFS oid does not match the local file content's real sha256.
+			fmt.Fprint(w, `[{"type":"file","path":"weights.bin","size":8,"lfs":{"oid":"0000000000000000000000000000000000000000000000000000000000000"}}]`)
+		default:
+			t.Errorf("unexpected endpoint path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "weights.bin"), []byte("12345678"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		SourcePath: root,
+		Source:     "huggingface",
+		RepoID:     "owner/repo",
+		Revision:   "main",
+		RepoType:   "model",
+		HFEndpoint: server.URL,
+	})
+	if err == nil || !strings.Contains(output, "hash mismatch: weights.bin") {
+		t.Fatalf("expected hash mismatch to fail verification, err=%v output=%s", err, output)
+	}
+}
+
+func TestExecuteSharedResourceVerifyComparesModelScopeManifest(t *testing.T) {
+	sha := "1c7a1c8f1a12eb1e40a68cb96a3742871db4048f2c5aefd51a1c8de5aab1f9c5"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"Code":200,"Message":"success","Data":{"Files":[
+			{"Type":"blob","Path":"present.bin","Size":4,"Sha256":%q},
+			{"Type":"blob","Path":"missing.bin","Size":8,"Sha256":"deadbeef"}
+		]}}`, sha)
+	}))
+	defer server.Close()
+
+	restoreModelScopeAPIBase := modelScopeAPIBase
+	modelScopeAPIBase = server.URL
+	defer func() { modelScopeAPIBase = restoreModelScopeAPIBase }()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "present.bin"), []byte("1234"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := executeSharedResourceVerify(SharedResourceVerifyPayload{
+		ResourceID: 6,
+		SourcePath: root,
+		Source:     "modelscope",
+		RepoID:     "owner/repo",
+		Revision:   "master",
+		RepoType:   "model",
+	})
+	if err == nil || !strings.Contains(output, "missing remote file: missing.bin") {
+		t.Fatalf("expected missing remote file to fail verification, err=%v output=%s", err, output)
 	}
 }

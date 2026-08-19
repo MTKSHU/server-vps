@@ -48,3 +48,5 @@ agent/node-agent
 server-vps.code-workspace
 server-manager.md
 tmp-assets
+
+backups/
