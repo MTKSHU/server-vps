@@ -105,9 +105,8 @@ Compose volume：
 
 - `postgres-data`：平台数据库。
 - `agent-releases`：agent 二进制发布物。
-- `hf-staging`：Hugging Face / ModelScope 后端下载内部暂存卷，容器内固定路径为 `/tmp/hf-staging`。
 
-管理节点只保存平台数据库、agent 发布物和后端下载暂存。用户数据、公开数据集、模型资源、ZFS dataset、workspace 卷和节点本地缓存位于 storage/mixed 或 compute 节点的实际数据盘上，由节点 agent 上报和执行任务。
+管理节点只保存平台数据库和 agent 发布物。用户数据、公开数据集、模型资源、ZFS dataset、workspace 卷和节点本地缓存位于 storage/mixed 或 compute 节点的实际数据盘上，由节点 agent 上报和执行任务；公开资源下载由 storage/mixed 节点上的系统下载容器完成。
 
 生产环境升级前建议备份：
 
@@ -149,6 +148,10 @@ RELOAD=true python server.py
 NODE_AGENT_TOKEN=<与节点 agent 文件 API 一致的 token>
 NODE_AGENT_FILES_PORT=8082
 ```
+
+每个节点对应配置为 `CLUSTER_AGENT_FILES_TOKEN=<相同 token>` 和
+`CLUSTER_AGENT_FILES_PORT=8082`。该 token 是文件 API 的集群共享密钥，不是每台
+节点独立的 `CLUSTER_NODE_TOKEN`。
 
 如果未配置或节点 agent HTTP API 不可用，后端会回退到已有的 SSH/SFTP 路径。
 

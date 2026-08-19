@@ -10,6 +10,16 @@ import (
 
 func executeTask(task *AgentTask, args cliArgs, server string, hostname string) TaskResultRequest {
 	switch task.Type {
+	case "migrate_container_home":
+		var payload ContainerHomeMigrationPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeContainerHomeMigration(payload)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
 	case "incus_create_container":
 		var payload IncusCreatePayload
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
@@ -90,6 +100,9 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
 		if hasSSHPort(payload.Ports) {
+			if err := validateActiveManagedMounts(payload.ManagedMounts); err != nil {
+				return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+			}
 			if err := initializeContainerSSHWithMounts(payload.Name, payload.SSHUsername, payload.Mounts, payload.SSHKey); err != nil {
 				return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 			}
@@ -116,7 +129,9 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 		}
 		return TaskResultRequest{OK: true, Status: "succeeded", Output: "reboot scheduled"}
 	case "trigger_agent_update":
-		output, err := runCommandCombined("systemctl", "start", "cluster-agent-updater")
+		// The updater restarts this agent on success. Queue it asynchronously so
+		// this task result reaches the backend before the process is replaced.
+		output, err := runCommandCombined("systemctl", "start", "--no-block", "cluster-agent-updater")
 		if err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
@@ -308,12 +323,52 @@ func executeTask(task *AgentTask, args cliArgs, server string, hostname string) 
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
 		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "download_shared_resource":
+		var payload DownloadSharedResourcePayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeDownloadSharedResource(payload, args.incusStoragePool, server, args, hostname, task.ID)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "prepare_shared_resource_download":
+		var payload DownloadSharedResourcePayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executePrepareSharedResourceDownload(payload, args.incusStoragePool)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "migrate_shared_resource_path":
+		var payload MigrateSharedResourcePathPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeMigrateSharedResourcePath(payload)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
 	case "apply_resource_mounts":
 		var payload ApplyResourceMountsPayload
 		if err := json.Unmarshal(task.Payload, &payload); err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
 		}
 		output, err := executeApplyResourceMounts(payload, args.dataPath)
+		if err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
+		}
+		return TaskResultRequest{OK: true, Status: "succeeded", Output: output}
+	case "remove_resource_mounts":
+		var payload RemoveResourceMountsPayload
+		if err := json.Unmarshal(task.Payload, &payload); err != nil {
+			return TaskResultRequest{OK: false, Status: "failed", Error: err.Error()}
+		}
+		output, err := executeRemoveResourceMounts(payload)
 		if err != nil {
 			return TaskResultRequest{OK: false, Status: "failed", Output: output, Error: err.Error()}
 		}
@@ -353,17 +408,20 @@ var slowTaskSem = make(chan struct{}, 1)
 // slowTaskTypes 是执行时间可能超过数十秒的任务类型集合。
 // 这些任务将在独立 goroutine 中运行，让任务轮询循环可立即继续处理其他任务。
 var slowTaskTypes = map[string]bool{
-	"container_data_sync":     true, // rsync 跨节点数据同步，通常 1–10+ 分钟
-	"incus_image_pull":        true, // 从远端拉取镜像，可能数十分钟
-	"incus_image_export":          true, // 将镜像导出到磁盘，分钟级
-	"incus_image_import":          true, // 从磁盘导入镜像，分钟级
-	"incus_image_push_to_storage": true, // 将镜像文件推送到存储节点，分钟级
-	"sync_shared_resource":        true, // 从存储节点拉取公共资源到本地缓存，分钟–小时级
-	"incus_publish_container": true, // 将容器压缩为镜像（+ 可选导出），分钟级
-	"scan_user_directory":     true, // du/find 扫描用户目录，大数据集时分钟级
-	"scan_shared_resource":    true, // 共享资源扫描，分钟级
-	"verify_shared_resource":  true, // 共享资源校验，分钟级
-	"incus_exec_command":      true, // 任意容器内命令，最长 10 分钟超时
+	"container_data_sync":              true, // rsync 跨节点数据同步，通常 1–10+ 分钟
+	"incus_image_pull":                 true, // 从远端拉取镜像，可能数十分钟
+	"incus_image_export":               true, // 将镜像导出到磁盘，分钟级
+	"incus_image_import":               true, // 从磁盘导入镜像，分钟级
+	"incus_image_push_to_storage":      true, // 将镜像文件推送到存储节点，分钟级
+	"sync_shared_resource":             true, // 从存储节点拉取公共资源到本地缓存，分钟–小时级
+	"download_shared_resource":         true, // 在存储节点下载公共数据集/模型，小时级
+	"prepare_shared_resource_download": true, // 准备系统下载容器与手动下载目录
+	"migrate_shared_resource_path":     true, // 迁移公共资源目录布局，可能涉及大量文件
+	"incus_publish_container":          true, // 将容器压缩为镜像（+ 可选导出），分钟级
+	"scan_user_directory":              true, // du/find 扫描用户目录，大数据集时分钟级
+	"scan_shared_resource":             true, // 共享资源扫描，分钟级
+	"verify_shared_resource":           true, // 共享资源校验，分钟级
+	"incus_exec_command":               true, // 任意容器内命令，最长 10 分钟超时
 }
 
 func runTask(server string, args cliArgs, hostname string, task *AgentTask) {

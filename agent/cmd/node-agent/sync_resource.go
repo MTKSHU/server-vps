@@ -74,6 +74,14 @@ func executeSyncSharedResource(payload SyncSharedResourcePayload) (string, error
 // executeApplyResourceMounts 将容器的资源挂载设备热更新为本地缓存路径，同时支持更换挂载点。
 func executeApplyResourceMounts(payload ApplyResourceMountsPayload, dataPath string) (string, error) {
 	var sb strings.Builder
+	if len(payload.ManagedMounts) > 0 {
+		if err := ensureSharedStorage(payload.SharedStorage, payload.ManagedMounts); err != nil {
+			return sb.String(), fmt.Errorf("prepare managed storage for hot mount: %w", err)
+		}
+		if err := validateActiveManagedMounts(payload.ManagedMounts); err != nil {
+			return sb.String(), fmt.Errorf("validate managed storage for hot mount: %w", err)
+		}
+	}
 	appliedCount := 0
 	for index, upd := range payload.MountUpdates {
 		if upd.NewSource == "" || upd.NewTarget == "" {
@@ -105,6 +113,31 @@ func executeApplyResourceMounts(payload ApplyResourceMountsPayload, dataPath str
 	}
 	if appliedCount == 0 && len(payload.MountUpdates) > 0 {
 		return sb.String(), fmt.Errorf("no mount updates were applied (all %d entries skipped)", len(payload.MountUpdates))
+	}
+	return strings.TrimSpace(sb.String()), nil
+}
+
+// executeRemoveResourceMounts 按容器内挂载点删除对应 disk 设备，实现公开资源卸载。
+func executeRemoveResourceMounts(payload RemoveResourceMountsPayload) (string, error) {
+	if strings.TrimSpace(payload.Name) == "" {
+		return "", fmt.Errorf("container name is required")
+	}
+	var sb strings.Builder
+	removedCount := 0
+	for _, target := range payload.Targets {
+		mountTarget := strings.TrimSpace(target)
+		if mountTarget == "" {
+			continue
+		}
+		for _, devName := range diskDeviceNamesForPath(payload.Name, mountTarget) {
+			if _, err := runCommandCombined("incus", "config", "device", "remove", payload.Name, devName); err == nil {
+				fmt.Fprintf(&sb, "removed %s\n", mountTarget)
+				removedCount++
+			}
+		}
+	}
+	if removedCount == 0 && len(payload.Targets) > 0 {
+		return sb.String(), fmt.Errorf("no mount devices removed for %d targets", len(payload.Targets))
 	}
 	return strings.TrimSpace(sb.String()), nil
 }

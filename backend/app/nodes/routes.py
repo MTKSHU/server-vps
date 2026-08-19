@@ -8,7 +8,7 @@ import asyncssh
 from fastapi import HTTPException, Request
 from psycopg.types.json import Jsonb
 
-from ..schemas import JoinTokenCreate, NodeConfigInput
+from ..schemas import JoinTokenCreate, NodeConfigInput, NodeOrderInput
 from ..auth import require_admin
 from ..auth import is_admin_user
 from .services import allowed_node_ids_for_user
@@ -73,6 +73,11 @@ def join_command(server_url: str, token: str, expected_hostname: str = "") -> st
         f" --token {token}"
         f"{hostname_arg}"
         " --data-path /data"
+        " --incus-storage-pool data"
+        " --interval 15"
+        " --storage-interval 60"
+        " --inventory-interval 300"
+        " --task-poll-interval 5"
     )
 
 
@@ -84,6 +89,7 @@ def normalize_node_config(payload: NodeConfigInput) -> NodeConfigInput:
         "max_cpu_per_container",
         "max_memory_gb_per_container",
         "max_disk_gb_per_container",
+        "root_disk_gb",
         "reserved_memory_gb",
         "reserved_disk_gb",
         "max_ports_per_container",
@@ -161,12 +167,39 @@ def register_node_routes(app, deps: dict[str, Any]):
         with db() as conn:
             user = current_user(conn)
             mark_stale_nodes(conn)
-            rows = conn.execute("SELECT * FROM nodes ORDER BY hostname").fetchall()
+            rows = conn.execute("SELECT * FROM nodes ORDER BY display_order, hostname").fetchall()
             if not is_admin_user(user) or user.get("group_name") != "platform_admin":
                 allowed_ids = allowed_node_ids_for_user(conn, user)
                 if allowed_ids is not None:
                     rows = [row for row in rows if row["id"] in allowed_ids]
             return [get_node(conn, row["id"]) for row in rows]
+
+    @app.put("/api/nodes/order")
+    def update_node_order(payload: NodeOrderInput):
+        require_admin()
+        if len(payload.node_ids) != len(set(payload.node_ids)):
+            raise HTTPException(status_code=400, detail="节点排序中存在重复节点")
+        with db() as conn:
+            user = current_user(conn)
+            rows = conn.execute("SELECT id FROM nodes ORDER BY display_order, hostname").fetchall()
+            all_ids = [row["id"] for row in rows]
+            visible_ids = all_ids
+            if not is_admin_user(user) or user.get("group_name") != "platform_admin":
+                allowed_ids = allowed_node_ids_for_user(conn, user)
+                if allowed_ids is not None:
+                    visible_ids = [node_id for node_id in all_ids if node_id in allowed_ids]
+            if set(payload.node_ids) != set(visible_ids):
+                raise HTTPException(status_code=400, detail="节点列表已变化，请刷新后重试")
+            reordered = iter(payload.node_ids)
+            visible_id_set = set(visible_ids)
+            ordered_ids = [next(reordered) if node_id in visible_id_set else node_id for node_id in all_ids]
+            for display_order, node_id in enumerate(ordered_ids):
+                conn.execute(
+                    "UPDATE nodes SET display_order = %s WHERE id = %s",
+                    (display_order, node_id),
+                )
+            audit(conn, "admin", "reorder", "nodes", {"node_ids": payload.node_ids})
+            return {"ok": True, "node_ids": payload.node_ids}
 
     @app.get("/api/nodes/ssh-pubkey")
     def node_ssh_pubkey():
@@ -202,6 +235,7 @@ def register_node_routes(app, deps: dict[str, Any]):
                     max_cpu_per_container = %s,
                     max_memory_gb_per_container = %s,
                     max_disk_gb_per_container = %s,
+                    root_disk_gb = %s,
                     reserved_memory_gb = %s,
                     reserved_disk_gb = %s,
                     allow_port_mapping = %s,
@@ -214,7 +248,8 @@ def register_node_routes(app, deps: dict[str, Any]):
                     ssh_port = %s,
                     sync_ip = %s,
                     sync_ssh_port = %s,
-                    resource_cache_base = %s
+                    resource_cache_base = %s,
+                    shared_storage_mode = %s
                 WHERE id = %s
                 RETURNING *
                 """,
@@ -229,6 +264,7 @@ def register_node_routes(app, deps: dict[str, Any]):
                     payload.max_cpu_per_container,
                     payload.max_memory_gb_per_container,
                     payload.max_disk_gb_per_container,
+                    payload.root_disk_gb,
                     payload.reserved_memory_gb,
                     payload.reserved_disk_gb,
                     payload.allow_port_mapping,
@@ -242,6 +278,7 @@ def register_node_routes(app, deps: dict[str, Any]):
                     payload.sync_ip,
                     payload.sync_ssh_port,
                     payload.resource_cache_base,
+                    payload.shared_storage_mode,
                     node_id,
                 ),
             ).fetchone()
@@ -394,6 +431,7 @@ def register_node_routes(app, deps: dict[str, Any]):
                     f"CLUSTER_SERVER_URL={server_url}",
                     f"CLUSTER_NODE_TOKEN={token}",
                     "CLUSTER_DATA_PATH=/data",
+                    "CLUSTER_INCUS_STORAGE_POOL=data",
                 ]
             )
             return public

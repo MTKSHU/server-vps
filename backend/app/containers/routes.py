@@ -11,21 +11,33 @@ from psycopg.types.json import Jsonb
 from ..config import SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER, CONTAINER_ROOT_DISK_GB
 from ..nodes.routes import generate_ephemeral_sync_keypair
 from ..nodes.services import allowed_node_ids_for_user
-from ..platform_settings import get_platform_settings
+from ..images.policy import image_available_to_user
+from ..platform_settings import effective_node_shared_storage_mode, get_platform_settings
 from ..agent.tasks import get_node_task_event, release_node_task_event, signal_node_task_done  # noqa: F401 (signal_node_task_done re-exported for agent/routes)
 from ..schemas import (
     ContainerCreate,
     ContainerDeleteRequest,
+    ContainerPublicMountRemoveInput,
     ContainerNodeCacheSyncInput,
     ContainerNodeCacheMountInput,
     ContainerExecCreate,
+    ContainerHomeMigrationInput,
     ContainerPortInput,
     ContainerPublishImageInput,
     ContainerResourceUpdate,
+    ContainerResourceUploadInput,
     ContainerSyncInput,
     ContainerSyncRuleInput,
 )
 from ..auth import is_admin_user, require_admin
+from ..data.routes import (
+    _shared_resource_base_path,
+    _shared_resource_storage_path,
+    get_storage_settings,
+    normalize_shared_resource_tags,
+    public_shared_resource,
+    upsert_tag_options,
+)
 
 
 def register_container_routes(app, deps: dict[str, Any]):
@@ -188,6 +200,8 @@ def register_container_routes(app, deps: dict[str, Any]):
         container_path: str,
         conflict_policy: str = "overwrite",
         rule_id: int | None = None,
+        task_type_override: str = "",
+        extra_detail: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         container_path = validate_container_path(container_path)
         payload_like = ContainerSyncInput(
@@ -216,6 +230,9 @@ def register_container_routes(app, deps: dict[str, Any]):
             "verification": "",
             "rule_id": rule_id or 0,
         }
+        if extra_detail:
+            detail.update(extra_detail)
+        sync_task_type = task_type_override or ("shared_resource_sync" if resolved_resource_id else "user_home_sync")
         sync_task = conn.execute(
             """
             INSERT INTO data_sync_tasks (
@@ -225,7 +242,7 @@ def register_container_routes(app, deps: dict[str, Any]):
             RETURNING *
             """,
             (
-                "shared_resource_sync" if resolved_resource_id else "user_home_sync",
+                sync_task_type,
                 user["id"],
                 resolved_resource_id,
                 storage_node["id"] if direction == "storage_to_container" else container["node_id"],
@@ -433,6 +450,33 @@ def register_container_routes(app, deps: dict[str, Any]):
     async def start_container_sync_scheduler():
         asyncio.create_task(scheduled_container_sync_loop())
         asyncio.create_task(container_expiry_loop())
+        asyncio.create_task(workspace_cleanup_loop())
+
+    async def workspace_cleanup_loop():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                with db() as conn:
+                    ts = now_ts()
+                    rows = conn.execute(
+                        "SELECT * FROM user_workspace_volumes v WHERE lifecycle='temporary' AND status='active' "
+                        "AND cleanup_after>0 AND cleanup_after<=%s AND NOT EXISTS "
+                        "(SELECT 1 FROM containers c WHERE c.owner_id=v.user_id AND c.node_id=v.node_id)",
+                        (ts,),
+                    ).fetchall()
+                    for volume in rows:
+                        task = enqueue_node_task(
+                            conn, volume["node_id"], None, "remove_user_workspace_volume",
+                            {"user_id": volume["user_id"], "node_id": volume["node_id"], "volume_name": volume["volume_name"]},
+                        )
+                        conn.execute(
+                            "UPDATE user_workspace_volumes SET status='removing',updated_at=%s WHERE user_id=%s AND node_id=%s",
+                            (ts, volume["user_id"], volume["node_id"]),
+                        )
+                        audit(conn, "system", "expire-workspace", f"workspace:{volume['volume_name']}", {"task_id": task["id"]})
+            except Exception as exc:
+                import sys
+                print(f"[WARN] workspace cleanup: {exc!r}", file=sys.stderr, flush=True)
 
     async def container_expiry_loop():
         """每 5 分钟检查一次到期容器，停止运行中的、删除已停止且超期 1 天以上的。"""
@@ -501,11 +545,15 @@ def register_container_routes(app, deps: dict[str, Any]):
     def create_container(payload: ContainerCreate):
         if not re.fullmatch(r"[a-z][a-z0-9-]{2,30}", payload.name):
             raise HTTPException(status_code=400, detail="容器名称必须以小写字母开头，只包含小写字母、数字和连字符")
+        if payload.name == "cluster-resource-downloader":
+            raise HTTPException(status_code=400, detail="该名称保留给系统下载容器")
         payload.ssh_username = payload.ssh_username.strip() or "ubuntu"
         if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", payload.ssh_username):
             raise HTTPException(status_code=400, detail="初始用户名不合法")
         with db() as conn:
             user = current_user(conn)
+            if payload.mounts and not is_admin_user(user):
+                raise HTTPException(status_code=403, detail="普通用户不能提交宿主机挂载路径")
             if payload.gpu_ids:
                 payload.gpu_ids = list(dict.fromkeys(gpu_id for gpu_id in payload.gpu_ids if gpu_id > 0))
                 payload.gpu_count = len(payload.gpu_ids)
@@ -536,35 +584,62 @@ def register_container_routes(app, deps: dict[str, Any]):
             image = conn.execute("SELECT * FROM images WHERE id = %s AND enabled = TRUE", (payload.image_id,)).fetchone()
             if not image:
                 raise HTTPException(status_code=400, detail="镜像不存在")
+            if not image_available_to_user(image, user):
+                raise HTTPException(status_code=403, detail="系统镜像仅供平台内部任务使用")
             allowed_node_ids = allowed_node_ids_for_user(conn, user)
             if payload.node_id is not None and allowed_node_ids is not None and payload.node_id not in allowed_node_ids:
                 raise HTTPException(status_code=403, detail="当前用户不可使用该节点")
-            node, selected_gpus, schedule_reasons = select_node_and_gpus(conn, image, payload, allowed_node_ids)
+            settings = get_platform_settings(conn)
+            node, selected_gpus, schedule_reasons = select_node_and_gpus(
+                conn, image, payload, allowed_node_ids,
+                shared_storage_settings=settings, user_id=user["id"],
+            )
             if not node:
                 detail = "没有满足资源、GPU 型号或镜像兼容性的节点"
                 if schedule_reasons:
                     detail += "：" + "；".join(schedule_reasons[:5])
                 raise HTTPException(status_code=400, detail=detail)
-            # 固定 root disk 大小；workspace 卷大小由配额和节点限制决定
-            root_disk_gb = CONTAINER_ROOT_DISK_GB
+            shared_mode = effective_node_shared_storage_mode(node, settings, user["id"])
+            shared_home_enabled = shared_mode == "enabled"
+            node_capabilities = set(node.get("capabilities") or [])
+            if shared_home_enabled and "managed_nfs_mounts_v1" not in node_capabilities:
+                raise HTTPException(status_code=409, detail="目标节点 agent 尚不支持托管 NFS 挂载")
+            if shared_home_enabled and "per_user_nfs_exports_v1" not in node_capabilities:
+                raise HTTPException(status_code=409, detail="目标节点 agent 尚不支持每用户独立 NFS 导出，请先升级 agent")
+            if shared_home_enabled and (
+                not settings["nfs_server"] or not settings["nfs_sentinel_signature"]
+            ):
+                raise HTTPException(status_code=409, detail="该节点已启用共享存储，但平台 NFS 用户导出或 sentinel 尚未配置")
+            # RootDisk 可按节点覆盖；0 表示继承平台默认值。workspace 卷仍单独计算。
+            root_disk_gb = int(node.get("root_disk_gb") or CONTAINER_ROOT_DISK_GB)
             node_disk_limit = int(node.get("max_disk_gb_per_container") or 0)
-            node_disk_avail = max(0, int(node.get("disk_total_gb") or 0) - int(node.get("reserved_disk_gb") or 0) - int(node.get("disk_used_gb") or 0))
+            disk_total = int(node.get("disk_total_gb") or 0)
+            reserved_floor = max(int(disk_total * 0.15), 100)
+            node_disk_avail = max(0, disk_total - max(int(node.get("reserved_disk_gb") or 0), reserved_floor) - int(node.get("disk_used_gb") or 0))
+            if node_disk_limit > 0 and root_disk_gb > node_disk_limit:
+                raise HTTPException(status_code=400, detail=f"节点 RootDisk {root_disk_gb} GB 超过单容器磁盘上限 {node_disk_limit} GB")
+            if root_disk_gb > node_disk_avail:
+                raise HTTPException(status_code=400, detail=f"节点磁盘可用空间不足：RootDisk 需要 {root_disk_gb} GB，可用 {node_disk_avail} GB")
             # workspace_gb = min(节点上限, 用户配额上限)；如均为 0 则取节点可用磁盘
+            workspace_default_gb = int(settings["workspace_default_gb"])
             if node_disk_limit > 0 and quota_data_vol_gb > 0:
-                workspace_gb = min(node_disk_limit, quota_data_vol_gb)
+                workspace_gb = min(workspace_default_gb, node_disk_limit, quota_data_vol_gb, node_disk_avail)
             elif node_disk_limit > 0:
-                workspace_gb = node_disk_limit
+                workspace_gb = min(workspace_default_gb, node_disk_limit, node_disk_avail)
             elif quota_data_vol_gb > 0:
-                workspace_gb = min(quota_data_vol_gb, node_disk_avail) if node_disk_avail > 0 else quota_data_vol_gb
+                workspace_gb = min(workspace_default_gb, quota_data_vol_gb, node_disk_avail)
             else:
-                workspace_gb = node_disk_avail
+                workspace_gb = min(workspace_default_gb, node_disk_avail)
+            if workspace_gb < 1:
+                raise HTTPException(status_code=400, detail="节点本地磁盘已达到保留空间下限，无法创建 workspace")
             workspace_volume_name = f"user-{user['id']}-ws"
             ts = now_ts()
             conn.execute(
                 """
                 INSERT INTO user_workspace_volumes (
                     user_id, node_id, volume_name, quota_gb, status, last_error, created_at, updated_at, removed_at
-                ) VALUES (%s, %s, %s, %s, 'active', '', %s, %s, 0)
+                    , lifecycle, last_used_at, cleanup_after
+                ) VALUES (%s, %s, %s, %s, 'active', '', %s, %s, 0, 'temporary', %s, 0)
                 ON CONFLICT (user_id, node_id) DO UPDATE SET
                     volume_name = EXCLUDED.volume_name,
                     quota_gb = EXCLUDED.quota_gb,
@@ -573,39 +648,65 @@ def register_container_routes(app, deps: dict[str, Any]):
                     updated_at = EXCLUDED.updated_at,
                     removed_at = 0
                 """,
-                (user["id"], node["id"], workspace_volume_name, workspace_gb, ts, ts),
+                (user["id"], node["id"], workspace_volume_name, workspace_gb, ts, ts, ts),
             )
-            node_cache_base = str(node.get("resource_cache_base") or "").strip()
-            if not node_cache_base:
-                node_cache_base = f"{storage_root_for_node(conn, node['id']).rstrip('/')}/shared-cache"
-            node_cache_base = node_cache_base.rstrip("/")
-            auto_cache_mounts = [
-                f"{node_cache_base}/datasets:/datasets:ro",
-                f"{node_cache_base}/models:/models:ro",
-            ]
-
             mounts = list(payload.mounts or [])
-
-            existing_targets: set[str] = set()
-            for mount_str in mounts:
-                readonly = mount_str.endswith(":ro")
-                core = mount_str[:-3] if readonly else mount_str
-                parts = core.split(":", 1)
-                target = parts[1] if len(parts) == 2 else parts[0]
-                existing_targets.add(target)
-            for mount_str in auto_cache_mounts:
-                core = mount_str[:-3] if mount_str.endswith(":ro") else mount_str
-                parts = core.split(":", 1)
-                target = parts[1] if len(parts) == 2 else parts[0]
-                if target not in existing_targets:
-                    mounts.append(mount_str)
-                    existing_targets.add(target)
+            managed_mounts: list[dict[str, Any]] = []
+            if shared_home_enabled:
+                dataset = conn.execute(
+                    "SELECT * FROM user_storage_datasets WHERE user_id=%s AND status='applied'",
+                    (user["id"],),
+                ).fetchone()
+                if not dataset:
+                    raise HTTPException(status_code=409, detail="用户 ZFS dataset 尚未就绪")
+                managed_mounts.append({
+                    "kind": "user_home", "source": f"/var/lib/server-vps/nfs/user-datasets/{user['username']}",
+                    "target": f"/home/{payload.ssh_username}", "readonly": False, "required": True,
+                    "export": dataset.get("nfs_export_path") or dataset["mountpoint"],
+                })
+            for selection in payload.resources:
+                resource = conn.execute(
+                    "SELECT * FROM shared_resources WHERE id=%s AND enabled=TRUE", (selection.resource_id,),
+                ).fetchone()
+                if not resource:
+                    raise HTTPException(status_code=400, detail=f"公开资源 {selection.resource_id} 不存在")
+                target = validate_container_path(selection.mount_path.strip() or resource["mount_path"])
+                cache = conn.execute(
+                    "SELECT status,local_path FROM node_resource_cache WHERE node_id=%s AND resource_id=%s",
+                    (node["id"], resource["id"]),
+                ).fetchone()
+                if cache and cache["status"] == "ready" and cache["local_path"]:
+                    source, kind = cache["local_path"], "node_cache"
+                else:
+                    if not resource.get("nfs_available", True):
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"资源 {resource['name']} 位于独立存储 dataset，目标节点本地缓存尚未就绪，不能通过父级 NFS 挂载",
+                        )
+                    if shared_mode == "disabled" or not settings["nfs_server"] or not settings["nfs_sentinel_signature"]:
+                        raise HTTPException(status_code=409, detail=f"资源 {resource['name']} 无本地缓存且 NFS 未配置")
+                    provider = str(resource["version"] or "default").strip("/")
+                    base = "datasets" if resource["resource_type"] == "dataset" else "models"
+                    source, kind = f"/var/lib/server-vps/nfs/{base}/{provider}/{resource['name']}", "shared_resource"
+                managed_mounts.append({"kind": kind, "source": source, "target": target, "readonly": True, "required": True})
+            if managed_mounts and "managed_nfs_mounts_v1" not in node_capabilities:
+                raise HTTPException(status_code=409, detail="目标节点 agent 尚不支持托管挂载")
+            mounts.extend(
+                f"{item['source']}:{item['target']}{':ro' if item['readonly'] else ':rw'}" for item in managed_mounts
+            )
+            shared_storage = {
+                "enabled": bool(managed_mounts), "server": settings["nfs_server"],
+                "users_export": settings["nfs_users_export"], "datasets_export": settings["nfs_datasets_export"],
+                "models_export": settings["nfs_models_export"], "mount_options": settings["nfs_mount_options"],
+                "sentinel": settings["nfs_sentinel"], "sentinel_signature": settings["nfs_sentinel_signature"],
+                "idmap_base": settings["nfs_idmap_base"],
+            }
             container = conn.execute(
                 """
                 INSERT INTO containers (
                     name, owner_id, node_id, image_id, status, cpu_cores, memory_gb, disk_gb,
-                    ssh_username, ssh_key, mounts, ip, access_status, access_error, expires_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, 'provisioning', %s, %s, %s, %s, %s, %s, %s, 'pending', '', %s, %s, %s)
+                    ssh_username, ssh_key, mounts, managed_mounts, ip, access_status, access_error, expires_at, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, 'provisioning', %s, %s, %s, %s, %s, %s, %s, %s, 'pending', '', %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -619,6 +720,7 @@ def register_container_routes(app, deps: dict[str, Any]):
                     payload.ssh_username,
                     payload.ssh_key,
                     Jsonb(mounts),
+                    Jsonb(managed_mounts),
                     f"10.99.{node['id']}.{100 + (ts % 100)}",
                     payload.expires_at or 0,
                     ts,
@@ -644,8 +746,8 @@ def register_container_routes(app, deps: dict[str, Any]):
                 container["id"],
                 "incus_create_container",
                 incus_create_payload(container, image, node, selected_gpus, created_ports,
-                                     workspace_volume_name=workspace_volume_name,
-                                     workspace_volume_gb=workspace_gb),
+                                     workspace_volume_name=workspace_volume_name, workspace_volume_gb=workspace_gb,
+                                     managed_mounts=managed_mounts, shared_storage=shared_storage),
             )
             audit(
                 conn,
@@ -668,16 +770,27 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not container:
                 raise HTTPException(status_code=404, detail="容器不存在")
             require_container_access(user, container)
+            if container.get("system_role"):
+                raise HTTPException(status_code=409, detail="系统容器由节点 agent 管理，请在节点任务中维护")
             if container["status"] in ("provisioning", "starting", "stopping", "restarting", "deleting"):
                 raise HTTPException(status_code=409, detail=f"容器正在 {container['status']}，请稍后再试")
             ts = now_ts()
             conn.execute("UPDATE containers SET status = %s, updated_at = %s WHERE id = %s", (pending_status, ts, container_id))
+            settings = get_platform_settings(conn)
+            managed_mounts = container.get("managed_mounts") or []
+            shared_storage = {
+                "enabled": bool(managed_mounts), "server": settings["nfs_server"],
+                "users_export": settings["nfs_users_export"], "datasets_export": settings["nfs_datasets_export"],
+                "models_export": settings["nfs_models_export"], "mount_options": settings["nfs_mount_options"],
+                "sentinel": settings["nfs_sentinel"], "sentinel_signature": settings["nfs_sentinel_signature"],
+                "idmap_base": settings["nfs_idmap_base"],
+            }
             enqueue_node_task(
                 conn,
                 container["node_id"],
                 container_id,
                 f"incus_{operation}_container",
-                incus_lifecycle_payload(container, operation),
+                incus_lifecycle_payload(container, operation, shared_storage),
             )
             audit(conn, user["username"], operation, f"container:{container_id}", {"name": container["name"]})
             return next(item for item in list_containers(conn) if item["id"] == container_id)
@@ -702,6 +815,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not container:
                 raise HTTPException(status_code=404, detail="容器不存在")
             require_container_access(user, container)
+            if container.get("system_role"):
+                raise HTTPException(status_code=409, detail="系统容器由节点 agent 管理，不能重试创建")
             if container["status"] != "failed":
                 raise HTTPException(status_code=409, detail="只有 failed 状态的容器可以重试创建")
             node = conn.execute("SELECT * FROM nodes WHERE id = %s", (container["node_id"],)).fetchone()
@@ -722,15 +837,79 @@ def register_container_routes(app, deps: dict[str, Any]):
             )
             image_ref = image["incus_ref"] or image["id"]
             enqueue_incus_image_import_task(conn, node, container_id, image_ref)
+            settings = get_platform_settings(conn)
+            managed_mounts = container.get("managed_mounts") or []
+            shared_storage = {
+                "enabled": bool(managed_mounts), "server": settings["nfs_server"],
+                "users_export": settings["nfs_users_export"], "datasets_export": settings["nfs_datasets_export"],
+                "models_export": settings["nfs_models_export"], "mount_options": settings["nfs_mount_options"],
+                "sentinel": settings["nfs_sentinel"], "sentinel_signature": settings["nfs_sentinel_signature"],
+                "idmap_base": settings["nfs_idmap_base"],
+            }
             enqueue_node_task(
                 conn,
                 node["id"],
                 container_id,
                 "incus_create_container",
-                incus_create_payload(container, image, node, selected_gpus, ports),
+                incus_create_payload(
+                    container, image, node, selected_gpus, ports,
+                    managed_mounts=managed_mounts, shared_storage=shared_storage,
+                ),
             )
             audit(conn, user["username"], "retry", f"container:{container_id}", {"name": container["name"]})
             return next(item for item in list_containers(conn) if item["id"] == container_id)
+
+    @app.post("/api/containers/{container_id}/migrate-home", status_code=202)
+    def migrate_container_home(container_id: int, payload: ContainerHomeMigrationInput):
+        actor = require_admin()
+        with db() as conn:
+            container = conn.execute(
+                "SELECT c.*,u.username AS owner,n.capabilities,n.shared_storage_mode AS node_shared_storage_mode FROM containers c "
+                "JOIN users u ON u.id=c.owner_id JOIN nodes n ON n.id=c.node_id WHERE c.id=%s",
+                (container_id,),
+            ).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            if container["status"] != "stopped":
+                raise HTTPException(status_code=409, detail="迁移 Home 前必须停止容器")
+            capabilities = set(container.get("capabilities") or [])
+            if "managed_nfs_mounts_v1" not in capabilities:
+                raise HTTPException(status_code=409, detail="节点 agent 不支持 NFS Home 迁移")
+            if "per_user_nfs_exports_v1" not in capabilities:
+                raise HTTPException(status_code=409, detail="节点 agent 不支持每用户独立 NFS 导出，请先升级 agent")
+            dataset = conn.execute(
+                "SELECT * FROM user_storage_datasets WHERE user_id=%s AND status='applied'",
+                (container["owner_id"],),
+            ).fetchone()
+            if not dataset:
+                raise HTTPException(status_code=409, detail="用户 ZFS dataset 尚未就绪")
+            settings = get_platform_settings(conn)
+            if effective_node_shared_storage_mode(
+                {"shared_storage_mode": container["node_shared_storage_mode"]}, settings, container["owner_id"]
+            ) != "enabled":
+                raise HTTPException(status_code=409, detail="该节点已禁用共享存储，不能迁移 NFS Home")
+            if not settings["nfs_server"] or not settings["nfs_sentinel_signature"]:
+                raise HTTPException(status_code=409, detail="NFS 用户目录尚未配置")
+            home_mount = {
+                "kind": "user_home", "source": f"/var/lib/server-vps/nfs/user-datasets/{container['owner']}",
+                "target": f"/home/{container['ssh_username']}", "readonly": False, "required": True,
+                "export": dataset.get("nfs_export_path") or dataset["mountpoint"],
+            }
+            shared_storage = {
+                "enabled": True, "server": settings["nfs_server"], "users_export": settings["nfs_users_export"],
+                "datasets_export": settings["nfs_datasets_export"], "models_export": settings["nfs_models_export"],
+                "mount_options": settings["nfs_mount_options"], "sentinel": settings["nfs_sentinel"],
+                "sentinel_signature": settings["nfs_sentinel_signature"],
+                "idmap_base": settings["nfs_idmap_base"],
+            }
+            task = enqueue_node_task(
+                conn, container["node_id"], container_id, "migrate_container_home",
+                {"container_id": container_id, "name": container["name"], "ssh_username": container["ssh_username"],
+                 "owner": container["owner"], "primary": payload.primary, "managed_mount": home_mount,
+                 "shared_storage": shared_storage},
+            )
+            audit(conn, actor["username"], "migrate-home", f"container:{container_id}", {"task_id": task["id"], "primary": payload.primary})
+            return public_task(task)
 
     @app.post("/api/containers/{container_id}/ssh-access/retry", status_code=202)
     def retry_container_ssh_access(container_id: int):
@@ -760,6 +939,7 @@ def register_container_routes(app, deps: dict[str, Any]):
                     "ssh_username": container["ssh_username"] or "ubuntu",
                     "ssh_key": container["ssh_key"],
                     "mounts": container["mounts"] or [],
+                    "managed_mounts": container.get("managed_mounts") or [],
                 },
             )
             audit(conn, user["username"], "retry-ssh-access", f"container:{container_id}", {"task_id": task["id"]})
@@ -1015,6 +1195,124 @@ def register_container_routes(app, deps: dict[str, Any]):
             )
             audit(conn, user["username"], "sync", f"container:{container_id}", {"direction": payload.direction, "sync_task_id": sync_task["id"]})
             return {"sync_task": public_sync_task(sync_task), "node_task": public_task(node_task)}
+
+    @app.post("/api/containers/{container_id}/upload-as-resource", status_code=202)
+    def upload_container_as_resource(container_id: int, payload: ContainerResourceUploadInput):
+        """用户已在自己容器内下载/准备好数据后，一步注册为公开数据集/模型并从容器拉取到存储节点。
+
+        复用 enqueue_container_sync 的 container_to_storage 链路（含跨节点临时密钥），
+        暂存到与最终目录同级的 .{resource_id}.partial，成功后由
+        migrate_shared_resource_path 原子切换到正式目录并自动触发校验。
+        """
+        name = payload.name.strip()
+        version = payload.version.strip() or "default"
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{1,80}", name):
+            raise HTTPException(status_code=400, detail="资源名称不合法")
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,80}", version):
+            raise HTTPException(status_code=400, detail="资源提供者不合法")
+        source = payload.source.strip().lower()
+        if source not in ("", "huggingface", "modelscope"):
+            raise HTTPException(status_code=400, detail="source 不合法，应为空、huggingface 或 modelscope")
+        repo_id = payload.repo_id.strip()
+        if source and not re.fullmatch(r"[A-Za-z0-9][\w.-]{0,95}/[A-Za-z0-9][\w.-]{0,95}", repo_id):
+            raise HTTPException(status_code=400, detail="仓库 ID 不合法，格式应为 owner/repo-name")
+        revision = re.sub(r"[^\w./-]", "", payload.revision.strip()) or ("master" if source == "modelscope" else "main")
+        tags = normalize_shared_resource_tags(payload.tags)
+
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            if container["status"] != "running":
+                raise HTTPException(status_code=400, detail="容器必须处于 running 状态才能上传")
+
+            existing = conn.execute(
+                "SELECT id, request_status, requested_by FROM shared_resources WHERE resource_type=%s AND name=%s AND version=%s",
+                (payload.resource_type, name, version),
+            ).fetchone()
+            if existing and not (existing["requested_by"] == user["id"] and existing["request_status"] in ("uploading", "failed")):
+                raise HTTPException(status_code=409, detail="同名的公开数据集/模型已存在，请更换名称或提供者")
+
+            upsert_tag_options(conn, tags)
+            settings = get_storage_settings(conn)
+            base = _shared_resource_base_path(payload.resource_type, settings)
+            mount_path = f"/datasets/{name}" if payload.resource_type == "dataset" else f"/models/{name}"
+            final_platform_path = _shared_resource_storage_path(base, version, name)
+            node = select_storage_node_for_path(conn, final_platform_path)
+            if not node:
+                raise HTTPException(status_code=400, detail="没有在线存储节点")
+
+            source_url = f"{'hf' if source == 'huggingface' else 'ms'}://{repo_id}@{revision}" if source else ""
+            ts = now_ts()
+            if existing:
+                resource_id = existing["id"]
+                conn.execute(
+                    """
+                    UPDATE shared_resources
+                    SET tags=%s, source_url=%s, mount_path=%s, request_status='uploading',
+                        check_status='unknown', check_error='', updated_at=%s
+                    WHERE id=%s
+                    """,
+                    (tags, source_url, mount_path, ts, resource_id),
+                )
+            else:
+                row = conn.execute(
+                    """
+                    INSERT INTO shared_resources (
+                        resource_type, name, version, source_path, mount_path, tags, readonly, sync_policy,
+                        enabled, source_url, request_status, requested_by, check_status, check_error,
+                        created_at, updated_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,TRUE,'manual',TRUE,%s,'uploading',%s,'unknown','',%s,%s)
+                    RETURNING id
+                    """,
+                    (payload.resource_type, name, version, final_platform_path, mount_path, tags, source_url, user["id"], ts, ts),
+                ).fetchone()
+                resource_id = row["id"]
+
+            # 暂存目录与最终目录同级，确保未完成的上传不会出现在正式目录下
+            staging_platform_path = f"{posixpath.dirname(final_platform_path).rstrip('/')}/.{resource_id}.partial"
+            conn.execute("UPDATE shared_resources SET source_path=%s, updated_at=%s WHERE id=%s", (staging_platform_path, ts, resource_id))
+
+            sync_task, node_task = enqueue_container_sync(
+                conn,
+                user,
+                container,
+                direction="container_to_storage",
+                storage_type="dataset" if payload.resource_type == "dataset" else "model",
+                resource_id=resource_id,
+                storage_relative_path="",
+                container_path=payload.container_path,
+                conflict_policy=payload.conflict_policy,
+                task_type_override="shared_resource_upload",
+                extra_detail={
+                    "final_platform_path": final_platform_path,
+                    "final_local_path": source_path_for_node(final_platform_path, node),
+                },
+            )
+            progress = {
+                "phase": "uploading",
+                "pct": 0,
+                "task_id": node_task["id"],
+                "sync_task_id": sync_task["id"],
+                "node": node["hostname"],
+                "container_id": container_id,
+                "container_name": container["name"],
+                "container_path": payload.container_path,
+            }
+            conn.execute(
+                "UPDATE shared_resources SET download_progress=%s, updated_at=%s WHERE id=%s",
+                (Jsonb(progress), ts, resource_id),
+            )
+            audit(conn, user["username"], "upload-as-resource", f"shared-resource:{resource_id}",
+                  {"container_id": container_id, "container_path": payload.container_path, "sync_task_id": sync_task["id"]})
+            resource_row = conn.execute("SELECT * FROM shared_resources WHERE id=%s", (resource_id,)).fetchone()
+            return {
+                "resource": public_shared_resource(resource_row),
+                "sync_task": public_sync_task(sync_task),
+                "node_task": public_task(node_task),
+            }
 
     @app.get("/api/containers/node-cached-resources")
     def list_node_cached_resources(node_id: int):
@@ -1280,6 +1578,166 @@ def register_container_routes(app, deps: dict[str, Any]):
             ).fetchall()
             return rows
 
+    @app.post("/api/containers/{container_id}/mount-public-resources", status_code=202)
+    def mount_container_public_resources(container_id: int, payload: ContainerNodeCacheMountInput):
+        """给已有容器追加只读公开资源；节点缓存就绪时优先缓存，否则使用托管 NFS。"""
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            if container["status"] not in ("running", "stopped"):
+                raise HTTPException(status_code=409, detail="容器必须是 running 或 stopped 状态才能追加公开资源")
+
+            node = conn.execute("SELECT * FROM nodes WHERE id = %s", (container["node_id"],)).fetchone()
+            if not node or node["status"] != "online":
+                raise HTTPException(status_code=409, detail="目标节点当前不在线")
+            capabilities = set(node.get("capabilities") or [])
+            if "managed_nfs_hot_mounts_v1" not in capabilities:
+                raise HTTPException(status_code=409, detail="目标节点 agent 尚不支持安全的公开资源热挂载，请先升级 agent")
+
+            requested_ids = list(dict.fromkeys(resource_id for resource_id in payload.resource_ids if resource_id > 0))
+            if not requested_ids:
+                raise HTTPException(status_code=400, detail="请先选择至少一个公开资源")
+            resources = conn.execute(
+                """
+                SELECT * FROM shared_resources
+                WHERE enabled = TRUE AND request_status = 'ready' AND id = ANY(%s::bigint[])
+                ORDER BY resource_type, name
+                """,
+                (requested_ids,),
+            ).fetchall()
+            if len(resources) != len(requested_ids):
+                raise HTTPException(status_code=400, detail="部分公开资源不存在、未启用或尚未就绪")
+
+            settings = get_platform_settings(conn)
+            shared_mode = effective_node_shared_storage_mode(node, settings, container["owner_id"])
+            caches = conn.execute(
+                """
+                SELECT resource_id, status, local_path FROM node_resource_cache
+                WHERE node_id = %s AND resource_id = ANY(%s::bigint[])
+                """,
+                (node["id"], requested_ids),
+            ).fetchall()
+            cache_by_resource = {row["resource_id"]: row for row in caches}
+
+            existing_managed = list(container.get("managed_mounts") or [])
+            managed_by_target = {str(item.get("target") or ""): item for item in existing_managed}
+            existing_mounts = list(container.get("mounts") or [])
+
+            def split_mount(value: str) -> tuple[str, str, bool]:
+                readonly = value.endswith(":ro")
+                core = value[:-3] if readonly else value[:-3] if value.endswith(":rw") else value
+                parts = core.split(":", 1)
+                return parts[0], parts[1] if len(parts) == 2 else parts[0], readonly
+
+            mounts_by_target = {split_mount(value)[1]: value for value in existing_mounts}
+            resource_rows = {row["id"]: row for row in resources}
+            resolved: list[tuple[dict[str, Any], dict[str, Any]]] = []
+            for resource_id in requested_ids:
+                resource = resource_rows[resource_id]
+                target = validate_container_path(resource["mount_path"])
+                cache = cache_by_resource.get(resource_id)
+                if cache and cache["status"] == "ready" and cache["local_path"]:
+                    source, kind = cache["local_path"], "node_cache"
+                else:
+                    if shared_mode != "enabled":
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"资源 {resource['name']} 无本地缓存，且该用户在目标节点未启用共享存储",
+                        )
+                    if not resource.get("nfs_available", True):
+                        raise HTTPException(status_code=409, detail=f"资源 {resource['name']} 不允许通过父级 NFS 挂载")
+                    if not settings["nfs_server"] or not settings["nfs_sentinel_signature"]:
+                        raise HTTPException(status_code=409, detail="平台 NFS 服务地址或 sentinel 尚未配置")
+                    provider = str(resource["version"] or "default").strip("/")
+                    base = "datasets" if resource["resource_type"] == "dataset" else "models"
+                    source, kind = f"/var/lib/server-vps/nfs/{base}/{provider}/{resource['name']}", "shared_resource"
+
+                occupied = managed_by_target.get(target)
+                if target in mounts_by_target and not occupied:
+                    linked = conn.execute(
+                        "SELECT 1 FROM container_resources WHERE container_id=%s AND mount_path=%s",
+                        (container_id, target),
+                    ).fetchone()
+                    if not linked:
+                        raise HTTPException(status_code=409, detail=f"容器路径 {target} 已被其他挂载占用")
+                if occupied and occupied.get("kind") not in ("shared_resource", "node_cache"):
+                    raise HTTPException(status_code=409, detail=f"容器路径 {target} 已被 {occupied.get('kind')} 挂载占用")
+                resolved.append((resource, {
+                    "kind": kind, "source": source, "target": target, "readonly": True, "required": True,
+                }))
+
+            replacements = {item["target"]: item for _, item in resolved}
+            new_managed = [item for item in existing_managed if item.get("target") not in replacements]
+            new_managed.extend(replacements.values())
+            new_mounts = [value for value in existing_mounts if split_mount(value)[1] not in replacements]
+            new_mounts.extend(f"{item['source']}:{item['target']}:ro" for item in replacements.values())
+
+            mount_updates: list[dict[str, Any]] = []
+            for _, item in resolved:
+                old = managed_by_target.get(item["target"])
+                old_mount = mounts_by_target.get(item["target"])
+                desired_mount = f"{item['source']}:{item['target']}:ro"
+                if old == item and old_mount == desired_mount:
+                    continue
+                mount_updates.append({
+                    "old_target": item["target"] if old_mount else "",
+                    "new_source": item["source"],
+                    "new_target": item["target"],
+                    "readonly": True,
+                })
+            if not mount_updates:
+                raise HTTPException(status_code=409, detail="所选公开资源已经按当前最优来源挂载")
+
+            shared_storage = {
+                "enabled": True,
+                "server": settings["nfs_server"],
+                "users_export": settings["nfs_users_export"],
+                "datasets_export": settings["nfs_datasets_export"],
+                "models_export": settings["nfs_models_export"],
+                "mount_options": settings["nfs_mount_options"],
+                "sentinel": settings["nfs_sentinel"],
+                "sentinel_signature": settings["nfs_sentinel_signature"],
+                "idmap_base": settings["nfs_idmap_base"],
+            }
+            ts = now_ts()
+            conn.execute(
+                "UPDATE containers SET mounts=%s, managed_mounts=%s, updated_at=%s WHERE id=%s",
+                (Jsonb(new_mounts), Jsonb(new_managed), ts, container_id),
+            )
+            for resource, item in resolved:
+                conn.execute(
+                    """
+                    INSERT INTO container_resources (container_id, resource_id, mount_path, created_at)
+                    VALUES (%s,%s,%s,%s)
+                    ON CONFLICT (container_id, resource_id) DO UPDATE SET mount_path=EXCLUDED.mount_path
+                    """,
+                    (container_id, resource["id"], item["target"], ts),
+                )
+            task = enqueue_node_task(
+                conn,
+                node["id"],
+                container_id,
+                "apply_resource_mounts",
+                {
+                    "container_id": container_id,
+                    "name": container["name"],
+                    "mount_updates": mount_updates,
+                    "managed_mounts": new_managed,
+                    "shared_storage": shared_storage,
+                },
+            )
+            audit(
+                conn,
+                user["username"],
+                "mount-public-resources",
+                f"container:{container_id}",
+                {"resource_ids": requested_ids, "task_id": task["id"], "sources": [item["kind"] for _, item in resolved]},
+            )
+            return public_task(task)
+
     @app.post("/api/containers/{container_id}/mount-node-cache", status_code=202)
     def mount_container_node_cache(container_id: int, payload: ContainerNodeCacheMountInput):
         with db() as conn:
@@ -1406,6 +1864,80 @@ def register_container_routes(app, deps: dict[str, Any]):
                 "mount-node-cache",
                 f"container:{container_id}",
                 {"resource_ids": requested_ids, "task_id": task["id"]},
+            )
+            return public_task(task)
+
+    @app.post("/api/containers/{container_id}/unmount-public-resources", status_code=202)
+    def unmount_container_public_resources(container_id: int, payload: ContainerPublicMountRemoveInput):
+        with db() as conn:
+            user = current_user(conn)
+            container = conn.execute("SELECT * FROM containers WHERE id = %s", (container_id,)).fetchone()
+            if not container:
+                raise HTTPException(status_code=404, detail="容器不存在")
+            require_container_access(user, container)
+            if container["status"] not in ("running", "stopped"):
+                raise HTTPException(status_code=400, detail="容器必须是 running 或 stopped 状态才能移除公开资源挂载")
+
+            requested_mounts = [validate_container_path(path) for path in (payload.mount_paths or []) if str(path).strip()]
+            requested_mounts = list(dict.fromkeys(requested_mounts))
+            if not requested_mounts:
+                raise HTTPException(status_code=400, detail="请先选择至少一个挂载路径")
+
+            node = conn.execute("SELECT * FROM nodes WHERE id = %s", (container["node_id"],)).fetchone()
+            if not node or node["status"] != "online":
+                raise HTTPException(status_code=409, detail="目标节点当前不在线")
+
+            existing_managed = list(container.get("managed_mounts") or [])
+            removable_kinds = {"shared_resource", "node_cache"}
+            removable_targets = {
+                str(item.get("target") or "")
+                for item in existing_managed
+                if str(item.get("kind") or "") in removable_kinds
+            }
+            targets = [target for target in requested_mounts if target in removable_targets]
+            if not targets:
+                raise HTTPException(status_code=404, detail="未找到可移除的公开资源挂载")
+
+            def split_mount(value: str) -> tuple[str, str, bool]:
+                readonly = value.endswith(":ro")
+                core = value[:-3] if readonly else value[:-3] if value.endswith(":rw") else value
+                parts = core.split(":", 1)
+                return parts[0], parts[1] if len(parts) == 2 else parts[0], readonly
+
+            existing_mounts = list(container.get("mounts") or [])
+            new_managed = [item for item in existing_managed if str(item.get("target") or "") not in targets]
+            new_mounts = [value for value in existing_mounts if split_mount(value)[1] not in targets]
+
+            if len(new_managed) == len(existing_managed) and len(new_mounts) == len(existing_mounts):
+                raise HTTPException(status_code=409, detail="所选挂载已不存在，无需重复移除")
+
+            ts = now_ts()
+            conn.execute(
+                "UPDATE containers SET mounts=%s, managed_mounts=%s, updated_at=%s WHERE id=%s",
+                (Jsonb(new_mounts), Jsonb(new_managed), ts, container_id),
+            )
+            conn.execute(
+                "DELETE FROM container_resources WHERE container_id=%s AND mount_path = ANY(%s::text[])",
+                (container_id, targets),
+            )
+
+            task = enqueue_node_task(
+                conn,
+                node["id"],
+                container_id,
+                "remove_resource_mounts",
+                {
+                    "container_id": container_id,
+                    "name": container["name"],
+                    "targets": targets,
+                },
+            )
+            audit(
+                conn,
+                user["username"],
+                "unmount-public-resources",
+                f"container:{container_id}",
+                {"mount_paths": targets, "task_id": task["id"]},
             )
             return public_task(task)
 
@@ -1615,6 +2147,8 @@ def register_container_routes(app, deps: dict[str, Any]):
             if not container:
                 raise HTTPException(status_code=404, detail="容器不存在")
             require_container_access(user, container)
+            if container.get("system_role"):
+                raise HTTPException(status_code=409, detail="系统容器由节点 agent 管理，不能从容器管理页删除")
             if payload.force and not is_admin_user(user):
                 raise HTTPException(status_code=403, detail="仅管理员可强制移除容器记录")
             if payload.name != container["name"]:
@@ -1633,12 +2167,21 @@ def register_container_routes(app, deps: dict[str, Any]):
                 return {"ok": True, "container_id": container_id}
             ts = now_ts()
             conn.execute("UPDATE containers SET status = 'deleting', updated_at = %s WHERE id = %s", (ts, container_id))
+            settings = get_platform_settings(conn)
+            managed_mounts = container.get("managed_mounts") or []
+            shared_storage = {
+                "enabled": bool(managed_mounts), "server": settings["nfs_server"],
+                "users_export": settings["nfs_users_export"], "datasets_export": settings["nfs_datasets_export"],
+                "models_export": settings["nfs_models_export"], "mount_options": settings["nfs_mount_options"],
+                "sentinel": settings["nfs_sentinel"], "sentinel_signature": settings["nfs_sentinel_signature"],
+                "idmap_base": settings["nfs_idmap_base"],
+            }
             enqueue_node_task(
                 conn,
                 container["node_id"],
                 container_id,
                 "incus_delete_container",
-                incus_lifecycle_payload(container, "delete"),
+                incus_lifecycle_payload(container, "delete", shared_storage),
             )
             audit(conn, "admin", "delete", f"container:{container_id}", {"name": container["name"]})
             return next(item for item in list_containers(conn) if item["id"] == container_id)

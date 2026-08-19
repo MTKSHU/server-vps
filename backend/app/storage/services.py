@@ -6,6 +6,7 @@ import re
 from fastapi import HTTPException
 
 from ..config import AGENT_RELEASE_DIR, SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER
+from ..platform_settings import get_platform_settings
 
 
 def _read_sync_private_key() -> str:
@@ -164,16 +165,16 @@ def enqueue_resource_sync_task(
     # resource_type → 目录名：dataset 系 → datasets，其余（模型）→ models
     _type = resource["resource_type"]
     type_dir = "datasets" if _type == "dataset" else "models"
-    safe_name = resource["name"].replace("/", "_").replace("..", "_")
-    safe_version = resource["version"].replace("/", "_").replace("..", "_")
+    safe_repo_name = resource["name"].replace("/", "_").replace("..", "_")
+    safe_provider = resource["version"].replace("/", "_").replace("..", "_")
     if node_cache_base:
         base = node_cache_base.rstrip("/")
     else:
         compute_root = storage_root_for_node(conn, node_id)
         base = f"{compute_root}/shared-cache"
-    # 路径：{base}/{type_dir}/{version}/{name}
-    # version 存放提供商/来源（如 openmoss、qwen），name 是资源名称
-    local_cache_path = f"{base}/{type_dir}/{safe_version}/{safe_name}"
+    # 路径：{base}/{type_dir}/{provider}/{repo_name}
+    # DB 字段 version 在产品语义中表示 provider，name 表示 repo_name。
+    local_cache_path = f"{base}/{type_dir}/{safe_provider}/{safe_repo_name}"
 
     private_key = _read_sync_private_key()
     ts = now_ts()
@@ -296,6 +297,8 @@ def ensure_user_zfs_dataset_task(
         )
         return None
     mountpoint = source_path_for_node(row["home_path"], node)
+    platform_settings = get_platform_settings(conn)
+    shared_owner = int(platform_settings["nfs_idmap_base"]) + 1000
     conn.execute(
         """
         INSERT INTO user_storage_datasets (
@@ -324,10 +327,14 @@ def ensure_user_zfs_dataset_task(
             "mountpoint": mountpoint,
             "quota_gb": int(row["storage_quota_gb"] or 0),
             "dataset_name": "",
-            "uid": 0,
-            "gid": 0,
-            "mode": "0750",
+            "uid": shared_owner,
+            "gid": shared_owner,
+            "mode": "0700",
             "reason": reason,
+            "sentinel": platform_settings["nfs_sentinel"],
+            "sentinel_signature": platform_settings["nfs_sentinel_signature"],
+            "ensure_nfs_share": platform_settings["truenas_nfs_auto_share"],
+            "nfs_share_template_path": platform_settings["nfs_users_export"],
         },
     )
 

@@ -9,6 +9,7 @@ import { getPlatformSettings, updatePlatformSettings, type PlatformSettings } fr
 const { t } = useI18n();
 const loading = ref(false);
 const saving = ref(false);
+const canaryUserIdsText = ref("");
 const form = reactive<PlatformSettings>({
   local_login_enabled: true,
   platform_registration_enabled: false,
@@ -20,6 +21,25 @@ const form = reactive<PlatformSettings>({
   sso_default_group: "member",
   platform_timezone: "Asia/Shanghai",
   transfer_bandwidth_limit_mbps: 0,
+  shared_storage_mode: "disabled",
+  shared_storage_canary_user_ids: [],
+  nfs_server: "",
+  nfs_users_export: "",
+  nfs_datasets_export: "",
+  nfs_models_export: "",
+  nfs_mount_options: "hard,_netdev,noatime,vers=4.1,proto=tcp",
+  nfs_sentinel: ".server-vps-nfs",
+  nfs_sentinel_signature: "",
+  nfs_idmap_base: 1000000,
+  truenas_nfs_auto_share: false,
+  workspace_default_gb: 100,
+  workspace_retention_days: 30,
+  agent_metrics_interval_seconds: 2,
+  agent_heartbeat_interval_seconds: 15,
+  agent_container_interval_seconds: 15,
+  agent_storage_interval_seconds: 60,
+  agent_inventory_interval_seconds: 300,
+  agent_task_poll_interval_seconds: 5,
   webhook_enabled: false,
   webhook_url: "",
   webhook_secret: "",
@@ -52,6 +72,7 @@ async function load() {
   loading.value = true;
   try {
     Object.assign(form, await getPlatformSettings());
+    canaryUserIdsText.value = form.shared_storage_canary_user_ids.join(",");
   } finally {
     loading.value = false;
   }
@@ -60,7 +81,14 @@ async function load() {
 async function submit() {
   saving.value = true;
   try {
+    form.shared_storage_canary_user_ids = Array.from(new Set(
+      canaryUserIdsText.value
+        .split(/[,，\s]+/)
+        .map((value) => Number.parseInt(value.trim(), 10))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ));
     Object.assign(form, await updatePlatformSettings({ ...form }));
+    canaryUserIdsText.value = form.shared_storage_canary_user_ids.join(",");
     ElMessage.success(t("settings.saved"));
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : t("settings.saveFailed"));
@@ -181,6 +209,65 @@ onMounted(load);
         </el-form-item>
         <el-form-item :label="t('settings.transferBandwidthLimit')">
           <el-input-number v-model="form.transfer_bandwidth_limit_mbps" :min="0" :max="100000" :step="10" />
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header><strong>共享 NFS</strong></template>
+      <el-alert title="先升级全部计算节点 agent 并完成 NFS/sentinel 验证，再从 canary 切换到 enabled。" type="warning" :closable="false" style="margin-bottom:16px" />
+      <el-alert
+        :title="`当前开关：shared_storage_mode=${form.shared_storage_mode}`"
+        :type="form.shared_storage_mode === 'disabled' ? 'success' : 'warning'"
+        :closable="false"
+        show-icon
+        style="margin-bottom:16px"
+      />
+      <el-form :model="form" label-position="top" class="settings-grid">
+        <el-form-item label="共享存储模式（shared_storage_mode）">
+          <el-select v-model="form.shared_storage_mode">
+            <el-option label="关闭" value="disabled" /><el-option label="Canary" value="canary" /><el-option label="全部启用" value="enabled" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Canary 用户 ID（逗号分隔）">
+          <el-input v-model="canaryUserIdsText" placeholder="例如：1, 7, 12" />
+          <div class="form-help">支持英文逗号、中文逗号或空格；留空表示不允许任何继承全局 Canary 策略的用户。</div>
+        </el-form-item>
+        <el-form-item label="NFS 服务地址"><el-input v-model="form.nfs_server" placeholder="10.20.0.10" /></el-form-item>
+		<el-form-item label="用户父 Share 模板"><el-input v-model="form.nfs_users_export" placeholder="/mnt/pool/cluster-storage/users（用于克隆访问白名单）" /></el-form-item>
+		<el-form-item label="自动创建 TrueNAS 用户 NFS Share"><el-switch v-model="form.truenas_nfs_auto_share" /><div class="form-help">以“用户父导出”对应的现有 Share 为访问白名单模板；模板未限制 hosts/networks 或启用了 root 映射时会安全失败。</div></el-form-item>
+        <el-form-item label="数据集导出"><el-input v-model="form.nfs_datasets_export" placeholder="/mnt/pool/cluster-storage/datasets" /></el-form-item>
+        <el-form-item label="模型导出"><el-input v-model="form.nfs_models_export" placeholder="/mnt/pool/cluster-storage/models" /></el-form-item>
+        <el-form-item label="NFS 挂载参数"><el-input v-model="form.nfs_mount_options" /></el-form-item>
+        <el-form-item label="Sentinel 文件"><el-input v-model="form.nfs_sentinel" /></el-form-item>
+        <el-form-item label="Sentinel 签名"><el-input v-model="form.nfs_sentinel_signature" type="password" show-password placeholder="与三个 NFS 导出根目录文件内容一致" /></el-form-item>
+        <el-form-item label="Incus idmap base"><el-input-number v-model="form.nfs_idmap_base" :min="65536" :max="2000000000" /></el-form-item>
+        <el-form-item label="Workspace 默认上限 GiB"><el-input-number v-model="form.workspace_default_gb" :min="1" /></el-form-item>
+        <el-form-item label="临时 Workspace 保留天数"><el-input-number v-model="form.workspace_retention_days" :min="1" /></el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header><strong>{{ t("settings.agentCollectionPolicy") }}</strong></template>
+      <el-alert :title="t('settings.agentCollectionHint')" type="info" :closable="false" show-icon style="margin-bottom:16px" />
+      <el-form :model="form" label-position="top" class="settings-grid">
+        <el-form-item :label="t('settings.metricsInterval')">
+          <el-input-number v-model="form.agent_metrics_interval_seconds" :min="1" :max="60" />
+        </el-form-item>
+        <el-form-item :label="t('settings.heartbeatInterval')">
+          <el-input-number v-model="form.agent_heartbeat_interval_seconds" :min="5" :max="300" />
+        </el-form-item>
+        <el-form-item :label="t('settings.containerInterval')">
+          <el-input-number v-model="form.agent_container_interval_seconds" :min="form.agent_heartbeat_interval_seconds" :max="300" />
+        </el-form-item>
+        <el-form-item :label="t('settings.storageInterval')">
+          <el-input-number v-model="form.agent_storage_interval_seconds" :min="30" :max="3600" :step="10" />
+        </el-form-item>
+        <el-form-item :label="t('settings.inventoryInterval')">
+          <el-input-number v-model="form.agent_inventory_interval_seconds" :min="60" :max="86400" :step="60" />
+        </el-form-item>
+        <el-form-item :label="t('settings.taskPollInterval')">
+          <el-input-number v-model="form.agent_task_poll_interval_seconds" :min="1" :max="60" />
         </el-form-item>
       </el-form>
     </el-card>

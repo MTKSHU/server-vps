@@ -91,6 +91,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent Tasks
+         * @description 返回全量任务历史（节点任务 + 同步任务），支持分页与状态分组筛选。
+         *     status_group: '' = 全部 | 'active' = 进行中 | 'failed' = 失败 | 'succeeded' = 成功
+         */
+        get: operations["recent_tasks_api_tasks_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/api-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Api Tokens */
+        get: operations["list_api_tokens_api_me_api_tokens_get"];
+        put?: never;
+        /** Create Api Token */
+        post: operations["create_api_token_api_me_api_tokens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/api-tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Api Token */
+        delete: operations["delete_api_token_api_me_api_tokens__token_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/preferences/{key}": {
         parameters: {
             query?: never;
@@ -829,6 +885,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/image-catalog/delete-node-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Node Image */
+        post: operations["delete_node_image_api_image_catalog_delete_node_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/image-catalog/copy-local-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Local Image To Node
+         * @description 将本地自建 Incus 镜像分发到目标节点。
+         *
+         *     - 若源节点已有导出文件（status='exported'）：直接下发 incus_image_import 任务，
+         *       目标节点 agent rsync 直连源节点，管理端不参与数据传输。
+         *     - 若尚无导出文件：下发 incus_image_export 任务（含 distribute_to_node_ids），
+         *       导出完成后 agent 回调自动触发 incus_image_import。
+         *     两种情况任务均写入 node_tasks，可在任务中心查看进度。
+         */
+        post: operations["copy_local_image_to_node_api_image_catalog_copy_local_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/data/resource-tag-options": {
         parameters: {
             query?: never;
@@ -910,7 +1009,7 @@ export interface paths {
         };
         /**
          * User Directory Live
-         * @description 即时 SSH 到存储节点执行 ls -la，毫秒级返回文件列表，无需预扫描
+         * @description 即时返回文件列表：优先通过 agent HTTP API（< 10ms），回退到 SSH ls。
          */
         get: operations["user_directory_live_api_storage_users__user_id__files_live_get"];
         put?: never;
@@ -1041,6 +1140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/data/shared-resources/migrate-provider-layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Migrate Shared Resources Provider Layout */
+        post: operations["migrate_shared_resources_provider_layout_api_data_shared_resources_migrate_provider_layout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/data/shared-resources/{resource_id}": {
         parameters: {
             query?: never;
@@ -1104,6 +1220,23 @@ export interface paths {
         put?: never;
         /** Verify Shared Resource */
         post: operations["verify_shared_resource_api_data_shared_resources__resource_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/data/shared-resources/{resource_id}/finalize-manual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finalize Manual Shared Resource */
+        post: operations["finalize_manual_shared_resource_api_data_shared_resources__resource_id__finalize_manual_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1382,6 +1515,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage/resource-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Resource Cache
+         * @description 管理员查询全量节点资源缓存状态矩阵。
+         */
+        get: operations["list_resource_cache_api_storage_resource_cache_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage/resources/{resource_id}/sync-to-node/{node_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Resource Sync
+         * @description 管理员手动触发将指定资源同步到指定节点。
+         */
+        post: operations["trigger_resource_sync_api_storage_resources__resource_id__sync_to_node__node_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage/resources/{resource_id}/sync-to-all-nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Resource Sync All Nodes
+         * @description 管理员手动触发将指定资源同步到所有在线可调度计算节点。
+         */
+        post: operations["trigger_resource_sync_all_nodes_api_storage_resources__resource_id__sync_to_all_nodes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/storage/resource-cache/{node_id}/{resource_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear Resource Cache
+         * @description 管理员清除节点本地缓存记录（不删除节点上的实际文件）。
+         */
+        delete: operations["clear_resource_cache_api_storage_resource_cache__node_id___resource_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/containers": {
         parameters: {
             query?: never;
@@ -1462,6 +1675,23 @@ export interface paths {
         put?: never;
         /** Retry Container */
         post: operations["retry_container_api_containers__container_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/migrate-home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Migrate Container Home */
+        post: operations["migrate_container_home_api_containers__container_id__migrate_home_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1587,6 +1817,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/containers/{container_id}/upload-as-resource": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Container As Resource
+         * @description 用户已在自己容器内下载/准备好数据后，一步注册为公开数据集/模型并从容器拉取到存储节点。
+         *
+         *     复用 enqueue_container_sync 的 container_to_storage 链路（含跨节点临时密钥），
+         *     暂存到与最终目录同级的 .{resource_id}.partial，成功后由
+         *     migrate_shared_resource_path 原子切换到正式目录并自动触发校验。
+         */
+        post: operations["upload_container_as_resource_api_containers__container_id__upload_as_resource_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/node-cached-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Node Cached Resources */
+        get: operations["list_node_cached_resources_api_containers_node_cached_resources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/containers/{container_id}/sync-rules": {
         parameters: {
             query?: never;
@@ -1634,6 +1905,120 @@ export interface paths {
         put?: never;
         /** Run Container Sync Rule */
         post: operations["run_container_sync_rule_api_containers__container_id__sync_rules__rule_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/apply-node-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Container Node Cache
+         * @description 将容器的资源挂载切换为本地缓存路径（如果已同步完成）。
+         */
+        post: operations["apply_container_node_cache_api_containers__container_id__apply_node_cache_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/node-cached-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Container Node Cached Resources */
+        get: operations["container_node_cached_resources_api_containers__container_id__node_cached_resources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/mount-public-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mount Container Public Resources
+         * @description 给已有容器追加只读公开资源；节点缓存就绪时优先缓存，否则使用托管 NFS。
+         */
+        post: operations["mount_container_public_resources_api_containers__container_id__mount_public_resources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/mount-node-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mount Container Node Cache */
+        post: operations["mount_container_node_cache_api_containers__container_id__mount_node_cache_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/sync-resource/{resource_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Container Sync And Mount Resource
+         * @description 触发将公开资源同步到容器所在节点，完成后自动挂载到该容器。
+         */
+        post: operations["container_sync_and_mount_resource_api_containers__container_id__sync_resource__resource_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/containers/{container_id}/sync-node-cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Container Sync Node Cache
+         * @description 按容器所在节点批量同步公开资源到本地缓存。
+         */
+        post: operations["container_sync_node_cache_api_containers__container_id__sync_node_cache_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1760,6 +2145,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/metrics/nodes/{node_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Node Metrics History
+         * @description 返回节点指标历史（CPU%/内存%/GPU%），最多 7 天。
+         */
+        get: operations["node_metrics_history_api_metrics_nodes__node_id__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/internal/port-routes": {
         parameters: {
             query?: never;
@@ -1769,6 +2174,27 @@ export interface paths {
         };
         /** Internal Port Routes */
         get: operations["internal_port_routes_api_internal_port_routes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/internal/path-routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Internal Path Routes
+         * @description 返回可通过路径代理（/c/<container>/<port-name>/）访问的 Web 端口路由表。
+         *     每个 (container_name, port_name) 对是一条独立路由，同一容器可有多条。
+         */
+        get: operations["internal_path_routes_api_internal_path_routes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1811,6 +2237,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/nodes/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report Node Metrics */
+        post: operations["report_node_metrics_api_nodes_metrics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/nodes/tasks/claim": {
         parameters: {
             query?: never;
@@ -1822,6 +2265,26 @@ export interface paths {
         put?: never;
         /** Claim Node Task */
         post: operations["claim_node_task_api_nodes_tasks_claim_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/nodes/tasks/{task_id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Node Task Progress
+         * @description agent 在执行 container_data_sync 期间周期性上报 rsync 传输进度。
+         */
+        post: operations["report_node_task_progress_api_nodes_tasks__task_id__progress_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1849,12 +2312,88 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentMetricsInput */
+        AgentMetricsInput: {
+            /** Token */
+            token: string;
+            /** Hostname */
+            hostname: string;
+            /**
+             * Uptime Seconds
+             * @default 0
+             */
+            uptime_seconds: number;
+            /**
+             * Cpu Usage Percent
+             * @default 0
+             */
+            cpu_usage_percent: number;
+            /**
+             * Cpu Temperature C
+             * @default 0
+             */
+            cpu_temperature_c: number;
+            /**
+             * Memory Total Gb
+             * @default 1
+             */
+            memory_total_gb: number;
+            /**
+             * Memory Used Gb
+             * @default 0
+             */
+            memory_used_gb: number;
+            /**
+             * Load Avg
+             * @default 0
+             */
+            load_avg: number;
+            /**
+             * Swap Total Gb
+             * @default 0
+             */
+            swap_total_gb: number;
+            /**
+             * Swap Used Gb
+             * @default 0
+             */
+            swap_used_gb: number;
+            /**
+             * Network Interface
+             * @default
+             */
+            network_interface: string;
+            /**
+             * Network Rx Bytes Per Sec
+             * @default 0
+             */
+            network_rx_bytes_per_sec: number;
+            /**
+             * Network Tx Bytes Per Sec
+             * @default 0
+             */
+            network_tx_bytes_per_sec: number;
+            /** Gpus */
+            gpus?: components["schemas"]["GPUReport"][];
+        };
         /** AgentTaskClaim */
         AgentTaskClaim: {
             /** Token */
             token: string;
             /** Hostname */
             hostname: string;
+        };
+        /** AgentTaskProgress */
+        AgentTaskProgress: {
+            /** Token */
+            token: string;
+            /** Hostname */
+            hostname: string;
+            /**
+             * Progress
+             * @default {}
+             */
+            progress: Record<string, never>;
         };
         /** AgentTaskResult */
         AgentTaskResult: {
@@ -1884,6 +2423,36 @@ export interface components {
              * @default
              */
             error: string;
+        };
+        /**
+         * AlertItem
+         * @description 集群告警条目。
+         */
+        AlertItem: {
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "error" | "warning" | "info";
+            /** Type */
+            type: string;
+            /** Message */
+            message: string;
+            /** Node Id */
+            node_id?: number | null;
+        };
+        /** ApiTokenCreateInput */
+        ApiTokenCreateInput: {
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Expires At
+             * @default 0
+             */
+            expires_at: number;
         };
         /** ApproveSsoInput */
         ApproveSsoInput: {
@@ -1955,6 +2524,11 @@ export interface components {
             mounts?: string[];
             /** Ports */
             ports?: components["schemas"]["ContainerPortInput"][];
+            /**
+             * Expires At
+             * @default 0
+             */
+            expires_at: number;
         };
         /** ContainerDeleteRequest */
         ContainerDeleteRequest: {
@@ -1974,6 +2548,105 @@ export interface components {
             /** Command */
             command: string;
         };
+        /** ContainerHomeMigrationInput */
+        ContainerHomeMigrationInput: {
+            /**
+             * Primary
+             * @default true
+             */
+            primary: boolean;
+        };
+        /** ContainerNodeCacheMountInput */
+        ContainerNodeCacheMountInput: {
+            /** Resource Ids */
+            resource_ids?: number[];
+        };
+        /** ContainerNodeCacheSyncInput */
+        ContainerNodeCacheSyncInput: {
+            /** Resource Ids */
+            resource_ids?: number[];
+        };
+        /**
+         * ContainerOut
+         * @description GET /api/containers 响应元素。
+         */
+        ContainerOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Owner Id */
+            owner_id: number;
+            /** Node Id */
+            node_id: number;
+            /** Image Id */
+            image_id: string;
+            /**
+             * Image Name
+             * @default
+             */
+            image_name: string;
+            /**
+             * Owner
+             * @default
+             */
+            owner: string;
+            /**
+             * Node
+             * @default
+             */
+            node: string;
+            /**
+             * Node Ip
+             * @default
+             */
+            node_ip: string;
+            /** Status */
+            status: string;
+            /**
+             * Access Status
+             * @default pending
+             */
+            access_status: string;
+            /**
+             * Access Error
+             * @default
+             */
+            access_error: string;
+            /**
+             * System Role
+             * @default
+             */
+            system_role: string;
+            /** Cpu Cores */
+            cpu_cores: number;
+            /** Memory Gb */
+            memory_gb: number;
+            /** Disk Gb */
+            disk_gb: number;
+            /**
+             * Ssh Username
+             * @default ubuntu
+             */
+            ssh_username: string;
+            /**
+             * Ip
+             * @default
+             */
+            ip: string;
+            /** Mounts */
+            mounts?: string[];
+            /** Managed Mounts */
+            managed_mounts?: components["schemas"]["ManagedMount"][];
+            /** Created At */
+            created_at: number;
+            /** Updated At */
+            updated_at: number;
+            /** Gpus */
+            gpus?: components["schemas"]["GpuOut"][];
+            /** Ports */
+            ports?: components["schemas"]["ContainerPortOut"][];
+        };
         /** ContainerPortInput */
         ContainerPortInput: {
             /**
@@ -1988,6 +2661,40 @@ export interface components {
             protocol: string;
             /** Container Port */
             container_port: number;
+        };
+        /** ContainerPortOut */
+        ContainerPortOut: {
+            /** Id */
+            id: number;
+            /**
+             * Container Id
+             * @default 0
+             */
+            container_id: number;
+            /** Name */
+            name: string;
+            /** Protocol */
+            protocol: string;
+            /** Container Port */
+            container_port: number;
+            /** Host Port */
+            host_port: number;
+            /** Node Port */
+            node_port?: number | null;
+            /** Public Port */
+            public_port?: number | null;
+            /** Node Listen Port */
+            node_listen_port?: number | null;
+            /**
+             * Created At
+             * @default 0
+             */
+            created_at: number;
+            /**
+             * Updated At
+             * @default 0
+             */
+            updated_at: number;
         };
         /** ContainerPublishImageInput */
         ContainerPublishImageInput: {
@@ -2033,6 +2740,50 @@ export interface components {
              */
             gpu_model: string;
         };
+        /**
+         * ContainerResourceUploadInput
+         * @description 用户在自己容器中准备好数据后，上传到存储节点并注册为公开数据集/模型。
+         */
+        ContainerResourceUploadInput: {
+            /**
+             * Resource Type
+             * @default dataset
+             * @enum {string}
+             */
+            resource_type: "dataset" | "huggingface_model" | "pytorch_model";
+            /** Name */
+            name: string;
+            /**
+             * Version
+             * @default default
+             */
+            version: string;
+            /** Tags */
+            tags?: string[];
+            /** Container Path */
+            container_path: string;
+            /**
+             * Conflict Policy
+             * @default overwrite
+             * @enum {string}
+             */
+            conflict_policy: "overwrite" | "skip";
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+            /**
+             * Repo Id
+             * @default
+             */
+            repo_id: string;
+            /**
+             * Revision
+             * @default
+             */
+            revision: string;
+        };
         /** ContainerStateReport */
         ContainerStateReport: {
             /** Name */
@@ -2047,6 +2798,11 @@ export interface components {
              * @default
              */
             ip: string;
+            /**
+             * Role
+             * @default
+             */
+            role: string;
         };
         /** ContainerSyncInput */
         ContainerSyncInput: {
@@ -2119,6 +2875,57 @@ export interface components {
              */
             conflict_policy: "overwrite" | "skip";
         };
+        /**
+         * DataSyncTaskOut
+         * @description GET /api/containers/{id}/sync-tasks 响应元素。
+         */
+        DataSyncTaskOut: {
+            /** Id */
+            id: number;
+            /** Task Type */
+            task_type: string;
+            /** User Id */
+            user_id?: number | null;
+            /** Resource Id */
+            resource_id?: number | null;
+            /** Source Node Id */
+            source_node_id?: number | null;
+            /** Target Node Id */
+            target_node_id?: number | null;
+            /** Container Id */
+            container_id?: number | null;
+            /**
+             * Source Path
+             * @default
+             */
+            source_path: string;
+            /**
+             * Target Path
+             * @default
+             */
+            target_path: string;
+            /** Status */
+            status: string;
+            /** Detail */
+            detail?: Record<string, never>;
+            progress?: components["schemas"]["SyncProgressOut"] | null;
+            /** Created At */
+            created_at: number;
+            /** Updated At */
+            updated_at: number;
+            /**
+             * Finished At
+             * @default 0
+             */
+            finished_at: number;
+            /**
+             * Last Error
+             * @default
+             */
+            last_error: string;
+            /** Result */
+            result?: Record<string, never>;
+        };
         /** GPUReport */
         GPUReport: {
             /**
@@ -2161,10 +2968,48 @@ export interface components {
              */
             utilization: number;
         };
+        /** GpuOut */
+        GpuOut: {
+            /** Id */
+            id: number;
+            /** Slot */
+            slot: number;
+            /** Uuid */
+            uuid: string;
+            /** Model */
+            model: string;
+            /**
+             * Pci Address
+             * @default
+             */
+            pci_address: string;
+            /** Vram Gb */
+            vram_gb: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HealthResponse
+         * @description GET /api/health 响应体。
+         */
+        HealthResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Database */
+            database: string;
+        };
+        /**
+         * ImageCatalogOut
+         * @description GET /api/image-catalog 响应体。
+         */
+        ImageCatalogOut: {
+            /** Images */
+            images?: components["schemas"]["ImageOut"][];
+            /** Incus Images */
+            incus_images?: components["schemas"]["IncusImageOut"][];
         };
         /** ImageInput */
         ImageInput: {
@@ -2199,6 +3044,90 @@ export interface components {
              * @default false
              */
             preferred: boolean;
+        };
+        /**
+         * ImageOut
+         * @description GET /api/images 响应元素。
+         */
+        ImageOut: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Cuda Major
+             * @default 0
+             */
+            cuda_major: number;
+            /**
+             * Compatible Pools
+             * @default
+             */
+            compatible_pools: string;
+            /**
+             * Incus Ref
+             * @default
+             */
+            incus_ref: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Preferred
+             * @default false
+             */
+            preferred: boolean;
+            /**
+             * Owner
+             * @default admin
+             */
+            owner: string;
+            /** Created At */
+            created_at: number;
+            /** Updated At */
+            updated_at: number;
+        };
+        /**
+         * IncusImageOut
+         * @description 节点本地 Incus 镜像条目。
+         */
+        IncusImageOut: {
+            /** Node Id */
+            node_id: number;
+            /** Node */
+            node: string;
+            /**
+             * Node Status
+             * @default
+             */
+            node_status: string;
+            /**
+             * Fingerprint
+             * @default
+             */
+            fingerprint: string;
+            /**
+             * Aliases
+             * @default
+             */
+            aliases: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Architecture
+             * @default
+             */
+            architecture: string;
+            /**
+             * Updated At
+             * @default 0
+             */
+            updated_at: number;
         };
         /** IncusImageReport */
         IncusImageReport: {
@@ -2255,6 +3184,34 @@ export interface components {
             /** Password */
             password: string;
         };
+        /** ManagedMount */
+        ManagedMount: {
+            /**
+             * Kind
+             * @default legacy
+             * @enum {string}
+             */
+            kind: "legacy" | "user_home" | "shared_resource" | "node_cache" | "scratch";
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /**
+             * Readonly
+             * @default false
+             */
+            readonly: boolean;
+            /**
+             * Required
+             * @default true
+             */
+            required: boolean;
+            /**
+             * Export
+             * @default
+             */
+            export: string;
+        };
         /** NodeConfigInput */
         NodeConfigInput: {
             /**
@@ -2308,6 +3265,11 @@ export interface components {
              * @default 0
              */
             max_disk_gb_per_container: number;
+            /**
+             * Root Disk Gb
+             * @default 0
+             */
+            root_disk_gb: number;
             /**
              * Reserved Memory Gb
              * @default 0
@@ -2370,6 +3332,343 @@ export interface components {
              * @default
              */
             resource_cache_base: string;
+            /**
+             * Shared Storage Mode
+             * @default inherit
+             * @enum {string}
+             */
+            shared_storage_mode: "inherit" | "disabled" | "enabled";
+        };
+        /**
+         * NodeOut
+         * @description GET /api/nodes 响应元素。
+         */
+        NodeOut: {
+            /** Id */
+            id: number;
+            /** Hostname */
+            hostname: string;
+            /** Ip */
+            ip: string;
+            /**
+             * Node Type
+             * @default compute
+             */
+            node_type: string;
+            /**
+             * Driver Pool
+             * @default unknown
+             */
+            driver_pool: string;
+            /** Status */
+            status: string;
+            /**
+             * Schedulable
+             * @default true
+             */
+            schedulable: boolean;
+            /**
+             * Maintenance
+             * @default false
+             */
+            maintenance: boolean;
+            /**
+             * Max Containers
+             * @default 8
+             */
+            max_containers: number;
+            /**
+             * Max Running Containers
+             * @default 8
+             */
+            max_running_containers: number;
+            /**
+             * Max Gpu Shared Containers
+             * @default 4
+             */
+            max_gpu_shared_containers: number;
+            /**
+             * Allow Gpu Sharing
+             * @default true
+             */
+            allow_gpu_sharing: boolean;
+            /**
+             * Max Cpu Per Container
+             * @default 0
+             */
+            max_cpu_per_container: number;
+            /**
+             * Max Memory Gb Per Container
+             * @default 0
+             */
+            max_memory_gb_per_container: number;
+            /**
+             * Max Disk Gb Per Container
+             * @default 0
+             */
+            max_disk_gb_per_container: number;
+            /**
+             * Root Disk Gb
+             * @default 0
+             */
+            root_disk_gb: number;
+            /**
+             * Reserved Memory Gb
+             * @default 0
+             */
+            reserved_memory_gb: number;
+            /**
+             * Reserved Disk Gb
+             * @default 0
+             */
+            reserved_disk_gb: number;
+            /**
+             * Allow Port Mapping
+             * @default true
+             */
+            allow_port_mapping: boolean;
+            /**
+             * Max Ports Per Container
+             * @default 8
+             */
+            max_ports_per_container: number;
+            /**
+             * Scheduler Weight
+             * @default 0
+             */
+            scheduler_weight: number;
+            /** Labels */
+            labels?: string[];
+            /**
+             * Wol Mac
+             * @default
+             */
+            wol_mac: string;
+            /**
+             * Wol Broadcast
+             * @default 255.255.255.255
+             */
+            wol_broadcast: string;
+            /**
+             * Ssh User
+             * @default root
+             */
+            ssh_user: string;
+            /**
+             * Ssh Port
+             * @default 22
+             */
+            ssh_port: number;
+            /**
+             * Sync Ip
+             * @default
+             */
+            sync_ip: string;
+            /**
+             * Sync Ssh Port
+             * @default 0
+             */
+            sync_ssh_port: number;
+            /**
+             * Resource Cache Base
+             * @default
+             */
+            resource_cache_base: string;
+            /**
+             * Shared Storage Mode
+             * @default inherit
+             * @enum {string}
+             */
+            shared_storage_mode: "inherit" | "disabled" | "enabled";
+            /**
+             * Nfs Healthy
+             * @default false
+             */
+            nfs_healthy: boolean;
+            /**
+             * Nfs Latency Ms
+             * @default 0
+             */
+            nfs_latency_ms: number;
+            /**
+             * Nfs Error
+             * @default
+             */
+            nfs_error: string;
+            /**
+             * Nfs Checked At
+             * @default 0
+             */
+            nfs_checked_at: number;
+            /**
+             * Nfs Last Success At
+             * @default 0
+             */
+            nfs_last_success_at: number;
+            /** Capabilities */
+            capabilities?: string[];
+            /**
+             * Cpu Model
+             * @default
+             */
+            cpu_model: string;
+            /**
+             * Cpu Total
+             * @default 0
+             */
+            cpu_total: number;
+            /**
+             * Cpu Cores
+             * @default 0
+             */
+            cpu_cores: number;
+            /**
+             * Cpu Sockets
+             * @default 1
+             */
+            cpu_sockets: number;
+            /**
+             * Cpu Temperature C
+             * @default 0
+             */
+            cpu_temperature_c: number;
+            /**
+             * Memory Total Gb
+             * @default 0
+             */
+            memory_total_gb: number;
+            /**
+             * Disk Total Gb
+             * @default 0
+             */
+            disk_total_gb: number;
+            /**
+             * Cpu Used
+             * @default 0
+             */
+            cpu_used: number;
+            /**
+             * Memory Used Gb
+             * @default 0
+             */
+            memory_used_gb: number;
+            /**
+             * Disk Used Gb
+             * @default 0
+             */
+            disk_used_gb: number;
+            /**
+             * Last Seen
+             * @default 0
+             */
+            last_seen: number;
+            /**
+             * Load Avg
+             * @default 0
+             */
+            load_avg: number;
+            /**
+             * Cpu Usage Percent
+             * @default 0
+             */
+            cpu_usage_percent: number;
+            /**
+             * Swap Total Gb
+             * @default 0
+             */
+            swap_total_gb: number;
+            /**
+             * Swap Used Gb
+             * @default 0
+             */
+            swap_used_gb: number;
+            /**
+             * Network Interface
+             * @default
+             */
+            network_interface: string;
+            /**
+             * Network Rx Bytes Per Sec
+             * @default 0
+             */
+            network_rx_bytes_per_sec: number;
+            /**
+             * Network Tx Bytes Per Sec
+             * @default 0
+             */
+            network_tx_bytes_per_sec: number;
+            /**
+             * Os Version
+             * @default
+             */
+            os_version: string;
+            /**
+             * Kernel Version
+             * @default
+             */
+            kernel_version: string;
+            /**
+             * Driver Version
+             * @default
+             */
+            driver_version: string;
+            /**
+             * Cuda Driver Api Version
+             * @default
+             */
+            cuda_driver_api_version: string;
+            /**
+             * Incus Status
+             * @default unknown
+             */
+            incus_status: string;
+            /**
+             * Agent Version
+             * @default
+             */
+            agent_version: string;
+            /**
+             * Uptime Seconds
+             * @default 0
+             */
+            uptime_seconds: number;
+            /**
+             * Agent Update Channel
+             * @default stable
+             */
+            agent_update_channel: string;
+            /**
+             * Agent Auto Update
+             * @default false
+             */
+            agent_auto_update: boolean;
+            /**
+             * Target Agent Version
+             * @default
+             */
+            target_agent_version: string;
+            /**
+             * Agent Update Status
+             * @default
+             */
+            agent_update_status: string;
+            /**
+             * Agent Update Error
+             * @default
+             */
+            agent_update_error: string;
+            /**
+             * Agent Update At
+             * @default 0
+             */
+            agent_update_at: number;
+            /**
+             * Registered At
+             * @default 0
+             */
+            registered_at: number;
+            /** Gpus */
+            gpus?: components["schemas"]["GpuOut"][];
         };
         /** NodeRegistration */
         NodeRegistration: {
@@ -2439,6 +3738,10 @@ export interface components {
             images?: components["schemas"]["IncusImageReport"][] | null;
             /** Storage Volumes */
             storage_volumes?: components["schemas"]["StorageVolumeReport"][] | null;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Nfs Health */
+            nfs_health?: Record<string, never>;
         };
         /** PasswordChangeInput */
         PasswordChangeInput: {
@@ -2504,6 +3807,114 @@ export interface components {
              * @default 0
              */
             transfer_bandwidth_limit_mbps: number;
+            /**
+             * Shared Storage Mode
+             * @default disabled
+             * @enum {string}
+             */
+            shared_storage_mode: "disabled" | "canary" | "enabled";
+            /** Shared Storage Canary User Ids */
+            shared_storage_canary_user_ids?: number[];
+            /**
+             * Nfs Server
+             * @default
+             */
+            nfs_server: string;
+            /**
+             * Nfs Users Export
+             * @default
+             */
+            nfs_users_export: string;
+            /**
+             * Nfs Datasets Export
+             * @default
+             */
+            nfs_datasets_export: string;
+            /**
+             * Nfs Models Export
+             * @default
+             */
+            nfs_models_export: string;
+            /**
+             * Nfs Mount Options
+             * @default hard,_netdev,noatime,vers=4.1,proto=tcp
+             */
+            nfs_mount_options: string;
+            /**
+             * Nfs Sentinel
+             * @default .server-vps-nfs
+             */
+            nfs_sentinel: string;
+            /**
+             * Nfs Sentinel Signature
+             * @default
+             */
+            nfs_sentinel_signature: string;
+            /**
+             * Nfs Idmap Base
+             * @default 1000000
+             */
+            nfs_idmap_base: number;
+            /**
+             * Truenas Nfs Auto Share
+             * @default false
+             */
+            truenas_nfs_auto_share: boolean;
+            /**
+             * Workspace Default Gb
+             * @default 100
+             */
+            workspace_default_gb: number;
+            /**
+             * Workspace Retention Days
+             * @default 30
+             */
+            workspace_retention_days: number;
+            /**
+             * Agent Metrics Interval Seconds
+             * @default 2
+             */
+            agent_metrics_interval_seconds: number;
+            /**
+             * Agent Heartbeat Interval Seconds
+             * @default 15
+             */
+            agent_heartbeat_interval_seconds: number;
+            /**
+             * Agent Container Interval Seconds
+             * @default 15
+             */
+            agent_container_interval_seconds: number;
+            /**
+             * Agent Storage Interval Seconds
+             * @default 60
+             */
+            agent_storage_interval_seconds: number;
+            /**
+             * Agent Inventory Interval Seconds
+             * @default 300
+             */
+            agent_inventory_interval_seconds: number;
+            /**
+             * Agent Task Poll Interval Seconds
+             * @default 5
+             */
+            agent_task_poll_interval_seconds: number;
+            /**
+             * Webhook Enabled
+             * @default false
+             */
+            webhook_enabled: boolean;
+            /**
+             * Webhook Url
+             * @default
+             */
+            webhook_url: string;
+            /**
+             * Webhook Secret
+             * @default
+             */
+            webhook_secret: string;
             /**
              * Sso Provider Enabled
              * @default false
@@ -2777,6 +4188,12 @@ export interface components {
              * @default huggingface
              */
             source: string;
+            /**
+             * Download Mode
+             * @default automatic
+             * @enum {string}
+             */
+            download_mode: "automatic" | "manual";
             /** Tags */
             tags?: string[];
             /**
@@ -2794,6 +4211,11 @@ export interface components {
              * @default
              */
             hf_token: string;
+            /**
+             * Hf Endpoint
+             * @default
+             */
+            hf_endpoint: string;
             /**
              * Ms Repo Id
              * @default
@@ -2856,7 +4278,7 @@ export interface components {
             dataset_base_path: string;
             /**
              * Model Base Path
-             * @default /data/models/huggingface
+             * @default /data/models
              */
             model_base_path: string;
             /**
@@ -2874,6 +4296,12 @@ export interface components {
              * @default false
              */
             hf_endpoint_enabled: boolean;
+            /**
+             * Hf Download Engine
+             * @default auto
+             * @enum {string}
+             */
+            hf_download_engine: "auto" | "sdk" | "hfd";
         };
         /** StorageVolumeReport */
         StorageVolumeReport: {
@@ -2917,6 +4345,53 @@ export interface components {
              */
             error: string;
         };
+        /**
+         * SummaryResponse
+         * @description GET /api/summary 响应体。
+         */
+        SummaryResponse: {
+            /** Nodes Online */
+            nodes_online: number;
+            /** Nodes Total */
+            nodes_total: number;
+            /** Gpus Free */
+            gpus_free: number;
+            /** Gpus Total */
+            gpus_total: number;
+            /** Containers Running */
+            containers_running: number;
+            /** Containers Total */
+            containers_total: number;
+            /** Cpu Used */
+            cpu_used: number;
+            /** Cpu Total */
+            cpu_total: number;
+            /** Memory Used Gb */
+            memory_used_gb: number;
+            /** Memory Total Gb */
+            memory_total_gb: number;
+            /** Disk Used Gb */
+            disk_used_gb: number;
+            /** Disk Total Gb */
+            disk_total_gb: number;
+            /** Alerts */
+            alerts?: components["schemas"]["AlertItem"][];
+        };
+        /** SyncProgressOut */
+        SyncProgressOut: {
+            /** Phase */
+            phase?: string | null;
+            /** Pct */
+            pct?: number | null;
+            /** Bytes Done */
+            bytes_done?: number | null;
+            /** Bytes Total */
+            bytes_total?: number | null;
+            /** Rate */
+            rate?: string | null;
+            /** Current File */
+            current_file?: string | null;
+        };
         /** UserDirectoryScanInput */
         UserDirectoryScanInput: {
             /**
@@ -2929,6 +4404,71 @@ export interface components {
              * @default 500
              */
             limit: number;
+        };
+        /**
+         * UserOut
+         * @description GET /api/users 响应元素（不含密码 hash）。
+         */
+        UserOut: {
+            /** Id */
+            id: number;
+            /** Username */
+            username: string;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /**
+             * Role
+             * @default member
+             */
+            role: string;
+            /**
+             * Phone
+             * @default
+             */
+            phone: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /**
+             * Group Name
+             * @default member
+             */
+            group_name: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Ssh Key
+             * @default
+             */
+            ssh_key: string;
+            /** Allowed Node Ids */
+            allowed_node_ids?: number[];
+            /** Cpu Cores */
+            cpu_cores?: number | null;
+            /** Memory Gb */
+            memory_gb?: number | null;
+            /** Disk Gb */
+            disk_gb?: number | null;
+            /** Container Disk Limit Gb */
+            container_disk_limit_gb?: number | null;
+            /** Storage Quota Gb */
+            storage_quota_gb?: number | null;
+            /** Gpu Count */
+            gpu_count?: number | null;
+            /** Container Count */
+            container_count?: number | null;
+            /** Pending Sso */
+            pending_sso?: boolean | null;
+            /** Casdoor Id */
+            casdoor_id?: string | null;
         };
         /** UserPreferenceInput */
         UserPreferenceInput: {
@@ -3032,7 +4572,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };
@@ -3192,6 +4732,121 @@ export interface operations {
             };
         };
     };
+    recent_tasks_api_tasks_recent_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+                status_group?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_api_tokens_api_me_api_tokens_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_api_token_api_me_api_tokens_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiTokenCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_token_api_me_api_tokens__token_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_user_preference_api_me_preferences__key__get: {
         parameters: {
             query?: never;
@@ -3273,7 +4928,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UserOut"][];
                 };
             };
         };
@@ -3754,7 +5409,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NodeOut"][];
                 };
             };
         };
@@ -4416,7 +6071,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ImageOut"][];
                 };
             };
         };
@@ -4469,7 +6124,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ImageCatalogOut"];
                 };
             };
         };
@@ -4561,6 +6216,72 @@ export interface operations {
         };
     };
     pull_image_to_nodes_api_image_catalog_pull_to_nodes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_node_image_api_image_catalog_delete_node_image_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_local_image_to_node_api_image_catalog_copy_local_image_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -5005,6 +6726,38 @@ export interface operations {
             };
         };
     };
+    migrate_shared_resources_provider_layout_api_data_shared_resources_migrate_provider_layout_post: {
+        parameters: {
+            query?: {
+                dry_run?: boolean;
+                create_symlink?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_shared_resource_api_data_shared_resources__resource_id__put: {
         parameters: {
             query?: never;
@@ -5140,6 +6893,37 @@ export interface operations {
         };
     };
     verify_shared_resource_api_data_shared_resources__resource_id__verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resource_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finalize_manual_shared_resource_api_data_shared_resources__resource_id__finalize_manual_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -5477,7 +7261,9 @@ export interface operations {
     };
     workspace_volumes_api_storage_workspace_volumes_get: {
         parameters: {
-            query?: never;
+            query?: {
+                fetch_disk_usage?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5491,6 +7277,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5628,7 +7423,7 @@ export interface operations {
             };
         };
     };
-    containers_api_containers_get: {
+    list_resource_cache_api_storage_resource_cache_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5644,6 +7439,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    trigger_resource_sync_api_storage_resources__resource_id__sync_to_node__node_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resource_id: number;
+                node_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_resource_sync_all_nodes_api_storage_resources__resource_id__sync_to_all_nodes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resource_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_resource_cache_api_storage_resource_cache__node_id___resource_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                node_id: number;
+                resource_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    containers_api_containers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContainerOut"][];
                 };
             };
         };
@@ -5698,7 +7606,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContainerOut"];
                 };
             };
             /** @description Validation Error */
@@ -5729,7 +7637,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContainerOut"];
                 };
             };
             /** @description Validation Error */
@@ -5760,7 +7668,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContainerOut"];
                 };
             };
             /** @description Validation Error */
@@ -5784,6 +7692,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    migrate_container_home_api_containers__container_id__migrate_home_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerHomeMigrationInput"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -5990,7 +7933,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DataSyncTaskOut"][];
                 };
             };
             /** @description Validation Error */
@@ -6021,6 +7964,72 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_container_as_resource_api_containers__container_id__upload_as_resource_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerResourceUploadInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_node_cached_resources_api_containers_node_cached_resources_get: {
+        parameters: {
+            query: {
+                node_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6203,6 +8212,205 @@ export interface operations {
             };
         };
     };
+    apply_container_node_cache_api_containers__container_id__apply_node_cache_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    container_node_cached_resources_api_containers__container_id__node_cached_resources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mount_container_public_resources_api_containers__container_id__mount_public_resources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerNodeCacheMountInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mount_container_node_cache_api_containers__container_id__mount_node_cache_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerNodeCacheMountInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    container_sync_and_mount_resource_api_containers__container_id__sync_resource__resource_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+                resource_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    container_sync_node_cache_api_containers__container_id__sync_node_cache_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                container_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContainerNodeCacheSyncInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_container_port_api_containers__container_id__ports_post: {
         parameters: {
             query?: never;
@@ -6356,7 +8564,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SummaryResponse"];
                 };
             };
         };
@@ -6376,7 +8584,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SummaryResponse"];
                 };
             };
         };
@@ -6432,7 +8640,60 @@ export interface operations {
             };
         };
     };
+    node_metrics_history_api_metrics_nodes__node_id__history_get: {
+        parameters: {
+            query?: {
+                hours?: number;
+            };
+            header?: never;
+            path: {
+                node_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     internal_port_routes_api_internal_port_routes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    internal_path_routes_api_internal_path_routes_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -6520,6 +8781,39 @@ export interface operations {
             };
         };
     };
+    report_node_metrics_api_nodes_metrics_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentMetricsInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     claim_node_task_api_nodes_tasks_claim_post: {
         parameters: {
             query?: never;
@@ -6530,6 +8824,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AgentTaskClaim"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_node_task_progress_api_nodes_tasks__task_id__progress_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTaskProgress"];
             };
         };
         responses: {

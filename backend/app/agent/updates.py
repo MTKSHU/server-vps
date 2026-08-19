@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import re
 import socket
 from pathlib import Path
@@ -81,7 +82,9 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
         updater_file_name = f"cluster-agent-updater-{architecture}"
         updater_output_path = f"{AGENT_RELEASE_DIR}/{updater_file_name}"
         build_cmd = (
-            f"set -e && cd /src && export CGO_ENABLED=0 GOOS=linux GOARCH={goarch} && "
+            f"set -e && cd /src && "
+            f"export CGO_ENABLED=0 GOOS=linux GOARCH={goarch} "
+            f"GOPROXY=https://goproxy.cn,direct && "
             f"go build -ldflags='-s -w -X main.agentVersion={version}' "
             f"-o {output_path} ./cmd/node-agent/ && "
             f"chmod 755 {output_path} && "
@@ -97,11 +100,20 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
                 raise HTTPException(status_code=500, detail=f"无法连接 Docker socket，请确认 /var/run/docker.sock 已挂载并授权：{exc}")
             # 通过 volumes_from 继承后端容器的卷挂载，编译容器可直接写入 AGENT_RELEASE_DIR
             backend_id = socket.gethostname()
+            proxy_environment = {
+                key: value
+                for key in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy")
+                if (value := os.environ.get(key, "").strip())
+            }
             try:
                 client.containers.run(
-                    "golang:1.23-alpine",
+                    "golang:1.23",
                     ["sh", "-c", build_cmd],
                     remove=True,
+                    # The configured proxy listens on the host loopback, so the
+                    # build container must share the host network to reach it.
+                    network_mode="host",
+                    environment=proxy_environment,
                     volumes={
                         AGENT_SOURCE_HOST_PATH: {"bind": "/src", "mode": "ro"},
                     },
@@ -113,7 +125,7 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
                 stderr = exc.stderr.decode(errors="replace")[-3000:] if exc.stderr else str(exc)
                 raise HTTPException(status_code=500, detail=f"编译失败：\n{stderr}")
             except docker_sdk.errors.ImageNotFound:
-                raise HTTPException(status_code=500, detail="编译镜像 golang:1.23-alpine 不存在，请确认宿主机可拉取该镜像")
+                raise HTTPException(status_code=500, detail="编译镜像 golang:1.23 不存在，请确认宿主机可拉取该镜像")
             except docker_sdk.errors.APIError as exc:
                 raise HTTPException(status_code=500, detail=f"Docker API 错误：{exc}")
             finally:
@@ -173,7 +185,10 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
 
     @app.get("/api/agent-releases/latest/download")
     def download_latest_agent_release(architecture: str = "amd64"):
-        require_admin()
+        # Bootstrap endpoint: a node does not have a registered agent identity
+        # yet, and a join token is deliberately not a Web UI bearer session.
+        # Release contents are executable artifacts rather than credentials;
+        # integrity/authenticity is provided by TLS during initial install.
         architecture = _clean(architecture, ARCHITECTURES, "架构")
         with db() as conn:
             release = conn.execute(
@@ -197,7 +212,8 @@ def register_agent_update_routes(app, deps: dict[str, Any]):
 
     @app.get("/api/agent-releases/latest/download-updater")
     def download_latest_agent_updater(architecture: str = "amd64"):
-        require_admin()
+        # Public for the same bootstrap reason as latest/download.  Updater
+        # manifest and versioned update downloads remain node-token protected.
         architecture = _clean(architecture, ARCHITECTURES, "架构")
         file_name = f"cluster-agent-updater-{architecture}"
         path = _release_path(file_name)

@@ -29,6 +29,7 @@ server-vps 适合这些场景：
 - 仪表盘：汇总在线节点、GPU、运行容器、CPU、内存、磁盘、告警，并展示节点实时监控和历史曲线。
 - 节点管理：生成单节点 join token，维护节点类型（compute/storage/app/mixed）、调度策略、资源上限、端口策略、WOL、同步地址、资源缓存目录和平台 SSH 公钥，支持节点 Shell、关机、重启、唤醒。
 - Agent 发布：管理员可在 Web 控制台构建 `cluster-node-agent` / `cluster-agent-updater` 发布物，配置 stable/canary 自动更新，并触发节点升级。
+- Agent 采集策略：管理员可在 Web 控制台分别配置实时指标、心跳、容器、存储、静态清单和任务轮询周期，节点无需修改 systemd 即可热应用。
 - 镜像管理：维护平台镜像目录、查看节点本地 Incus 镜像，从 Ubuntu remote 拉取镜像到节点，导出节点镜像到存储节点并分发到其他节点。
 - 容器管理：用户可选择镜像、节点、CPU/内存/GPU、SSH 用户、公开资源和端口映射创建 Incus 容器；支持启动、停止、重启、失败重试、Shell、资源调整、镜像发布、端口增删改、数据同步规则和节点缓存挂载。
 - 端口访问：平台分配管理节点公开端口，`port-router` 转发到计算节点 Incus proxy；对 code-server、JupyterLab 和通用 Web 服务，`http-path-proxy` 提供 `/c/<container>/<port>/` 路径访问。
@@ -119,7 +120,7 @@ docker compose -f deploy/docker-compose.yml ps
 | `PORT_ROUTER_TOKEN` | `port-router` 读取内部路由表的令牌，生产环境必须修改 |
 | `SYNC_SSH_IDENTITY_FILE` | 跨节点数据同步使用的私钥路径 |
 | `AGENT_SOURCE_HOST_PATH` | 后端通过 Docker 编译 agent 时使用的宿主机源码路径 |
-| `NODE_AGENT_TOKEN` / `NODE_AGENT_FILES_PORT` | 后端访问节点 agent 文件 API 的令牌和端口；配置后个人文件浏览优先走 HTTP |
+| `NODE_AGENT_TOKEN` / `NODE_AGENT_FILES_PORT` | 后端访问节点 agent 文件 API 的共享令牌和端口；节点侧对应 `CLUSTER_AGENT_FILES_TOKEN` / `CLUSTER_AGENT_FILES_PORT`，不要与独立 join token 混用 |
 | `PATH_PREFIX` / `PATH_PROXY_PORT` | 容器 Web 服务路径代理前缀和内部监听端口 |
 | `BACKEND_CPU_LIMIT` | 限制 backend 容器 CPU，避免下载/同步任务影响 Web/API 响应 |
 
@@ -147,7 +148,9 @@ server-vps 不内置或反代 Casdoor。平台默认使用本地账号；如需�
 - [docs/deployment.md](docs/deployment.md)：管理节点部署、环境变量、升级和排障。
 - [docs/authentication.md](docs/authentication.md)：本地账号、可选平台自助注册、外部 OIDC/CAS SSO。
 - [docs/node-onboarding.md](docs/node-onboarding.md)：GPU/存储节点接入。
+- [docs/nvidia-docker-image.md](docs/nvidia-docker-image.md)：Ubuntu 24.04 NVIDIA Docker Incus 镜像的构建、分发和验收。
 - [docs/storage-user-data-sync.md](docs/storage-user-data-sync.md)：用户目录、公开资源、模型资源、节点缓存和同步。
+- [docs/nfs-home-rollout.md](docs/nfs-home-rollout.md)：NFS 持久 Home 上线。
 - [docs/architecture.md](docs/architecture.md)：当前架构和模块边界。
 
 ## 开发

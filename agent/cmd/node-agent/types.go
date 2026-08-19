@@ -53,12 +53,52 @@ type NodeRegistration struct {
 	Containers           []ContainerReport  `json:"containers"`
 	Images               []IncusImageReport `json:"images"`
 	StorageVolumes       []StorageVolume    `json:"storage_volumes"`
+	Capabilities         []string           `json:"capabilities"`
+	NFSHealth            NFSHealthReport    `json:"nfs_health"`
+}
+
+type NFSHealthReport struct {
+	Healthy   bool    `json:"healthy"`
+	LatencyMS float64 `json:"latency_ms"`
+	Error     string  `json:"error"`
+	CheckedAt int64   `json:"checked_at"`
+}
+
+type AgentCollectionConfig struct {
+	MetricsIntervalSeconds   int `json:"metrics_interval_seconds"`
+	HeartbeatIntervalSeconds int `json:"heartbeat_interval_seconds"`
+	ContainerIntervalSeconds int `json:"container_interval_seconds"`
+	StorageIntervalSeconds   int `json:"storage_interval_seconds"`
+	InventoryIntervalSeconds int `json:"inventory_interval_seconds"`
+	TaskPollIntervalSeconds  int `json:"task_poll_interval_seconds"`
+}
+
+type AgentRegistrationResponse struct {
+	AgentConfig AgentCollectionConfig `json:"agent_config"`
+}
+
+type AgentMetricsReport struct {
+	Token                   string      `json:"token"`
+	Hostname                string      `json:"hostname"`
+	UptimeSeconds           int64       `json:"uptime_seconds"`
+	CPUUsagePercent         float64     `json:"cpu_usage_percent"`
+	CPUTemperatureC         int         `json:"cpu_temperature_c"`
+	MemoryTotalGB           int         `json:"memory_total_gb"`
+	MemoryUsedGB            int         `json:"memory_used_gb"`
+	LoadAvg                 float64     `json:"load_avg"`
+	SwapTotalGB             float64     `json:"swap_total_gb"`
+	SwapUsedGB              float64     `json:"swap_used_gb"`
+	NetworkInterface        string      `json:"network_interface"`
+	NetworkRXBytesPerSecond float64     `json:"network_rx_bytes_per_sec"`
+	NetworkTXBytesPerSecond float64     `json:"network_tx_bytes_per_sec"`
+	GPUs                    []GPUReport `json:"gpus"`
 }
 
 type ContainerReport struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	IP     string `json:"ip"`
+	Role   string `json:"role"`
 }
 
 type IncusImageReport struct {
@@ -140,26 +180,62 @@ type IncusPort struct {
 }
 
 type IncusCreatePayload struct {
-	ContainerID int         `json:"container_id"`
-	Name        string      `json:"name"`
-	Image       string      `json:"image"`
-	CPUCores    int         `json:"cpu_cores"`
-	MemoryGB    int         `json:"memory_gb"`
-	DiskGB      int         `json:"disk_gb"`
-	SSHUsername string      `json:"ssh_username"`
-	SSHKey      string      `json:"ssh_key"`
-	Mounts      []string    `json:"mounts"`
-	GPUs        []IncusGPU  `json:"gpus"`
-	Ports       []IncusPort `json:"ports"`
+	ContainerID   int                 `json:"container_id"`
+	Name          string              `json:"name"`
+	Image         string              `json:"image"`
+	CPUCores      int                 `json:"cpu_cores"`
+	MemoryGB      int                 `json:"memory_gb"`
+	DiskGB        int                 `json:"disk_gb"`
+	SSHUsername   string              `json:"ssh_username"`
+	SSHKey        string              `json:"ssh_key"`
+	Mounts        []string            `json:"mounts"`
+	ManagedMounts []ManagedMount      `json:"managed_mounts"`
+	SharedStorage SharedStorageConfig `json:"shared_storage"`
+	GPUs          []IncusGPU          `json:"gpus"`
+	Ports         []IncusPort         `json:"ports"`
 	// workspace: named Incus storage volume mounted at /workspace
 	WorkspaceVolumeName string `json:"workspace_volume_name"`
 	WorkspaceVolumeGB   int    `json:"workspace_volume_gb"`
+}
+
+type ManagedMount struct {
+	Kind     string `json:"kind"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Readonly bool   `json:"readonly"`
+	Required bool   `json:"required"`
+	// Export is set for per-user NFS exports.  The agent mounts this export
+	// directly on Source instead of assuming Source is below a shared parent
+	// users export.  Empty keeps the v1 parent-export behaviour.
+	Export string `json:"export,omitempty"`
+}
+
+type SharedStorageConfig struct {
+	Enabled           bool   `json:"enabled"`
+	Server            string `json:"server"`
+	UsersExport       string `json:"users_export"`
+	DatasetsExport    string `json:"datasets_export"`
+	ModelsExport      string `json:"models_export"`
+	MountOptions      string `json:"mount_options"`
+	Sentinel          string `json:"sentinel"`
+	SentinelSignature string `json:"sentinel_signature"`
+	IDMapBase         int    `json:"idmap_base"`
 }
 
 type IncusExecPayload struct {
 	ContainerID int    `json:"container_id"`
 	Name        string `json:"name"`
 	Command     string `json:"command"`
+}
+
+type ContainerHomeMigrationPayload struct {
+	ContainerID   int                 `json:"container_id"`
+	Name          string              `json:"name"`
+	SSHUsername   string              `json:"ssh_username"`
+	Owner         string              `json:"owner"`
+	Primary       bool                `json:"primary"`
+	ManagedMount  ManagedMount        `json:"managed_mount"`
+	SharedStorage SharedStorageConfig `json:"shared_storage"`
 }
 
 type IncusConfigUpdatePayload struct {
@@ -171,11 +247,12 @@ type IncusConfigUpdatePayload struct {
 }
 
 type IncusSSHKeysPayload struct {
-	ContainerID int      `json:"container_id"`
-	Name        string   `json:"name"`
-	SSHUsername string   `json:"ssh_username"`
-	SSHKey      string   `json:"ssh_key"`
-	Mounts      []string `json:"mounts"`
+	ContainerID   int            `json:"container_id"`
+	Name          string         `json:"name"`
+	SSHUsername   string         `json:"ssh_username"`
+	SSHKey        string         `json:"ssh_key"`
+	Mounts        []string       `json:"mounts"`
+	ManagedMounts []ManagedMount `json:"managed_mounts"`
 }
 
 type IncusPublishPayload struct {
@@ -188,19 +265,22 @@ type IncusPublishPayload struct {
 }
 
 type IncusPortsPayload struct {
-	ContainerID int         `json:"container_id"`
-	Name        string      `json:"name"`
-	SSHUsername string      `json:"ssh_username"`
-	SSHKey      string      `json:"ssh_key"`
-	Mounts      []string    `json:"mounts"`
-	Ports       []IncusPort `json:"ports"`
+	ContainerID   int            `json:"container_id"`
+	Name          string         `json:"name"`
+	SSHUsername   string         `json:"ssh_username"`
+	SSHKey        string         `json:"ssh_key"`
+	Mounts        []string       `json:"mounts"`
+	ManagedMounts []ManagedMount `json:"managed_mounts"`
+	Ports         []IncusPort    `json:"ports"`
 }
 
 type IncusLifecyclePayload struct {
-	ContainerID    int    `json:"container_id"`
-	Name           string `json:"name"`
-	Operation      string `json:"operation"`
-	PreviousStatus string `json:"previous_status"`
+	ContainerID    int                 `json:"container_id"`
+	Name           string              `json:"name"`
+	Operation      string              `json:"operation"`
+	PreviousStatus string              `json:"previous_status"`
+	ManagedMounts  []ManagedMount      `json:"managed_mounts"`
+	SharedStorage  SharedStorageConfig `json:"shared_storage"`
 }
 
 type IncusImagePullPayload struct {
@@ -244,11 +324,19 @@ type IncusImageImportPayload struct {
 }
 
 type SharedResourceVerifyPayload struct {
-	ResourceID   int    `json:"resource_id"`
-	ResourceType string `json:"resource_type"`
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	SourcePath   string `json:"source_path"`
+	ResourceID           int    `json:"resource_id"`
+	ResourceType         string `json:"resource_type"`
+	Name                 string `json:"name"`
+	Version              string `json:"version"`
+	SourcePath           string `json:"source_path"`
+	Source               string `json:"source"`
+	RepoID               string `json:"repo_id"`
+	Revision             string `json:"revision"`
+	Token                string `json:"token"`
+	RepoType             string `json:"repo_type"`
+	HFEndpoint           string `json:"hf_endpoint"`
+	AllowOfflineManifest bool   `json:"allow_offline_manifest"`
+	ManualFinalize       bool   `json:"manual_finalize"`
 }
 
 type SharedResourceScanPayload struct {
@@ -269,16 +357,20 @@ type UserDirectoryScanPayload struct {
 }
 
 type UserZFSDatasetPayload struct {
-	UserID           int    `json:"user_id"`
-	Username         string `json:"username"`
-	PlatformHomePath string `json:"platform_home_path"`
-	Mountpoint       string `json:"mountpoint"`
-	DatasetName      string `json:"dataset_name"`
-	QuotaGB          int    `json:"quota_gb"`
-	UID              int    `json:"uid"`
-	GID              int    `json:"gid"`
-	Mode             string `json:"mode"`
-	Reason           string `json:"reason"`
+	UserID               int    `json:"user_id"`
+	Username             string `json:"username"`
+	PlatformHomePath     string `json:"platform_home_path"`
+	Mountpoint           string `json:"mountpoint"`
+	DatasetName          string `json:"dataset_name"`
+	QuotaGB              int    `json:"quota_gb"`
+	UID                  int    `json:"uid"`
+	GID                  int    `json:"gid"`
+	Mode                 string `json:"mode"`
+	Reason               string `json:"reason"`
+	Sentinel             string `json:"sentinel"`
+	SentinelSignature    string `json:"sentinel_signature"`
+	EnsureNFSShare       bool   `json:"ensure_nfs_share"`
+	NFSShareTemplatePath string `json:"nfs_share_template_path"`
 }
 
 type UserZFSDatasetRemovePayload struct {
@@ -350,6 +442,36 @@ type SyncSharedResourcePayload struct {
 	LocalCachePath   string `json:"local_cache_path"`
 }
 
+type DownloadSharedResourcePayload struct {
+	ResourceID       int    `json:"resource_id"`
+	ResourceType     string `json:"resource_type"`
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	Source           string `json:"source"`
+	RepoID           string `json:"repo_id"`
+	Revision         string `json:"revision"`
+	Token            string `json:"token"`
+	RepoType         string `json:"repo_type"`
+	TargetPath       string `json:"target_path"`
+	StagingPath      string `json:"staging_path"`
+	HFEndpoint       string `json:"hf_endpoint"`
+	HFDownloadEngine string `json:"hf_download_engine"`
+	FallbackRepoID   string `json:"fallback_repo_id"`
+	FallbackRevision string `json:"fallback_revision"`
+}
+
+type MigrateSharedResourcePathPayload struct {
+	ResourceID    int    `json:"resource_id"`
+	ResourceType  string `json:"resource_type"`
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	OldPath       string `json:"old_path"`
+	NewPath       string `json:"new_path"`
+	OldSourcePath string `json:"old_source_path"`
+	NewSourcePath string `json:"new_source_path"`
+	CreateSymlink bool   `json:"create_symlink"`
+}
+
 // MountUpdate 描述一条资源挂载的更新指令
 type MountUpdate struct {
 	// OldTarget 是容器内旧挂载点（可能与 NewTarget 不同）
@@ -362,7 +484,15 @@ type MountUpdate struct {
 }
 
 type ApplyResourceMountsPayload struct {
-	ContainerID  int           `json:"container_id"`
-	Name         string        `json:"name"`
-	MountUpdates []MountUpdate `json:"mount_updates"`
+	ContainerID   int                 `json:"container_id"`
+	Name          string              `json:"name"`
+	MountUpdates  []MountUpdate       `json:"mount_updates"`
+	ManagedMounts []ManagedMount      `json:"managed_mounts,omitempty"`
+	SharedStorage SharedStorageConfig `json:"shared_storage,omitempty"`
+}
+
+type RemoveResourceMountsPayload struct {
+	ContainerID int      `json:"container_id"`
+	Name        string   `json:"name"`
+	Targets     []string `json:"targets"`
 }

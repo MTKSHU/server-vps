@@ -21,6 +21,7 @@ class ContainerStateReport(BaseModel):
     name: str
     status: str = ""
     ip: str = ""
+    role: str = ""
 
 
 class IncusImageReport(BaseModel):
@@ -77,6 +78,8 @@ class NodeRegistration(BaseModel):
     containers: list[ContainerStateReport] | None = Field(default_factory=list)
     images: list[IncusImageReport] | None = Field(default_factory=list)
     storage_volumes: list[StorageVolumeReport] | None = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    nfs_health: dict = Field(default_factory=dict)
 
 
 class JoinTokenCreate(BaseModel):
@@ -98,6 +101,15 @@ class ContainerResourceInput(BaseModel):
     mount_path: str = ""
 
 
+class ManagedMount(BaseModel):
+    kind: Literal["legacy", "user_home", "shared_resource", "node_cache", "scratch"] = "legacy"
+    source: str
+    target: str
+    readonly: bool = False
+    required: bool = True
+    export: str = ""
+
+
 class ContainerCreate(BaseModel):
     name: str
     image_id: str
@@ -116,6 +128,10 @@ class ContainerCreate(BaseModel):
     expires_at: int = 0  # unix timestamp，0 = 永不到期
 
 
+class ContainerHomeMigrationInput(BaseModel):
+    primary: bool = True
+
+
 class NodeConfigInput(BaseModel):
     node_type: Literal["compute", "storage", "app", "mixed"] = "compute"
     schedulable: bool = True
@@ -127,6 +143,8 @@ class NodeConfigInput(BaseModel):
     max_cpu_per_container: int = 0
     max_memory_gb_per_container: int = 0
     max_disk_gb_per_container: int = 0
+    # 0 表示继承平台默认值 CONTAINER_ROOT_DISK_GB。
+    root_disk_gb: int = 0
     reserved_memory_gb: int = 0
     reserved_disk_gb: int = 0
     allow_port_mapping: bool = True
@@ -142,6 +160,8 @@ class NodeConfigInput(BaseModel):
     sync_ssh_port: int = 0
     # 公开资源本地缓存根目录；为空时自动使用节点数据盘根目录下的 shared-cache 子目录
     resource_cache_base: str = ""
+    # inherit 跟随平台全局；disabled 仅使用本地缓存；enabled 对该节点启用 NFS。
+    shared_storage_mode: Literal["inherit", "disabled", "enabled"] = "inherit"
 
     @field_validator("sync_ip")
     @classmethod
@@ -165,6 +185,10 @@ class NodeConfigInput(BaseModel):
         if value < 0 or value > 65535:
             raise ValueError("sync_ssh_port 必须在 0-65535 之间（0 表示使用默认 ssh_port）")
         return value
+
+
+class NodeOrderInput(BaseModel):
+    node_ids: list[int]
 
 
 class ContainerDeleteRequest(BaseModel):
@@ -231,6 +255,21 @@ class ContainerSyncInput(BaseModel):
     conflict_policy: Literal["overwrite", "skip"] = "overwrite"
 
 
+class ContainerResourceUploadInput(BaseModel):
+    """用户在自己容器中准备好数据后，上传到存储节点并注册为公开数据集/模型。"""
+    resource_type: Literal["dataset", "huggingface_model", "pytorch_model"] = "dataset"
+    name: str
+    version: str = "default"   # 提供者
+    tags: list[str] = Field(default_factory=list)
+    container_path: str
+    conflict_policy: Literal["overwrite", "skip"] = "overwrite"
+    # 可选：若用户上传的其实是某个已知 HuggingFace/ModelScope 仓库，填写后校验阶段会
+    # 按该来源核对目录结构、文件数量与哈希；留空则只做本地完整性检查（自定义数据集/模型）。
+    source: str = ""           # "" | "huggingface" | "modelscope"
+    repo_id: str = ""
+    revision: str = ""
+
+
 class ContainerSyncRuleInput(BaseModel):
     name: str = ""
     container_path: str
@@ -248,6 +287,10 @@ class ContainerNodeCacheMountInput(BaseModel):
 
 class ContainerNodeCacheSyncInput(BaseModel):
     resource_ids: list[int] = Field(default_factory=list)
+
+
+class ContainerPublicMountRemoveInput(BaseModel):
+    mount_paths: list[str] = Field(default_factory=list)
 
 
 class UserPreferenceInput(BaseModel):
@@ -342,23 +385,30 @@ class SharedResourceRequestInput(BaseModel):
     name: str
     version: str = "default"
     source: str = "huggingface"   # "huggingface" | "modelscope"
+    download_mode: Literal["automatic", "manual"] = "automatic"
     tags: list[str] = Field(default_factory=list)
     # HuggingFace 参数
     hf_repo_id: str = ""
     hf_revision: str = "main"
     hf_token: str = ""
+    hf_endpoint: str = ""
     # ModelScope 参数
     ms_repo_id: str = ""
     ms_revision: str = "master"
     ms_token: str = ""
+    # 公开资源优先链路：先尝试 ModelScope，失败后回退到 HF 镜像。
+    # 两个平台仓库名不一致时可分别填写。
+    priority_ms_repo_id: str = ""
+    priority_hf_repo_id: str = ""
 
 
 class StorageSettingsInput(BaseModel):
     dataset_base_path: str = "/data/datasets"
-    model_base_path: str = "/data/models/huggingface"
+    model_base_path: str = "/data/models"
     user_base_path: str = "/data/users"
     hf_endpoint: str = ""
     hf_endpoint_enabled: bool = False
+    hf_download_engine: Literal["auto", "sdk", "hfd"] = "auto"
 
 
 class PlatformSettingsInput(BaseModel):
@@ -372,6 +422,25 @@ class PlatformSettingsInput(BaseModel):
     sso_default_group: Literal["platform_admin", "admin", "member", "guest"] = "member"
     platform_timezone: str = "Asia/Shanghai"
     transfer_bandwidth_limit_mbps: int = 0
+    shared_storage_mode: Literal["disabled", "canary", "enabled"] = "disabled"
+    shared_storage_canary_user_ids: list[int] = Field(default_factory=list)
+    nfs_server: str = ""
+    nfs_users_export: str = ""
+    nfs_datasets_export: str = ""
+    nfs_models_export: str = ""
+    nfs_mount_options: str = "hard,_netdev,noatime,vers=4.1,proto=tcp"
+    nfs_sentinel: str = ".server-vps-nfs"
+    nfs_sentinel_signature: str = ""
+    nfs_idmap_base: int = 1000000
+    truenas_nfs_auto_share: bool = False
+    workspace_default_gb: int = 100
+    workspace_retention_days: int = 30
+    agent_metrics_interval_seconds: int = 2
+    agent_heartbeat_interval_seconds: int = 15
+    agent_container_interval_seconds: int = 15
+    agent_storage_interval_seconds: int = 60
+    agent_inventory_interval_seconds: int = 300
+    agent_task_poll_interval_seconds: int = 5
     webhook_enabled: bool = False
     webhook_url: str = ""
     webhook_secret: str = ""
@@ -390,6 +459,23 @@ class PlatformSettingsInput(BaseModel):
     sso_oidc_client_secret: str = ""
     sso_oidc_scopes: str = "openid profile email"
     sso_casdoor_admin_owner: str = "built-in"
+
+
+class AgentMetricsInput(BaseModel):
+    token: str
+    hostname: str
+    uptime_seconds: int = 0
+    cpu_usage_percent: float = 0
+    cpu_temperature_c: int = 0
+    memory_total_gb: int = 1
+    memory_used_gb: int = 0
+    load_avg: float = 0
+    swap_total_gb: float = 0
+    swap_used_gb: float = 0
+    network_interface: str = ""
+    network_rx_bytes_per_sec: float = 0
+    network_tx_bytes_per_sec: float = 0
+    gpus: list[GPUReport] = Field(default_factory=list)
 
 
 class StorageImageExportInput(BaseModel):
@@ -569,12 +655,14 @@ class ContainerOut(BaseModel):
     status: str
     access_status: str = "pending"
     access_error: str = ""
+    system_role: str = ""
     cpu_cores: int
     memory_gb: int
     disk_gb: int
     ssh_username: str = "ubuntu"
     ip: str = ""
     mounts: list[str] = Field(default_factory=list)
+    managed_mounts: list[ManagedMount] = Field(default_factory=list)
     created_at: int
     updated_at: int
     gpus: list[GpuOut] = Field(default_factory=list)
@@ -598,11 +686,13 @@ class NodeOut(BaseModel):
     max_cpu_per_container: int = 0
     max_memory_gb_per_container: int = 0
     max_disk_gb_per_container: int = 0
+    root_disk_gb: int = 0
     reserved_memory_gb: int = 0
     reserved_disk_gb: int = 0
     allow_port_mapping: bool = True
     max_ports_per_container: int = 8
     scheduler_weight: int = 0
+    display_order: int = 2147483647
     labels: list[str] = Field(default_factory=list)
     wol_mac: str = ""
     wol_broadcast: str = "255.255.255.255"
@@ -611,6 +701,13 @@ class NodeOut(BaseModel):
     sync_ip: str = ""
     sync_ssh_port: int = 0
     resource_cache_base: str = ""
+    shared_storage_mode: Literal["inherit", "disabled", "enabled"] = "inherit"
+    nfs_healthy: bool = False
+    nfs_latency_ms: float = 0
+    nfs_error: str = ""
+    nfs_checked_at: int = 0
+    nfs_last_success_at: int = 0
+    capabilities: list[str] = Field(default_factory=list)
     cpu_model: str = ""
     cpu_total: int = 0
     cpu_cores: int = 0
@@ -626,6 +723,9 @@ class NodeOut(BaseModel):
     cpu_usage_percent: float = 0
     swap_total_gb: float = 0
     swap_used_gb: float = 0
+    network_interface: str = ""
+    network_rx_bytes_per_sec: float = 0
+    network_tx_bytes_per_sec: float = 0
     os_version: str = ""
     kernel_version: str = ""
     driver_version: str = ""

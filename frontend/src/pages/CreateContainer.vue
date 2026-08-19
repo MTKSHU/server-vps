@@ -9,9 +9,11 @@ import {
   getNodes,
   getMe,
   getUserPreference,
+  getSharedResources,
   type Gpu,
   type Image,
   type Node,
+  type SharedResource,
 } from "../api/cluster";
 import { hasAdminAccess } from "../auth";
 
@@ -20,6 +22,9 @@ const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: fa
 const emit = defineEmits<{ created: [] }>();
 const images = ref<Image[]>([]);
 const nodes = ref<Node[]>([]);
+const publicResources = ref<SharedResource[]>([]);
+const selectedDatasetIds = ref<number[]>([]);
+const selectedModelIds = ref<number[]>([]);
 const myQuota = ref({ cpu_cores: 1, memory_gb: 1, disk_gb: 20, container_disk_limit_gb: 500, storage_quota_gb: 500, gpu_count: 0, container_count: 1 });
 const myUsage = ref<Record<string, number>>({});
 const myAllowedNodeIds = ref<number[] | null>(null);
@@ -53,6 +58,13 @@ const form = reactive({
 const selectedImage = computed(() => images.value.find((image) => image.id === form.image_id));
 const selectedNode = computed(() => nodes.value.find((node) => node.id === form.node_id));
 const isAdmin = computed(() => hasAdminAccess());
+const publicDatasets = computed(() => publicResources.value.filter((resource) => resource.resource_type === "dataset"));
+const publicModels = computed(() => publicResources.value.filter((resource) => resource.resource_type !== "dataset"));
+
+function resourceOptionLabel(resource: SharedResource) {
+  const suffix = resource.nfs_available === false ? " · 需要节点本地缓存" : "";
+  return `${resource.name} · ${resource.mount_path}${suffix}`;
+}
 
 const orderedNodes = computed(() => {
   if (isAdmin.value) return nodes.value;
@@ -181,7 +193,8 @@ const workspaceGbText = computed(() => {
   return gb > 0 ? `${gb} GB（根据用户配额和节点限制自动计算）` : "节点可用磁盘自动分配";
 });
 
-const ROOT_DISK_GB = 50; // 与后端 CONTAINER_ROOT_DISK_GB 一致
+const ROOT_DISK_GB = 100; // 平台默认值；后端可按节点配置覆盖
+const effectiveRootDiskGb = computed(() => selectedNode.value?.root_disk_gb || ROOT_DISK_GB);
 
 const nodeSummary = computed(() => {
   if (!selectedNode.value) return "";
@@ -232,11 +245,12 @@ function expandedPorts() {
 }
 
 async function load() {
-  const [imageRows, nodeRows, me, favorites] = await Promise.all([
+  const [imageRows, nodeRows, me, favorites, resourceRows] = await Promise.all([
     getImages(),
     getNodes(),
     getMe(),
     getUserPreference<{ image_ids?: string[] }>("image_favorites").catch(() => ({ value: { image_ids: [] } })),
+    getSharedResources(),
   ]);
   const favoriteIds = new Set(Array.isArray(favorites.value?.image_ids) ? favorites.value.image_ids : []);
   images.value = [...imageRows].sort((a, b) => {
@@ -245,6 +259,7 @@ async function load() {
     return a.name.localeCompare(b.name, "zh");
   });
   nodes.value = nodeRows; myQuota.value = me.quota; myUsage.value = me.usage;
+  publicResources.value = resourceRows.filter((resource) => resource.enabled && resource.request_status === "ready");
   myAllowedNodeIds.value = Array.isArray(me.allowed_node_ids) ? me.allowed_node_ids : null;
   form.image_id = images.value[0]?.id || "";
   const firstNode = selectableNodes.value[0];
@@ -298,12 +313,16 @@ async function submit() {
       node_id: form.node_id,
       cpu_cores: form.cpu_cores,
       memory_gb: form.memory_gb,
-      disk_gb: ROOT_DISK_GB,
+      disk_gb: effectiveRootDiskGb.value,
       gpu_count: form.gpu_ids.length,
       gpu_ids: form.gpu_ids,
       ssh_username: form.ssh_username,
       ports: expandedPorts(),
-      resources: [],
+      resources: [...selectedDatasetIds.value, ...selectedModelIds.value].map((resourceId) => {
+        const resource = publicResources.value.find((item) => item.id === resourceId);
+        return { resource_id: resourceId, mount_path: resource?.mount_path || "" };
+      }),
+      expires_at: 0,
     });
     ElMessage.success("容器已创建");
     if (props.embedded) {
@@ -415,8 +434,8 @@ watch(
         <el-input-number v-model="form.memory_gb" :min="1" :max="maxMemoryGb" />
       </el-form-item>
       <el-form-item label="Root Disk (/)">
-        <el-input :value="`${ROOT_DISK_GB} GB（固定）`" disabled />
-        <small class="field-hint">容器系统盘，固定 {{ ROOT_DISK_GB }} GB</small>
+        <el-input :value="`${effectiveRootDiskGb} GB（节点配置）`" disabled />
+        <small class="field-hint">容器系统盘大小由目标节点配置，未配置时默认 {{ ROOT_DISK_GB }} GB</small>
       </el-form-item>
       <el-form-item label="数据卷 /workspace">
         <el-input :value="workspaceGbText" disabled />
@@ -437,6 +456,28 @@ watch(
       </el-form-item>
       <el-form-item label="初始用户名">
         <el-input v-model="form.ssh_username" />
+      </el-form-item>
+      <el-form-item label="只读公开数据集">
+        <el-select v-model="selectedDatasetIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="按需选择数据集">
+          <el-option
+            v-for="resource in publicDatasets"
+            :key="resource.id"
+            :label="resourceOptionLabel(resource)"
+            :value="resource.id"
+          />
+        </el-select>
+        <small class="field-hint">创建时自动挂载到资源配置的 /datasets 路径；本地缓存优先，否则使用只读 NFS。</small>
+      </el-form-item>
+      <el-form-item label="只读公开模型">
+        <el-select v-model="selectedModelIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="按需选择模型">
+          <el-option
+            v-for="resource in publicModels"
+            :key="resource.id"
+            :label="resourceOptionLabel(resource)"
+            :value="resource.id"
+          />
+        </el-select>
+        <small class="field-hint">创建时自动挂载到资源配置的 /models 路径，容器内不可写入或删除。</small>
       </el-form-item>
 
     </el-form>

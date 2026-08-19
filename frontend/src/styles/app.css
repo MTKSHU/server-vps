@@ -233,6 +233,18 @@ body {
   display: none;
 }
 
+.el-button[data-keep-label="true"] {
+  width: auto;
+  min-width: max-content;
+  padding-inline: 15px;
+}
+
+.el-button[data-keep-label="true"] > span {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 .main {
   padding: 22px 28px 36px;
 }

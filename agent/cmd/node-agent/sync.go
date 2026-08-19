@@ -2,9 +2,14 @@ package main
 
 import (
 	"compress/gzip"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,41 +35,594 @@ func executeSharedResourceVerify(payload SharedResourceVerifyPayload) (string, e
 	if err != nil {
 		return "", fmt.Errorf("resource path not available: %w", err)
 	}
-	var fileCount int64
-	var sizeBytes int64
-	if !info.IsDir() {
-		fileCount = 1
-		sizeBytes = info.Size()
-	} else {
-		err = filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
+	localFiles, fileCount, sizeBytes, err := collectResourceFiles(source, info)
+	if err != nil {
+		return "", err
+	}
+	incompleteReasons, err := sharedResourceIncompleteReasons(source)
+	if err != nil {
+		return "", err
+	}
+	resultDetail := map[string]any{
+		"resource_id":        payload.ResourceID,
+		"resource_type":      payload.ResourceType,
+		"name":               payload.Name,
+		"version":            payload.Version,
+		"source_path":        source,
+		"file_count":         fileCount,
+		"size_bytes":         sizeBytes,
+		"incomplete_reasons": incompleteReasons,
+	}
+	sourceKind := strings.ToLower(strings.TrimSpace(payload.Source))
+	if strings.TrimSpace(payload.RepoID) != "" && (sourceKind == "huggingface" || sourceKind == "modelscope") {
+		var (
+			remoteDetail map[string]any
+			differences  []string
+			verifyErr    error
+			sourceLabel  string
+		)
+		if sourceKind == "huggingface" {
+			sourceLabel = "Hugging Face"
+			remoteDetail, differences, verifyErr = verifyHuggingFaceManifest(payload, source, localFiles)
+		} else {
+			sourceLabel = "ModelScope"
+			remoteDetail, differences, verifyErr = verifyModelScopeManifest(payload, source, localFiles)
+		}
+		for key, value := range remoteDetail {
+			resultDetail[key] = value
+		}
+		incompleteReasons = append(incompleteReasons, differences...)
+		resultDetail["incomplete_reasons"] = incompleteReasons
+		if verifyErr != nil {
+			resultDetail["remote_error"] = verifyErr.Error()
+			result, _ := json.Marshal(resultDetail)
+			return string(result), fmt.Errorf("resource verification failed: cannot verify %s repository via source API: %w", sourceLabel, verifyErr)
+		}
+	}
+	result, _ := json.Marshal(resultDetail)
+	if fileCount == 0 {
+		return string(result), fmt.Errorf("resource verification failed: no files found")
+	}
+	if len(incompleteReasons) > 0 {
+		return string(result), fmt.Errorf("resource verification failed: incomplete download evidence found: %s", strings.Join(incompleteReasons, "; "))
+	}
+	return string(result), nil
+}
+
+func collectResourceFiles(source string, sourceInfo os.FileInfo) (map[string]int64, int64, int64, error) {
+	files := map[string]int64{}
+	if !sourceInfo.IsDir() {
+		files[filepath.Base(source)] = sourceInfo.Size()
+		return files, 1, sourceInfo.Size(), nil
+	}
+	var count, bytes int64
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if rel != "." && (entry.Name() == ".hfd" || entry.Name() == ".cache" || entry.Name() == ".git") {
+				return filepath.SkipDir
 			}
-			if entry.IsDir() {
-				return nil
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			fileCount++
-			sizeBytes += info.Size()
 			return nil
-		})
+		}
+		if rel == ".cluster-resource-id" {
+			return nil
+		}
+		fileInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		files[rel] = fileInfo.Size()
+		count++
+		bytes += fileInfo.Size()
+		return nil
+	})
+	return files, count, bytes, err
+}
+
+type hfRepoMetadata struct {
+	SHA      string `json:"sha"`
+	Siblings []struct {
+		Path string `json:"rfilename"`
+		Size int64  `json:"size"`
+	} `json:"siblings"`
+}
+
+type hfTreeEntry struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+	Oid  string `json:"oid"`
+	LFS  *struct {
+		Oid string `json:"oid"`
+	} `json:"lfs"`
+}
+
+// manifestEntry 描述来源（HuggingFace/ModelScope）中一个文件的预期大小与哈希。
+// HashAlgo 为空表示该来源/该条目没有可比对的哈希（此时仅比对大小）。
+type manifestEntry struct {
+	Size     int64
+	Hash     string
+	HashAlgo string // "sha256" 或 "sha1-git"
+}
+
+func sizesToManifest(sizes map[string]int64) map[string]manifestEntry {
+	manifest := make(map[string]manifestEntry, len(sizes))
+	for path, size := range sizes {
+		manifest[path] = manifestEntry{Size: size}
+	}
+	return manifest
+}
+
+// hashLocalFile 计算本地文件的哈希，algo 为 "sha256"（ModelScope 及 HF LFS 文件）
+// 或 "sha1-git"（HF 非 LFS 文件，即 git blob sha1：sha1("blob "+size+"\0"+content)）。
+func hashLocalFile(fullPath, algo string) (string, error) {
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	switch algo {
+	case "sha256":
+		h := sha256.New()
+		if _, err := io.Copy(h, file); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	case "sha1-git":
+		info, err := file.Stat()
 		if err != nil {
 			return "", err
 		}
+		h := sha1.New()
+		fmt.Fprintf(h, "blob %d\x00", info.Size())
+		if _, err := io.Copy(h, file); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(h.Sum(nil)), nil
+	default:
+		return "", fmt.Errorf("unsupported hash algorithm %q", algo)
 	}
-	result, _ := json.Marshal(map[string]any{
-		"resource_id":   payload.ResourceID,
-		"resource_type": payload.ResourceType,
-		"name":          payload.Name,
-		"version":       payload.Version,
-		"source_path":   source,
-		"file_count":    fileCount,
-		"size_bytes":    sizeBytes,
+}
+
+func verifyHuggingFaceManifest(payload SharedResourceVerifyPayload, source string, localFiles map[string]int64) (map[string]any, []string, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(payload.HFEndpoint), "/")
+	if endpoint == "" {
+		endpoint = "https://huggingface.co"
+	}
+	parsedEndpoint, err := url.Parse(endpoint)
+	if err != nil || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") || parsedEndpoint.Host == "" {
+		return nil, nil, fmt.Errorf("invalid HF endpoint %q", endpoint)
+	}
+	repoID := strings.Trim(strings.TrimSpace(payload.RepoID), "/")
+	revision := strings.TrimSpace(payload.Revision)
+	if revision == "" {
+		revision = "main"
+	}
+	repoKind := "models"
+	if strings.EqualFold(strings.TrimSpace(payload.RepoType), "dataset") {
+		repoKind = "datasets"
+	}
+	apiBase := endpoint + "/api/" + repoKind + "/" + repoID
+	metadataURL := apiBase
+	if revision != "main" {
+		metadataURL += "/revision/" + url.PathEscape(revision)
+	}
+	metadataURL += "?blobs=true"
+	client := &http.Client{
+		Timeout: 2 * time.Minute,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if !strings.EqualFold(parsedEndpoint.Hostname(), "huggingface.co") && strings.EqualFold(req.URL.Hostname(), "huggingface.co") {
+				return fmt.Errorf("configured HF endpoint redirected repository API to huggingface.co: %s", req.URL.String())
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+	var remoteMetadata hfRepoMetadata
+	if _, err := getHFJSON(client, metadataURL, payload.Token, &remoteMetadata); err != nil {
+		if payload.AllowOfflineManifest {
+			detail, expected, localErr := readLocalHFDownloadEvidence(source, localFiles)
+			if localErr == nil {
+				detail["hf_endpoint"] = endpoint
+				detail["repo_id"] = repoID
+				detail["revision"] = revision
+				detail["verification_mode"] = "local_hfd_evidence"
+				detail["remote_warning"] = err.Error()
+				// 离线兜底证据只有文件大小，没有远程 hash，仅能比对结构/大小。
+				differences := compareResourceManifest(sizesToManifest(expected), localFiles, source)
+				detail["difference_count"] = len(differences)
+				return detail, differences, nil
+			}
+			return map[string]any{"hf_endpoint": endpoint, "repo_id": repoID, "revision": revision}, nil,
+				fmt.Errorf("remote verification failed (%v) and local hfd evidence is invalid: %w", err, localErr)
+		}
+		return map[string]any{"hf_endpoint": endpoint, "repo_id": repoID, "revision": revision}, nil, err
+	}
+
+	detail := map[string]any{
+		"hf_endpoint": endpoint,
+		"repo_id":     repoID,
+		"revision":    revision,
+		"remote_sha":  remoteMetadata.SHA,
+	}
+	localMetadataPath := filepath.Join(source, ".hfd", "repo_metadata.json")
+	if metadataData, readErr := os.ReadFile(localMetadataPath); readErr == nil {
+		var localMetadata hfRepoMetadata
+		if json.Unmarshal(metadataData, &localMetadata) == nil && localMetadata.SHA != "" {
+			detail["downloaded_sha"] = localMetadata.SHA
+			if remoteMetadata.SHA != "" && remoteMetadata.SHA != localMetadata.SHA {
+				return detail, []string{fmt.Sprintf("remote revision changed after download: local sha %s, remote sha %s", localMetadata.SHA, remoteMetadata.SHA)}, nil
+			}
+		}
+	}
+	// 始终拉取远程逐文件 manifest（含 oid/lfs.oid），以便同时比对目录结构、文件数量与 hash。
+	expected, err := fetchHFRemoteManifest(client, apiBase, revision, payload.Token, remoteMetadata)
+	if err != nil {
+		return detail, nil, err
+	}
+
+	detail["expected_file_count"] = len(expected)
+	var expectedBytes int64
+	for _, entry := range expected {
+		expectedBytes += entry.Size
+	}
+	detail["expected_size_bytes"] = expectedBytes
+	differences := compareResourceManifest(expected, localFiles, source)
+	detail["difference_count"] = len(differences)
+	return detail, differences, nil
+}
+
+func readLocalHFDownloadEvidence(source string, localFiles map[string]int64) (map[string]any, map[string]int64, error) {
+	manifestPath := filepath.Join(source, ".hfd", "manifest")
+	if expected, err := readHFDManifest(manifestPath); err == nil {
+		metadataData, readErr := os.ReadFile(filepath.Join(source, ".hfd", "repo_metadata.json"))
+		var metadata hfRepoMetadata
+		if readErr != nil || json.Unmarshal(metadataData, &metadata) != nil || strings.TrimSpace(metadata.SHA) == "" {
+			return nil, nil, fmt.Errorf(".hfd manifest has no valid repository SHA")
+		}
+		return localEvidenceDetail(expected, metadata.SHA, "hfd_manifest"), expected, nil
+	} else if !os.IsNotExist(err) {
+		return nil, nil, err
+	}
+
+	cacheRoot := filepath.Join(source, ".cache", "huggingface", "download")
+	expected := map[string]int64{}
+	downloadedSHA := ""
+	err := filepath.WalkDir(cacheRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".metadata") {
+			return nil
+		}
+		rel, err := filepath.Rel(cacheRoot, strings.TrimSuffix(path, ".metadata"))
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		size, ok := localFiles[rel]
+		if !ok {
+			expected[rel] = -1
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sha := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
+		if sha == "" {
+			return fmt.Errorf("empty repository SHA in %s", rel)
+		}
+		if downloadedSHA == "" {
+			downloadedSHA = sha
+		} else if downloadedSHA != sha {
+			return fmt.Errorf("mixed repository SHAs in local cache: %s and %s", downloadedSHA, sha)
+		}
+		expected[rel] = size
+		return nil
 	})
-	return string(result), nil
+	if err != nil {
+		return nil, nil, fmt.Errorf("read Hugging Face download metadata: %w", err)
+	}
+	if len(expected) == 0 || downloadedSHA == "" {
+		return nil, nil, fmt.Errorf("no completed Hugging Face download metadata found")
+	}
+	return localEvidenceDetail(expected, downloadedSHA, "huggingface_cache_metadata"), expected, nil
+}
+
+func localEvidenceDetail(expected map[string]int64, downloadedSHA, evidence string) map[string]any {
+	var expectedBytes int64
+	for _, size := range expected {
+		if size > 0 {
+			expectedBytes += size
+		}
+	}
+	return map[string]any{
+		"downloaded_sha":      downloadedSHA,
+		"local_evidence":      evidence,
+		"expected_file_count": len(expected),
+		"expected_size_bytes": expectedBytes,
+	}
+}
+
+func getHFJSON(client *http.Client, requestURL, token string, target any) (http.Header, error) {
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("GET %s returned %s: %s", requestURL, resp.Status, strings.TrimSpace(string(body)))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", requestURL, err)
+	}
+	return resp.Header, nil
+}
+
+func readHFDManifest(path string) (map[string]int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	manifest := map[string]int64{}
+	for lineNumber, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid hfd manifest line %d", lineNumber+1)
+		}
+		size, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || size < 0 || strings.TrimSpace(parts[1]) == "" {
+			return nil, fmt.Errorf("invalid hfd manifest line %d", lineNumber+1)
+		}
+		manifest[filepath.ToSlash(strings.TrimPrefix(parts[1], "./"))] = size
+	}
+	if len(manifest) == 0 {
+		return nil, fmt.Errorf("hfd manifest is empty")
+	}
+	return manifest, nil
+}
+
+func fetchHFRemoteManifest(client *http.Client, apiBase, revision, token string, metadata hfRepoMetadata) (map[string]manifestEntry, error) {
+	manifest := map[string]manifestEntry{}
+	// expand=true 才会返回逐文件的 oid（git blob sha1）与 lfs.oid（sha256），是 hash 校验的关键。
+	requestURL := apiBase + "/tree/" + url.PathEscape(revision) + "?recursive=true&expand=true"
+	for requestURL != "" {
+		var entries []hfTreeEntry
+		headers, err := getHFJSON(client, requestURL, token, &entries)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.Type != "file" {
+				continue
+			}
+			item := manifestEntry{Size: entry.Size}
+			if entry.LFS != nil && entry.LFS.Oid != "" {
+				item.Hash = entry.LFS.Oid
+				item.HashAlgo = "sha256"
+			} else if entry.Oid != "" {
+				item.Hash = entry.Oid
+				item.HashAlgo = "sha1-git"
+			}
+			manifest[filepath.ToSlash(entry.Path)] = item
+		}
+		requestURL = nextHFLink(headers.Get("Link"))
+	}
+	if len(manifest) == 0 {
+		// 极少数情况下 tree API 不可用，退回仓库元数据的 siblings（仅有 size，没有 hash）。
+		for _, sibling := range metadata.Siblings {
+			if sibling.Path != "" {
+				manifest[filepath.ToSlash(sibling.Path)] = manifestEntry{Size: sibling.Size}
+			}
+		}
+	}
+	if len(manifest) == 0 {
+		return nil, fmt.Errorf("remote repository returned an empty manifest")
+	}
+	return manifest, nil
+}
+
+// msTreeEntry 对应 ModelScope repo/files 或 repo/tree 接口返回的单条文件/目录信息。
+type msTreeEntry struct {
+	Type   string `json:"Type"`
+	Path   string `json:"Path"`
+	Size   int64  `json:"Size"`
+	Sha256 string `json:"Sha256"`
+}
+
+type msTreeResponse struct {
+	Code    int    `json:"Code"`
+	Message string `json:"Message"`
+	Data    struct {
+		Files []msTreeEntry `json:"Files"`
+	} `json:"Data"`
+}
+
+// modelScopeAPIBase 为 ModelScope 官方 API 根地址，测试中可替换为 httptest 服务器地址。
+var modelScopeAPIBase = "https://modelscope.cn"
+
+// verifyModelScopeManifest 通过 ModelScope 官方 API 拉取仓库真实的目录结构、文件大小与 sha256，
+// 与本地文件逐一比对。模型仓库使用 repo/files 接口，数据集仓库使用 repo/tree 接口（ModelScope 的
+// 已知限制：两者路径不通用，请求错误的接口会返回 404/405）。
+func verifyModelScopeManifest(payload SharedResourceVerifyPayload, source string, localFiles map[string]int64) (map[string]any, []string, error) {
+	repoID := strings.Trim(strings.TrimSpace(payload.RepoID), "/")
+	revision := strings.TrimSpace(payload.Revision)
+	if revision == "" {
+		revision = "master"
+	}
+	repoKind := "models"
+	listPath := "repo/files"
+	if strings.EqualFold(strings.TrimSpace(payload.RepoType), "dataset") {
+		repoKind = "datasets"
+		listPath = "repo/tree"
+	}
+	requestURL := fmt.Sprintf("%s/api/v1/%s/%s/%s?Revision=%s&Recursive=true",
+		strings.TrimRight(modelScopeAPIBase, "/"), repoKind, repoID, listPath, url.QueryEscape(revision))
+	detail := map[string]any{
+		"ms_repo_id": repoID,
+		"revision":   revision,
+	}
+	client := &http.Client{Timeout: 2 * time.Minute}
+	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return detail, nil, err
+	}
+	if token := strings.TrimSpace(payload.Token); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return detail, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return detail, nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return detail, nil, fmt.Errorf("GET %s returned %s: %s", requestURL, resp.Status, strings.TrimSpace(string(body)))
+	}
+	var parsed msTreeResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return detail, nil, fmt.Errorf("decode ModelScope file tree: %w", err)
+	}
+	if parsed.Code != 200 {
+		return detail, nil, fmt.Errorf("ModelScope API error %d: %s", parsed.Code, parsed.Message)
+	}
+	expected := map[string]manifestEntry{}
+	for _, entry := range parsed.Data.Files {
+		if entry.Type != "blob" {
+			continue
+		}
+		path := filepath.ToSlash(strings.TrimPrefix(entry.Path, "/"))
+		expected[path] = manifestEntry{Size: entry.Size, Hash: entry.Sha256, HashAlgo: "sha256"}
+	}
+	if len(expected) == 0 {
+		return detail, nil, fmt.Errorf("remote repository returned an empty manifest")
+	}
+	detail["expected_file_count"] = len(expected)
+	var expectedBytes int64
+	for _, entry := range expected {
+		expectedBytes += entry.Size
+	}
+	detail["expected_size_bytes"] = expectedBytes
+	differences := compareResourceManifest(expected, localFiles, source)
+	detail["difference_count"] = len(differences)
+	return detail, differences, nil
+}
+
+func nextHFLink(linkHeader string) string {
+	for _, part := range strings.Split(linkHeader, ",") {
+		sections := strings.Split(part, ";")
+		if len(sections) < 2 || !strings.Contains(strings.Join(sections[1:], ";"), `rel="next"`) {
+			continue
+		}
+		return strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(sections[0]), "<"), ">")
+	}
+	return ""
+}
+
+// compareResourceManifest 比对来源（HuggingFace/ModelScope）的预期文件清单与本地文件：
+// 目录结构、文件数量通过双向比对相对路径体现（缺失/多余文件），文件内容一致性通过
+// size 与 hash（当来源提供哈希时）共同校验。sourceDir 为本地资源根目录，用于按需读取文件计算哈希。
+func compareResourceManifest(expected map[string]manifestEntry, local map[string]int64, sourceDir string) []string {
+	differences := []string{}
+	add := func(message string) {
+		if len(differences) < 20 {
+			differences = append(differences, message)
+		}
+	}
+	for path, entry := range expected {
+		localSize, ok := local[path]
+		if !ok {
+			add("missing remote file: " + path)
+			continue
+		}
+		if localSize != entry.Size {
+			add(fmt.Sprintf("size mismatch: %s (local=%d remote=%d)", path, localSize, entry.Size))
+			continue
+		}
+		if entry.Hash == "" || entry.HashAlgo == "" {
+			continue
+		}
+		localHash, err := hashLocalFile(filepath.Join(sourceDir, filepath.FromSlash(path)), entry.HashAlgo)
+		if err != nil {
+			add(fmt.Sprintf("hash check failed: %s (%v)", path, err))
+			continue
+		}
+		if !strings.EqualFold(localHash, entry.Hash) {
+			add(fmt.Sprintf("hash mismatch: %s (local=%s remote=%s)", path, localHash, entry.Hash))
+		}
+	}
+	for path := range local {
+		if _, ok := expected[path]; !ok {
+			add("extra local file: " + path)
+		}
+	}
+	return differences
+}
+
+func sharedResourceIncompleteReasons(source string) ([]string, error) {
+	reasons := []string{}
+	if info, err := os.Stat(filepath.Join(source, ".hfd", "needed")); err == nil && info.Size() > 0 {
+		reasons = append(reasons, ".hfd/needed is not empty")
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("stat .hfd/needed: %w", err)
+	}
+	if info, err := os.Stat(filepath.Join(source, ".hfd", "failed")); err == nil && info.Size() > 0 {
+		reasons = append(reasons, ".hfd/failed is not empty")
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("stat .hfd/failed: %w", err)
+	}
+	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			name := entry.Name()
+			if name == ".git" || name == ".cache" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".aria2") || strings.HasSuffix(name, ".incomplete") {
+			rel, err := filepath.Rel(source, path)
+			if err != nil {
+				rel = path
+			}
+			reasons = append(reasons, "partial file remains: "+rel)
+			if len(reasons) >= 20 {
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return reasons, nil
 }
 func syncSSHParts(endpoint DataSyncSSHEndpoint) (string, string, []string, error) {
 	host := strings.TrimSpace(endpoint.Host)
@@ -507,6 +1065,7 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string, onProgre
 	}
 	defer os.RemoveAll(tmpDir)
 
+	fileTransferTimeout := 60 * time.Minute
 	switch mode {
 	case "storage_to_container":
 		// 优先尝试在容器内直接运行 rsync，数据从存储节点直达容器，
@@ -547,9 +1106,9 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string, onProgre
 			dstTarget := target + "/" + entry.Name()
 			var out string
 			if entry.IsDir() {
-				out, err = runCommandCombined("incus", "file", "push", "-r", "-p", srcPath, dstTarget)
+				out, err = runCommandCombinedTimeout(fileTransferTimeout, "incus", "file", "push", "-r", "-p", srcPath, dstTarget)
 			} else {
-				out, err = runCommandCombined("incus", "file", "push", "-p", srcPath, dstTarget)
+				out, err = runCommandCombinedTimeout(fileTransferTimeout, "incus", "file", "push", "-p", srcPath, dstTarget)
 			}
 			pushOutput += out
 			if err != nil {
@@ -563,7 +1122,7 @@ func executeContainerDataSync(payload DataSyncPayload, dataPath string, onProgre
 		if err != nil {
 			return "", err
 		}
-		pullOutput, err := runCommandCombined("incus", "file", "pull", "-r", source, staging)
+		pullOutput, err := runCommandCombinedTimeout(fileTransferTimeout, "incus", "file", "pull", "-r", source, staging)
 		if err != nil {
 			return pullOutput, err
 		}

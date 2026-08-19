@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Close, Delete, Plus, Select, Upload } from "@element-plus/icons-vue";
-import { getMe, updateProfile, getSshKeys, addSshKey, deleteSshKey, syncSshKeysToContainers, changePassword, getApiTokens, createApiToken, deleteApiToken, type SshKey, type ApiToken } from "../api/cluster";
+import { getAuthConfig, getMe, updateProfile, getSshKeys, addSshKey, deleteSshKey, syncSshKeysToContainers, changePassword, getApiTokens, createApiToken, deleteApiToken, type SshKey, type ApiToken } from "../api/cluster";
 import { authUser, setAuth, authToken } from "../auth";
 
 const { locale, t } = useI18n();
@@ -28,9 +28,14 @@ function groupLabel(groupName: string) {
 
 // Password change
 const passwordSaving = ref(false);
+const passwordChangeEnabled = ref(true);
 const passwordForm = reactive({ current_password: "", new_password: "", confirm_password: "" });
 
 async function submitPasswordChange() {
+  if (!passwordChangeEnabled.value) {
+    ElMessage.info(t("profile.passwordManagedByOidc"));
+    return;
+  }
   if (!passwordForm.current_password || !passwordForm.new_password) {
     ElMessage.error(t("profile.passwordRequired"));
     return;
@@ -98,12 +103,13 @@ function copyToken() {
 async function load() {
   loading.value = true;
   try {
-    const [data, keys] = await Promise.all([getMe(), getSshKeys()]);
+    const [data, keys, authConfig] = await Promise.all([getMe(), getSshKeys(), getAuthConfig()]);
     info.value = data as typeof info.value;
     profileForm.display_name = data.display_name;
     profileForm.email = data.email ?? "";
     profileForm.phone = data.phone ?? "";
     sshKeys.value = keys;
+    passwordChangeEnabled.value = authConfig.password_change_enabled;
     await loadApiTokens();
   } finally {
     loading.value = false;
@@ -228,19 +234,27 @@ onMounted(load);
     <!-- 修改密码 -->
     <el-card shadow="never">
       <template #header><strong>{{ t("profile.changePassword") }}</strong></template>
+      <el-alert
+        v-if="!passwordChangeEnabled"
+        :title="t('profile.passwordManagedByOidc')"
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-bottom:16px"
+      />
       <el-form :model="passwordForm" label-position="top" class="form-grid">
         <el-form-item :label="t('profile.currentPassword')">
-          <el-input v-model="passwordForm.current_password" type="password" show-password :placeholder="t('profile.currentPassword')" />
+          <el-input v-model="passwordForm.current_password" type="password" show-password :disabled="!passwordChangeEnabled" :placeholder="t('profile.currentPassword')" />
         </el-form-item>
         <el-form-item :label="t('profile.newPassword')">
-          <el-input v-model="passwordForm.new_password" type="password" show-password :placeholder="t('profile.newPassword')" />
+          <el-input v-model="passwordForm.new_password" type="password" show-password :disabled="!passwordChangeEnabled" :placeholder="t('profile.newPassword')" />
         </el-form-item>
         <el-form-item :label="t('profile.confirmPassword')">
-          <el-input v-model="passwordForm.confirm_password" type="password" show-password :placeholder="t('profile.confirmPassword')" />
+          <el-input v-model="passwordForm.confirm_password" type="password" show-password :disabled="!passwordChangeEnabled" :placeholder="t('profile.confirmPassword')" />
         </el-form-item>
       </el-form>
       <div style="margin-top:16px;text-align:right">
-        <el-button type="primary" :icon="Select" :loading="passwordSaving" @click="submitPasswordChange">{{ t("common.save") }}</el-button>
+        <el-button type="primary" :icon="Select" :loading="passwordSaving" :disabled="!passwordChangeEnabled" @click="submitPasswordChange">{{ t("common.save") }}</el-button>
       </div>
     </el-card>
 
@@ -383,5 +397,6 @@ onMounted(load);
         <el-button v-if="!newTokenValue" type="primary" :loading="tokenCreating" @click="submitCreateToken">创建</el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>

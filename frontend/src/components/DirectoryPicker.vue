@@ -157,6 +157,7 @@ defineExpose({ open });
 <template>
   <el-dialog
     v-model="visible"
+    class="directory-picker-dialog"
     :title="pickerType === 'user_file' ? '选择目录 · 我的文件' : `选择目录 · ${resource?.name || '公开资源'}`"
     width="680px"
     destroy-on-close
@@ -243,5 +244,12 @@ defineExpose({ open });
   padding: 32px 0;
   color: #909399;
   font-size: 14px;
+}
+
+:deep(.directory-picker-dialog .el-button > span) {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 </style>

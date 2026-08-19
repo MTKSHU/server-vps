@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/csv"
+	"fmt"
 	"math"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,6 +16,13 @@ import (
 )
 
 func detectNVIDIA() ([]GPUReport, string, string) {
+	gpus, driverVersion := detectNVIDIAGPUs()
+	return gpus, driverVersion, parseNVIDIACudaVersion()
+}
+
+// detectNVIDIAGPUs performs the single query needed for dynamic GPU metrics.
+// The slower CUDA Driver API lookup stays on the inventory schedule.
+func detectNVIDIAGPUs() ([]GPUReport, string) {
 	output := runCommand(
 		"nvidia-smi",
 		"--query-gpu=index,uuid,name,pci.bus_id,memory.total,memory.used,temperature.gpu,power.draw,utilization.gpu,driver_version",
@@ -21,11 +30,10 @@ func detectNVIDIA() ([]GPUReport, string, string) {
 	)
 	if output == "" {
 		gpus := detectNVIDIAProc()
-		return gpus, parseNVIDIADriverVersion(), parseNVIDIACudaVersion()
+		return gpus, parseNVIDIADriverVersion()
 	}
 	var gpus []GPUReport
 	driverVersion := ""
-	cudaVersion := parseNVIDIACudaVersion()
 	for _, line := range strings.Split(output, "\n") {
 		parts := strings.Split(line, ",")
 		if len(parts) < 10 {
@@ -49,7 +57,7 @@ func detectNVIDIA() ([]GPUReport, string, string) {
 			Utilization:  parseInt(parts[8]),
 		})
 	}
-	return gpus, driverVersion, cudaVersion
+	return gpus, driverVersion
 }
 
 func detectNVIDIAProc() []GPUReport {
@@ -140,24 +148,28 @@ func parseNVIDIADriverVersion() string {
 }
 
 func parseNVIDIACudaVersion() string {
-	output := runCommandTimeout(3*time.Second, "nvidia-smi")
-	if output == "" {
+	// v610 renamed the deprecated "CUDA Version" field to "CUDA UMD Version"
+	// and may align labels as "CUDA UMD Version : 13.3". Try the normal status
+	// page, the detailed query, and --version because driver builds differ in
+	// which view exposes the maximum supported CUDA Driver API version.
+	for _, args := range [][]string{{}, {"-q"}, {"--version"}} {
+		if version := parseNVIDIACudaVersionOutput(
+			runCommandTimeout(10*time.Second, "nvidia-smi", args...),
+		); version != "" {
+			return version
+		}
+	}
+	return ""
+}
+
+var nvidiaCUDAVersionRE = regexp.MustCompile(`(?i)CUDA(?:\s+UMD)?\s+Version\s*:\s*([0-9]+(?:\.[0-9]+){1,2})`)
+
+func parseNVIDIACudaVersionOutput(output string) string {
+	match := nvidiaCUDAVersionRE.FindStringSubmatch(output)
+	if len(match) != 2 {
 		return ""
 	}
-	marker := "CUDA Version:"
-	index := strings.Index(output, marker)
-	if index < 0 {
-		return ""
-	}
-	version := strings.TrimSpace(output[index+len(marker):])
-	if version == "" {
-		return ""
-	}
-	fields := strings.Fields(version)
-	if len(fields) == 0 {
-		return ""
-	}
-	return strings.Trim(fields[0], "|")
+	return match[1]
 }
 
 func parseRoundedInt(value string) int {
@@ -725,17 +737,16 @@ func parseFirstIPv4(value string) string {
 	return ""
 }
 
-func detectIncusContainers() []ContainerReport {
+func parseIncusContainers(output string) ([]ContainerReport, error) {
 	containers := []ContainerReport{}
-	output := runCommand("incus", "list", "--format", "csv", "-c", "ns4")
 	if output == "" {
-		return containers
+		return containers, nil
 	}
 	reader := csv.NewReader(strings.NewReader(output))
 	reader.FieldsPerRecord = -1
 	rows, err := reader.ReadAll()
 	if err != nil {
-		return containers
+		return nil, err
 	}
 	for _, row := range rows {
 		if len(row) < 2 {
@@ -749,23 +760,38 @@ func detectIncusContainers() []ContainerReport {
 			report.IP = parseFirstIPv4(strings.Join(row[2:], ","))
 		}
 		if report.Name != "" {
+			if report.Name == downloaderContainerName {
+				report.Role = "resource_downloader"
+			}
 			containers = append(containers, report)
 		}
 	}
+	return containers, nil
+}
+
+func detectIncusContainersResult() ([]ContainerReport, error) {
+	output, err := runCommandCombinedTimeout(10*time.Second, "incus", "list", "--format", "csv", "-c", "ns4")
+	if err != nil {
+		return nil, err
+	}
+	return parseIncusContainers(output)
+}
+
+func detectIncusContainers() []ContainerReport {
+	containers, _ := detectIncusContainersResult()
 	return containers
 }
 
-func detectIncusImages() []IncusImageReport {
+func parseIncusImages(output string) ([]IncusImageReport, error) {
 	images := []IncusImageReport{}
-	output := runCommand("incus", "image", "list", "--format", "csv", "-c", "lfda")
 	if output == "" {
-		return images
+		return images, nil
 	}
 	reader := csv.NewReader(strings.NewReader(output))
 	reader.FieldsPerRecord = -1
 	rows, err := reader.ReadAll()
 	if err != nil {
-		return images
+		return nil, err
 	}
 	for _, row := range rows {
 		if len(row) < 2 {
@@ -785,6 +811,19 @@ func detectIncusImages() []IncusImageReport {
 			images = append(images, image)
 		}
 	}
+	return images, nil
+}
+
+func detectIncusImagesResult() ([]IncusImageReport, error) {
+	output, err := runCommandCombinedTimeout(30*time.Second, "incus", "image", "list", "--format", "csv", "-c", "lfda")
+	if err != nil {
+		return nil, err
+	}
+	return parseIncusImages(output)
+}
+
+func detectIncusImages() []IncusImageReport {
+	images, _ := detectIncusImagesResult()
 	return images
 }
 
@@ -803,7 +842,29 @@ func detectIncusStoragePool() string {
 	return ""
 }
 
-func buildPayload(args cliArgs) NodeRegistration {
+type payloadCollector struct {
+	args            cliArgs
+	cached          NodeRegistration
+	initialized     bool
+	lastContainerAt time.Time
+	lastStorageAt   time.Time
+	lastInventoryAt time.Time
+	now             func() time.Time
+}
+
+func newPayloadCollector(args cliArgs) *payloadCollector {
+	return &payloadCollector{args: args, now: time.Now}
+}
+
+func refreshDue(initialized bool, last, now time.Time, intervalSeconds int) bool {
+	if !initialized || last.IsZero() {
+		return true
+	}
+	return !now.Before(last.Add(time.Duration(intervalSeconds) * time.Second))
+}
+
+func (collector *payloadCollector) refreshInventory(now time.Time) {
+	args := collector.args
 	gpus, driverVersion, cudaVersion := detectNVIDIA()
 	hostname := args.hostname
 	if hostname == "" {
@@ -815,43 +876,226 @@ func buildPayload(args cliArgs) NodeRegistration {
 	}
 	driverPool := args.driverPool
 	if driverPool == "" {
-		driverPool = inferDriverPool(gpus)
+		if len(gpus) > 0 || !collector.initialized {
+			driverPool = inferDriverPool(gpus)
+		} else {
+			driverPool = collector.cached.DriverPool
+		}
+	}
+	collector.cached.Token = args.token
+	collector.cached.Hostname = hostname
+	collector.cached.IP = ip
+	collector.cached.NodeGroup = args.nodeGroup
+	collector.cached.DriverPool = driverPool
+	collector.cached.OSVersion = runtime.GOOS
+	collector.cached.KernelVersion = runCommand("uname", "-r")
+	if driverVersion != "" || !collector.initialized {
+		collector.cached.DriverVersion = driverVersion
+	}
+	if cudaVersion != "" || !collector.initialized {
+		collector.cached.CUDADriverAPIVersion = cudaVersion
+	}
+	collector.cached.IncusStatus = incusStatus()
+	collector.cached.AgentVersion = agentVersion
+	if len(gpus) > 0 || !collector.initialized {
+		collector.cached.GPUs = gpus
+	}
+	collector.cached.Resources.CPUModel = cpuModel()
+	collector.cached.Resources.CPUTotal = runtime.NumCPU()
+	collector.cached.Resources.CPUCores = cpuCores()
+	collector.cached.Resources.CPUSockets = cpuSockets()
+	if images, err := detectIncusImagesResult(); err == nil {
+		collector.cached.Images = images
+	}
+	storageVolumes := detectStorageVolumes(args.dataPath)
+	usableStorageSample := false
+	for _, volume := range storageVolumes {
+		if volume.Exists && volume.Status != "error" {
+			usableStorageSample = true
+			break
+		}
+	}
+	if usableStorageSample || !collector.initialized {
+		collector.cached.StorageVolumes = storageVolumes
+	}
+	collector.lastInventoryAt = now
+}
+
+func (collector *payloadCollector) refreshStorage(now time.Time) {
+	total, used := resourceDiskGB(collector.args)
+	if total > 0 {
+		collector.cached.Resources.DiskTotalGB = total
+		collector.cached.Resources.DiskUsedGB = used
+	}
+	collector.lastStorageAt = now
+}
+
+func (collector *payloadCollector) refreshMetrics(skipGPU bool) {
+	if !skipGPU {
+		if gpus, driverVersion := detectNVIDIAGPUs(); len(gpus) > 0 {
+			collector.cached.GPUs = gpus
+			if driverVersion != "" {
+				collector.cached.DriverVersion = driverVersion
+			}
+		}
 	}
 	memoryTotal, memoryUsed := memoryGB()
-	diskTotal, diskUsed := resourceDiskGB(args)
 	swapTotal, swapUsed := swapGB()
-	return NodeRegistration{
-		Token:                args.token,
-		Hostname:             hostname,
-		IP:                   ip,
-		NodeGroup:            args.nodeGroup,
-		DriverPool:           driverPool,
-		OSVersion:            runtime.GOOS,
-		KernelVersion:        runCommand("uname", "-r"),
-		DriverVersion:        driverVersion,
-		CUDADriverAPIVersion: cudaVersion,
-		IncusStatus:          incusStatus(),
-		AgentVersion:         agentVersion,
-		UptimeSeconds:        uptimeSeconds(),
-		Resources: ResourceReport{
-			CPUModel:        cpuModel(),
-			CPUTotal:        runtime.NumCPU(),
-			CPUCores:        cpuCores(),
-			CPUSockets:      cpuSockets(),
-			CPUTemperatureC: cpuTemperature(),
-			MemoryTotalGB:   memoryTotal,
-			DiskTotalGB:     diskTotal,
-			CPUUsed:         0,
-			MemoryUsedGB:    memoryUsed,
-			DiskUsedGB:      diskUsed,
-			LoadAvg:         loadAvg(),
-			CPUUsagePercent: cpuUsagePercent(),
-			SwapTotalGB:     swapTotal,
-			SwapUsedGB:      swapUsed,
-		},
-		GPUs:           gpus,
-		Containers:     detectIncusContainers(),
-		Images:         detectIncusImages(),
-		StorageVolumes: detectStorageVolumes(args.dataPath),
+	collector.cached.UptimeSeconds = uptimeSeconds()
+	collector.cached.Resources.CPUTemperatureC = cpuTemperature()
+	collector.cached.Resources.MemoryTotalGB = memoryTotal
+	collector.cached.Resources.CPUUsed = 0
+	collector.cached.Resources.MemoryUsedGB = memoryUsed
+	collector.cached.Resources.LoadAvg = loadAvg()
+	collector.cached.Resources.CPUUsagePercent = cpuUsagePercent()
+	collector.cached.Resources.SwapTotalGB = swapTotal
+	collector.cached.Resources.SwapUsedGB = swapUsed
+}
+
+func (collector *payloadCollector) refreshContainers(now time.Time) {
+	if containers, err := detectIncusContainersResult(); err == nil {
+		collector.cached.Containers = containers
+	}
+	collector.lastContainerAt = now
+}
+
+func (collector *payloadCollector) applyConfig(config AgentCollectionConfig) {
+	collector.args.containerInterval = config.ContainerIntervalSeconds
+	collector.args.storageInterval = config.StorageIntervalSeconds
+	collector.args.inventoryInterval = config.InventoryIntervalSeconds
+}
+
+func (collector *payloadCollector) buildPayload() NodeRegistration {
+	now := collector.now()
+	inventoryDue := refreshDue(collector.initialized, collector.lastInventoryAt, now, collector.args.inventoryInterval)
+	if inventoryDue {
+		collector.refreshInventory(now)
+	}
+	if refreshDue(collector.initialized, collector.lastStorageAt, now, collector.args.storageInterval) {
+		collector.refreshStorage(now)
+	}
+	collector.refreshMetrics(inventoryDue)
+	if refreshDue(collector.initialized, collector.lastContainerAt, now, collector.args.containerInterval) {
+		collector.refreshContainers(now)
+	}
+	collector.initialized = true
+	collector.cached.Capabilities = []string{"managed_nfs_mounts_v1", "typed_mounts_v1", "per_user_nfs_exports_v1", "managed_nfs_hot_mounts_v1"}
+	collector.cached.NFSHealth = detectNFSHealth()
+	return collector.cached
+}
+
+// buildPayload preserves one-shot behavior. Daemon mode reuses one collector.
+func buildPayload(args cliArgs) NodeRegistration {
+	return newPayloadCollector(args).buildPayload()
+}
+
+type networkCounters struct {
+	Interface string
+	RXBytes   uint64
+	TXBytes   uint64
+	SampledAt time.Time
+}
+
+type networkRateSampler struct {
+	previous networkCounters
+}
+
+func parseDefaultRouteInterface(content string) string {
+	selected := ""
+	selectedMetric := int64(math.MaxInt64)
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 || fields[0] == "Iface" || fields[1] != "00000000" || fields[7] != "00000000" {
+			continue
+		}
+		flags, err := strconv.ParseUint(fields[3], 16, 64)
+		if err != nil || flags&1 == 0 {
+			continue
+		}
+		metric, err := strconv.ParseInt(fields[6], 10, 64)
+		if err != nil {
+			metric = math.MaxInt32
+		}
+		if selected == "" || metric < selectedMetric {
+			selected = fields[0]
+			selectedMetric = metric
+		}
+	}
+	return selected
+}
+
+func readUintFile(path string) (uint64, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(content)), 10, 64)
+}
+
+func readDefaultRouteNetworkCounters(now time.Time) (networkCounters, error) {
+	routes, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return networkCounters{}, err
+	}
+	interfaceName := parseDefaultRouteInterface(string(routes))
+	if interfaceName == "" || strings.ContainsAny(interfaceName, `/\\`) {
+		return networkCounters{}, fmt.Errorf("IPv4 default route interface not found")
+	}
+	statisticsPath := filepath.Join("/sys/class/net", interfaceName, "statistics")
+	rxBytes, err := readUintFile(filepath.Join(statisticsPath, "rx_bytes"))
+	if err != nil {
+		return networkCounters{}, err
+	}
+	txBytes, err := readUintFile(filepath.Join(statisticsPath, "tx_bytes"))
+	if err != nil {
+		return networkCounters{}, err
+	}
+	return networkCounters{Interface: interfaceName, RXBytes: rxBytes, TXBytes: txBytes, SampledAt: now}, nil
+}
+
+func calculateNetworkRates(previous, current networkCounters) (float64, float64) {
+	elapsed := current.SampledAt.Sub(previous.SampledAt).Seconds()
+	if previous.Interface == "" || previous.Interface != current.Interface || elapsed <= 0 || current.RXBytes < previous.RXBytes || current.TXBytes < previous.TXBytes {
+		return 0, 0
+	}
+	return float64(current.RXBytes-previous.RXBytes) / elapsed, float64(current.TXBytes-previous.TXBytes) / elapsed
+}
+
+func (sampler *networkRateSampler) sample(now time.Time) (string, float64, float64) {
+	current, err := readDefaultRouteNetworkCounters(now)
+	if err != nil {
+		sampler.previous = networkCounters{}
+		return "", 0, 0
+	}
+	rxRate, txRate := calculateNetworkRates(sampler.previous, current)
+	sampler.previous = current
+	return current.Interface, rxRate, txRate
+}
+
+func buildMetricsReport(args cliArgs, hostname string, networkSampler *networkRateSampler) AgentMetricsReport {
+	gpus, _ := detectNVIDIAGPUs()
+	memoryTotal, memoryUsed := memoryGB()
+	swapTotal, swapUsed := swapGB()
+	networkInterface := ""
+	networkRXRate := 0.0
+	networkTXRate := 0.0
+	if networkSampler != nil {
+		networkInterface, networkRXRate, networkTXRate = networkSampler.sample(time.Now())
+	}
+	return AgentMetricsReport{
+		Token:                   args.token,
+		Hostname:                hostname,
+		UptimeSeconds:           uptimeSeconds(),
+		CPUUsagePercent:         cpuUsagePercent(),
+		CPUTemperatureC:         cpuTemperature(),
+		MemoryTotalGB:           memoryTotal,
+		MemoryUsedGB:            memoryUsed,
+		LoadAvg:                 loadAvg(),
+		SwapTotalGB:             swapTotal,
+		SwapUsedGB:              swapUsed,
+		NetworkInterface:        networkInterface,
+		NetworkRXBytesPerSecond: networkRXRate,
+		NetworkTXBytesPerSecond: networkTXRate,
+		GPUs:                    gpus,
 	}
 }

@@ -30,6 +30,8 @@ incus network list
 incus profile show default
 ```
 
+如计划运行「Incus 容器内的 NVIDIA Docker」，节点 Incus 还必须包含 nesting AppArmor 修复（至少 6.0.6 LTS，或相应更新的非 LTS 版本），详见 [nvidia-docker-image.md](nvidia-docker-image.md)。
+
 建议统一：
 
 ```text
@@ -56,7 +58,20 @@ Incus storage pool：data
 
 ## 3. 安装 agent
 
-从平台下载发布物，或在管理节点构建后复制到新节点：
+从平台下载最新 stable 发布物。引导下载接口是公开的，不要添加 join token；join token 不是 Web 登录 token，旧命令把它放在 `Authorization` 中会返回 401：
+
+```bash
+sudo curl -fsSL \
+  'https://hpc.example.com/api/agent-releases/latest/download?architecture=amd64' \
+  -o /usr/local/bin/cluster-node-agent
+sudo curl -fsSL \
+  'https://hpc.example.com/api/agent-releases/latest/download-updater?architecture=amd64' \
+  -o /usr/local/bin/cluster-agent-updater
+sudo chmod 0755 /usr/local/bin/cluster-node-agent /usr/local/bin/cluster-agent-updater
+/usr/local/bin/cluster-node-agent --version
+```
+
+也可以在管理节点下载后复制到新节点，再安装：
 
 ```bash
 sudo install -m 0755 cluster-node-agent /usr/local/bin/cluster-node-agent
@@ -74,10 +89,17 @@ CLUSTER_INCUS_STORAGE_POOL=data
 
 `CLUSTER_INCUS_STORAGE_POOL` 用于容器根盘、workspace 数据卷和节点磁盘容量上报；`CLUSTER_DATA_PATH` 仅用于主机目录挂载和旧任务兼容。
 
-如需启用节点 agent HTTP 文件 API，让后端更快浏览个人文件，可在 agent 环境中加入与管理节点一致的 token 和端口（具体变量以当前 agent 启动参数/页面生成内容为准）：
+如需启用节点 agent HTTP 文件 API，让后端更快浏览个人文件，在所有节点设置同一个专用文件 API token；它必须与管理端 `deploy/.env` 中的 `NODE_AGENT_TOKEN` 一致，但不要复用每台节点各自的 join token：
 
 ```text
-NODE_AGENT_TOKEN=<与 backend NODE_AGENT_TOKEN 一致>
+CLUSTER_AGENT_FILES_TOKEN=<与 backend NODE_AGENT_TOKEN 一致的独立随机值>
+CLUSTER_AGENT_FILES_PORT=8082
+```
+
+管理端对应配置为：
+
+```text
+NODE_AGENT_TOKEN=<同一个独立随机值>
 NODE_AGENT_FILES_PORT=8082
 ```
 
@@ -100,7 +122,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/cluster-node-agent.env
-ExecStart=/usr/local/bin/cluster-node-agent --server ${CLUSTER_SERVER_URL} --token ${CLUSTER_NODE_TOKEN} --data-path ${CLUSTER_DATA_PATH} --incus-storage-pool ${CLUSTER_INCUS_STORAGE_POOL} --interval 60
+ExecStart=/usr/local/bin/cluster-node-agent --interval 15 --storage-interval 60 --inventory-interval 300 --task-poll-interval 5
 Restart=always
 RestartSec=5
 
@@ -128,6 +150,10 @@ sudo systemctl enable --now cluster-agent-updater.timer
 ```
 
 updater 读取同一个 `/etc/cluster-node-agent.env`，使用节点 token 拉取平台配置的目标 agent 版本。
+
+Agent 将采集分为不同频率：CPU/内存/GPU 动态指标默认每 2 秒通过轻量接口上报；完整心跳和容器状态默认 15 秒；存储容量默认 60 秒；驱动/CUDA、Incus 镜像和目录用量等慢速清单默认 300 秒；任务默认每 5 秒轮询。
+
+systemd 中的 `--interval`、`--storage-interval`、`--inventory-interval` 和 `--task-poll-interval` 只作为首次连接及管理端不可用时的兜底。管理员可在 Web“平台设置 → 节点 Agent 采集策略”修改全部周期，配置随下一次心跳下发并在 Agent 内存中热应用，不需要修改节点 service 或重启 Agent。可用环境变量 `CLUSTER_METRICS_INTERVAL`、`CLUSTER_CONTAINER_INTERVAL`、`CLUSTER_STORAGE_INTERVAL`、`CLUSTER_INVENTORY_INTERVAL` 和 `CLUSTER_TASK_POLL_INTERVAL` 设置本地兜底值。
 
 管理员在平台“节点管理”中构建 Agent 发布物后，可为节点配置 stable/canary、是否自动更新和目标版本；也可以在页面上手动触发单节点更新。
 
@@ -187,3 +213,26 @@ GPU 未上报：
 nvidia-smi
 which nvidia-smi
 ```
+
+CUDA 版本为空时，先区分“驱动支持的最高 CUDA Driver API 版本”和节点是否安装 CUDA Toolkit。平台展示的是 `nvidia-smi` 报告的前者，不依赖 `nvcc`：
+
+```bash
+nvidia-smi
+nvidia-smi --version
+journalctl -u cluster-node-agent -n 100 --no-pager
+```
+
+v610 驱动已把旧的 `CUDA Version` 查询字段弃用并改为 `CUDA UMD Version`，输出还可能在冒号前加入对齐空格。需使用包含新版解析逻辑的 agent 发布物，然后重启服务并等待下一次心跳。
+
+## 跨网段访问说明
+
+只要节点可以主动访问平台的 HTTPS/WSS 地址，Web 控制台中的“容器 Shell”和“节点 Shell”都会复用 `cluster-node-agent` 建立的反向 WebSocket，不要求管理节点能直连节点的 TCP/22。节点 Shell 仅允许管理员，容器 Shell 仍按容器所有者权限检查并记录审计日志。
+
+以下流量目前仍不是 agent 隧道：
+
+- 本地 OpenSSH 客户端直连节点或容器；
+- `port-router` 暴露的任意 TCP 端口；
+- `/c/.../` 的 HTTP 路径代理；
+- 后端 SSH/SFTP 文件操作和跨节点 rsync。
+
+这些能力需要管理节点到节点网段有路由，或使用 WireGuard/Tailscale 等受控三层网络。不要把 agent 改成允许客户端指定任意目标地址的开放 TCP 代理；若后续实现，应使用平台下发的白名单端点、逐会话授权、限流和审计的多路复用隧道。

@@ -14,6 +14,24 @@ def setting_to_bool(value: Any) -> bool:
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
+def effective_node_shared_storage_mode(
+    node: dict[str, Any], settings: dict[str, Any], user_id: int | None = None
+) -> str:
+    """Resolve the policy for new mounts; existing container mounts stay unchanged."""
+    override = str(node.get("shared_storage_mode") or "inherit").strip().lower()
+    if override in ("disabled", "enabled"):
+        return override
+    global_mode = settings.get("shared_storage_mode", "disabled")
+    if global_mode == "enabled":
+        return "enabled"
+    if global_mode == "canary":
+        canary_ids = settings.get("shared_storage_canary_user_ids") or []
+        if user_id is None:
+            return "enabled" if canary_ids else "disabled"
+        return "enabled" if user_id in canary_ids else "disabled"
+    return "disabled"
+
+
 PLATFORM_SETTING_DEFAULTS = {
     "local_login_enabled": "1",
     "platform_registration_enabled": "0",
@@ -25,6 +43,25 @@ PLATFORM_SETTING_DEFAULTS = {
     "sso_default_group": "member",
     "platform_timezone": "Asia/Shanghai",
     "transfer_bandwidth_limit_mbps": "0",
+    "shared_storage_mode": "disabled",
+    "shared_storage_canary_user_ids": "",
+    "nfs_server": "",
+    "nfs_users_export": "",
+    "nfs_datasets_export": "",
+    "nfs_models_export": "",
+    "nfs_mount_options": "hard,_netdev,noatime,vers=4.1,proto=tcp",
+    "nfs_sentinel": ".server-vps-nfs",
+    "nfs_sentinel_signature": "",
+    "nfs_idmap_base": "1000000",
+    "truenas_nfs_auto_share": "0",
+    "workspace_default_gb": "100",
+    "workspace_retention_days": "30",
+    "agent_metrics_interval_seconds": "2",
+    "agent_heartbeat_interval_seconds": "15",
+    "agent_container_interval_seconds": "15",
+    "agent_storage_interval_seconds": "60",
+    "agent_inventory_interval_seconds": "300",
+    "agent_task_poll_interval_seconds": "5",
     "webhook_enabled": "0",
     "webhook_url": "",
     "webhook_secret": "",
@@ -96,6 +133,15 @@ def get_platform_settings(conn) -> dict[str, Any]:
         raw[row["key"]] = row["value"]
     platform_group = raw["platform_registration_default_group"]
     sso_group = raw["sso_default_group"]
+    canary_ids = []
+    for value in str(raw["shared_storage_canary_user_ids"] or "").split(","):
+        try:
+            parsed = int(value.strip())
+            if parsed > 0 and parsed not in canary_ids:
+                canary_ids.append(parsed)
+        except ValueError:
+            continue
+    shared_mode = raw["shared_storage_mode"] if raw["shared_storage_mode"] in ("disabled", "canary", "enabled") else "disabled"
     return {
         "local_login_enabled": setting_to_bool(raw["local_login_enabled"]),
         "platform_registration_enabled": setting_to_bool(raw["platform_registration_enabled"]),
@@ -107,6 +153,28 @@ def get_platform_settings(conn) -> dict[str, Any]:
         "sso_default_group": sso_group if sso_group in GROUP_NAMES else "member",
         "platform_timezone": raw["platform_timezone"] or "Asia/Shanghai",
         "transfer_bandwidth_limit_mbps": max(0, int(raw["transfer_bandwidth_limit_mbps"] or "0")),
+        "shared_storage_mode": shared_mode,
+        "shared_storage_canary_user_ids": canary_ids,
+        "nfs_server": raw["nfs_server"].strip(),
+        "nfs_users_export": raw["nfs_users_export"].strip(),
+        "nfs_datasets_export": raw["nfs_datasets_export"].strip(),
+        "nfs_models_export": raw["nfs_models_export"].strip(),
+        "nfs_mount_options": raw["nfs_mount_options"].strip(),
+        "nfs_sentinel": raw["nfs_sentinel"].strip() or ".server-vps-nfs",
+        "nfs_sentinel_signature": raw["nfs_sentinel_signature"].strip(),
+        "nfs_idmap_base": max(65536, int(raw["nfs_idmap_base"] or "1000000")),
+        "truenas_nfs_auto_share": setting_to_bool(raw["truenas_nfs_auto_share"]),
+        "workspace_default_gb": max(1, int(raw["workspace_default_gb"] or "100")),
+        "workspace_retention_days": max(1, int(raw["workspace_retention_days"] or "30")),
+        "agent_metrics_interval_seconds": max(1, int(raw["agent_metrics_interval_seconds"] or "2")),
+        "agent_heartbeat_interval_seconds": max(5, int(raw["agent_heartbeat_interval_seconds"] or "15")),
+        "agent_container_interval_seconds": max(5, int(raw["agent_container_interval_seconds"] or "15")),
+        "agent_storage_interval_seconds": max(30, int(raw["agent_storage_interval_seconds"] or "60")),
+        "agent_inventory_interval_seconds": max(60, int(raw["agent_inventory_interval_seconds"] or "300")),
+        "agent_task_poll_interval_seconds": max(1, int(raw["agent_task_poll_interval_seconds"] or "5")),
+        "webhook_enabled": setting_to_bool(raw["webhook_enabled"]),
+        "webhook_url": raw["webhook_url"],
+        "webhook_secret": raw["webhook_secret"],
         "sso_provider_enabled": setting_to_bool(raw["sso_provider_enabled"]),
         "sso_provider_type": raw["sso_provider_type"] if raw["sso_provider_type"] in SSO_PROVIDER_TYPES else "oidc",
         "sso_provider_name": raw["sso_provider_name"] or "casdoor",
@@ -122,6 +190,18 @@ def get_platform_settings(conn) -> dict[str, Any]:
         "sso_oidc_client_secret": raw["sso_oidc_client_secret"],
         "sso_oidc_scopes": raw["sso_oidc_scopes"] or "openid profile email",
         "sso_casdoor_admin_owner": raw["sso_casdoor_admin_owner"] or "built-in",
+    }
+
+
+def get_agent_collection_config(conn) -> dict[str, int]:
+    settings = get_platform_settings(conn)
+    return {
+        "metrics_interval_seconds": settings["agent_metrics_interval_seconds"],
+        "heartbeat_interval_seconds": settings["agent_heartbeat_interval_seconds"],
+        "container_interval_seconds": settings["agent_container_interval_seconds"],
+        "storage_interval_seconds": settings["agent_storage_interval_seconds"],
+        "inventory_interval_seconds": settings["agent_inventory_interval_seconds"],
+        "task_poll_interval_seconds": settings["agent_task_poll_interval_seconds"],
     }
 
 
@@ -141,6 +221,28 @@ def platform_settings_to_rows(settings: dict[str, Any]) -> dict[str, str]:
         "sso_default_group": settings["sso_default_group"] if settings["sso_default_group"] in GROUP_NAMES else "member",
         "platform_timezone": settings["platform_timezone"].strip() or "Asia/Shanghai",
         "transfer_bandwidth_limit_mbps": str(max(0, int(settings["transfer_bandwidth_limit_mbps"] or 0))),
+        "shared_storage_mode": settings["shared_storage_mode"] if settings["shared_storage_mode"] in ("disabled", "canary", "enabled") else "disabled",
+        "shared_storage_canary_user_ids": ",".join(str(int(item)) for item in settings["shared_storage_canary_user_ids"] if int(item) > 0),
+        "nfs_server": settings["nfs_server"].strip(),
+        "nfs_users_export": settings["nfs_users_export"].strip(),
+        "nfs_datasets_export": settings["nfs_datasets_export"].strip(),
+        "nfs_models_export": settings["nfs_models_export"].strip(),
+        "nfs_mount_options": settings["nfs_mount_options"].strip(),
+        "nfs_sentinel": settings["nfs_sentinel"].strip() or ".server-vps-nfs",
+        "nfs_sentinel_signature": settings["nfs_sentinel_signature"].strip(),
+        "nfs_idmap_base": str(max(65536, int(settings["nfs_idmap_base"]))),
+        "truenas_nfs_auto_share": bool_to_setting(bool(settings["truenas_nfs_auto_share"])),
+        "workspace_default_gb": str(max(1, int(settings["workspace_default_gb"]))),
+        "workspace_retention_days": str(max(1, int(settings["workspace_retention_days"]))),
+        "agent_metrics_interval_seconds": str(int(settings["agent_metrics_interval_seconds"])),
+        "agent_heartbeat_interval_seconds": str(int(settings["agent_heartbeat_interval_seconds"])),
+        "agent_container_interval_seconds": str(int(settings["agent_container_interval_seconds"])),
+        "agent_storage_interval_seconds": str(int(settings["agent_storage_interval_seconds"])),
+        "agent_inventory_interval_seconds": str(int(settings["agent_inventory_interval_seconds"])),
+        "agent_task_poll_interval_seconds": str(int(settings["agent_task_poll_interval_seconds"])),
+        "webhook_enabled": bool_to_setting(bool(settings["webhook_enabled"])),
+        "webhook_url": settings["webhook_url"].strip(),
+        "webhook_secret": settings["webhook_secret"].strip(),
         "sso_provider_enabled": bool_to_setting(bool(settings["sso_provider_enabled"])),
         "sso_provider_type": settings["sso_provider_type"] if settings["sso_provider_type"] in SSO_PROVIDER_TYPES else "oidc",
         "sso_provider_name": settings["sso_provider_name"].strip() or "casdoor",

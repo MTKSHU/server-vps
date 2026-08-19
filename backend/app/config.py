@@ -29,14 +29,7 @@ NODE_AGENT_FILES_PORT = int(os.environ.get("NODE_AGENT_FILES_PORT", "8082"))
 NODE_AGENT_TOKEN = os.environ.get("NODE_AGENT_TOKEN", "")
 
 # Root disk size (/) for every container - fixed, not user-configurable
-CONTAINER_ROOT_DISK_GB = int(os.environ.get("CONTAINER_ROOT_DISK_GB", "50"))
-
-# HuggingFace / ModelScope 后端下载暂存目录。部署容器固定挂载到该路径，不再作为运维环境变量暴露。
-HF_STAGING_DIR = "/tmp/hf-staging"
-
-# HuggingFace 下载代理（可选；国内也可通过 HF_ENDPOINT=https://hf-mirror.com 指定下载端点）
-# 示例：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080
-HF_HTTPS_PROXY = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or os.environ.get("HF_HTTPS_PROXY", "")
+CONTAINER_ROOT_DISK_GB = int(os.environ.get("CONTAINER_ROOT_DISK_GB", "100"))
 
 RESOURCE_CONTAINER_STATUSES = (
     "provisioning",

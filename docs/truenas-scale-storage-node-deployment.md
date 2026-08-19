@@ -10,8 +10,9 @@ TrueNAS SCALE 底层虽然是 Linux，但它不是普通 Ubuntu 服务器。`clu
 
 - 承载 `/mnt/<pool>/cluster-storage` 作为平台数据根目录。
 - 执行用户目录、公开数据集、模型资源的同步和校验任务。
+- 在 TrueNAS 25.10+ 原生 Incus 可用时，由 agent 维护一个系统下载容器，直接在存储节点下载公开数据集和模型资源。
 - 执行用户 ZFS dataset 创建、quota 设置、mountpoint 设置和移除任务。
-- 不在该节点上创建 Incus 计算容器；计算容器仍放在 Ubuntu GPU/计算节点。
+- 不在该节点上创建普通 Incus 计算容器；计算容器仍放在 Ubuntu GPU/计算节点。系统下载容器属于 agent 管理的存储节点基础设施，不参与用户调度。
 
 实际生产建议把 agent 二进制放在一个由数据池承载的固定目录，例如：
 
@@ -44,6 +45,7 @@ data/cluster-storage
 data/cluster-storage/users/<username>
 data/cluster-storage/datasets
 data/cluster-storage/models
+data/cluster-storage/.downloads
 ```
 
 平台中的用户 Home 路径对应：
@@ -51,6 +53,8 @@ data/cluster-storage/models
 ```text
 /mnt/data/cluster-storage/users/<username>
 ```
+
+公开资源正式目录使用 `{provider}/{repo_name}` 布局，例如 `datasets/Insta360-Research/OmniRooms` 或 `models/qwen/Qwen2.5-7B-Instruct`。下载暂存目录会放在目标资源目录旁边，例如 `models/qwen/.<resource_id>.partial` 或 `datasets/Insta360-Research/.<resource_id>.partial`。这样可以确保暂存目录与正式目录位于同一个 ZFS dataset/mountpoint，完成后由宿主机 agent 原子切换到 `datasets` 或 `models` 下的正式目录。
 
 注意：如果路径写成 `/data/users/<username>`，需要额外创建 bind mount 或把 dataset mountpoint 改到 `/data`。在 TrueNAS 上更推荐直接使用 `/mnt/<pool>/...`，减少系统升级和 UI 管理时的意外。
 
@@ -148,7 +152,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/cluster-node-agent.env
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/mnt/data/cluster-agent/cluster-node-agent --server ${CLUSTER_SERVER_URL} --token ${CLUSTER_NODE_TOKEN} --hostname ${CLUSTER_HOSTNAME} --node-group ${CLUSTER_NODE_GROUP} --data-path ${CLUSTER_DATA_PATH} --interval 2
+ExecStart=/mnt/data/cluster-agent/cluster-node-agent --server ${CLUSTER_SERVER_URL} --token ${CLUSTER_NODE_TOKEN} --hostname ${CLUSTER_HOSTNAME} --node-group ${CLUSTER_NODE_GROUP} --data-path ${CLUSTER_DATA_PATH} --interval 15 --storage-interval 60 --inventory-interval 300 --task-poll-interval 5
 User=root
 Restart=always
 RestartSec=5

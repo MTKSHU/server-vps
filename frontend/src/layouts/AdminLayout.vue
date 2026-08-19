@@ -42,7 +42,7 @@ const items = computed(() => [
   { name: "dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
   ...(isAdmin.value ? [{ name: "nodes", label: t("nav.nodes"), icon: Server }] : []),
   { name: "containers", label: t("nav.containers"), icon: Cpu },
-  ...(isAdmin.value ? [{ name: "images", label: t("nav.images"), icon: Layers }] : []),
+  { name: "images", label: t("nav.images"), icon: Layers },
   { name: "storage", label: t("nav.storage"), icon: HardDrive },
   { name: "profile", label: t("nav.profile"), icon: User },
   ...(isAdmin.value ? [{ name: "settings", label: t("nav.settings"), icon: Settings }] : []),

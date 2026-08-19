@@ -2,6 +2,7 @@ import re
 from typing import Any
 
 from fastapi import HTTPException
+from psycopg.types.json import Jsonb
 
 from ..config import RESOURCE_CONTAINER_STATUSES, STALE_AFTER_SECONDS
 from ..core import audit, hash_token, now_ts
@@ -113,9 +114,19 @@ def upsert_node(conn, payload: NodeRegistration, actor: str = "node-agent", trus
                 uptime_seconds = %s,
                 node_token = %s,
                 cpu_cores = %s, cpu_sockets = %s, cpu_temperature_c = %s
+                , capabilities = %s
             WHERE id = %s
             """,
-            (*values, node_id),
+            (*values, Jsonb(payload.capabilities), node_id),
+        )
+        nfs_health = payload.nfs_health or {}
+        nfs_healthy = bool(nfs_health.get("healthy"))
+        nfs_checked_at = int(nfs_health.get("checked_at") or 0)
+        conn.execute(
+            "UPDATE nodes SET nfs_healthy=%s,nfs_latency_ms=%s,nfs_error=%s,nfs_checked_at=%s,"
+            "nfs_last_success_at=CASE WHEN %s THEN %s ELSE nfs_last_success_at END WHERE id=%s",
+            (nfs_healthy, float(nfs_health.get("latency_ms") or 0), str(nfs_health.get("error") or "")[:500],
+             nfs_checked_at, nfs_healthy, nfs_checked_at, node_id),
         )
         action = "heartbeat"
     else:
@@ -128,12 +139,22 @@ def upsert_node(conn, payload: NodeRegistration, actor: str = "node-agent", trus
                 os_version, kernel_version, driver_version, cuda_driver_api_version,
                 incus_status, agent_version, uptime_seconds, node_token, registered_at,
                 cpu_cores, cpu_sockets, cpu_temperature_c
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                , capabilities
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (payload.hostname, *values, ts),
+            (payload.hostname, *values, ts, Jsonb(payload.capabilities)),
         ).fetchone()["id"]
         action = "register"
+        nfs_health = payload.nfs_health or {}
+        nfs_healthy = bool(nfs_health.get("healthy"))
+        nfs_checked_at = int(nfs_health.get("checked_at") or 0)
+        conn.execute(
+            "UPDATE nodes SET nfs_healthy=%s,nfs_latency_ms=%s,nfs_error=%s,nfs_checked_at=%s,"
+            "nfs_last_success_at=CASE WHEN %s THEN %s ELSE nfs_last_success_at END WHERE id=%s",
+            (nfs_healthy, float(nfs_health.get("latency_ms") or 0), str(nfs_health.get("error") or "")[:500],
+             nfs_checked_at, nfs_healthy, nfs_checked_at, node_id),
+        )
         if not trusted:
             conn.execute(
                 """
@@ -202,11 +223,39 @@ def sync_node_containers(conn, node_id: int, reports: list[ContainerStateReport]
         return
     transitional = ("provisioning", "starting", "stopping", "restarting", "deleting")
     by_name = {report.name: report for report in reports if report.name}
+    ts = now_ts()
+    for report in reports:
+        if report.role != "resource_downloader" or not report.name:
+            continue
+        status = normalize_reported_container_status(report.status) or "stopped"
+        admin = conn.execute(
+            "SELECT id FROM users WHERE username = 'admin' ORDER BY id LIMIT 1",
+        ).fetchone()
+        if not admin:
+            continue
+        conn.execute(
+            """
+            INSERT INTO containers (
+                name, owner_id, node_id, image_id, status, cpu_cores, memory_gb, disk_gb,
+                ssh_username, ssh_key, mounts, ip, access_status, access_error, system_role,
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, 'system/resource-downloader', %s, 1, 2, 20,
+                      'root', '', '[]', %s, 'ready', '', 'resource_downloader', %s, %s)
+            ON CONFLICT (name) DO UPDATE SET
+                node_id = EXCLUDED.node_id,
+                status = EXCLUDED.status,
+                ip = EXCLUDED.ip,
+                access_status = 'ready',
+                access_error = '',
+                system_role = 'resource_downloader',
+                updated_at = EXCLUDED.updated_at
+            """,
+            (report.name, admin["id"], node_id, status, report.ip if status == "running" else "", ts, ts),
+        )
     rows = conn.execute(
         "SELECT id, name, status, ip FROM containers WHERE node_id = %s ORDER BY id",
         (node_id,),
     ).fetchall()
-    ts = now_ts()
     for container in rows:
         if container["status"] in transitional or container["status"] == "failed":
             continue

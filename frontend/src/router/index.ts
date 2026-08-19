@@ -33,7 +33,7 @@ const router = createRouter({
         { path: "containers/:id/shell", name: "containerShell", component: ContainerShell, meta: { titleKey: "nav.containerShell" } },
         { path: "nodes/:id/shell", name: "nodeShell", component: NodeShell, meta: { titleKey: "nav.nodeShell", admin: true } },
         { path: "create", name: "create", redirect: { name: "containers" } },
-        { path: "images", name: "images", component: Images, meta: { titleKey: "nav.images", admin: true } },
+        { path: "images", name: "images", component: Images, meta: { titleKey: "nav.images" } },
         { path: "storage", name: "storage", component: StorageCenter, meta: { titleKey: "nav.storage" } },
         { path: "tasks", name: "tasks", redirect: { name: "settings" } },
         { path: "monitoring", name: "monitoring", redirect: { name: "dashboard" } },

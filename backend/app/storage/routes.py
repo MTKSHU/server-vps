@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 import asyncssh
 from fastapi import HTTPException
 from pydantic import BaseModel
-from ..auth import require_admin
+from ..auth import require_admin, require_user
 
 from ..config import AGENT_RELEASE_DIR, SYNC_SSH_IDENTITY_FILE, SYNC_SSH_PORT, SYNC_SSH_USER
 from ..schemas import StorageImageDistributeInput, StorageImageExportInput
@@ -276,12 +276,11 @@ def register_storage_routes(app, deps: dict[str, Any]):
 
     @app.post("/api/storage/images/export", status_code=202)
     def export_storage_image(payload: StorageImageExportInput):
-        require_admin()
+        actor = require_user()
         image_ref = payload.image_ref.strip()
         if not image_ref:
             raise HTTPException(status_code=400, detail="Incus 镜像引用不能为空")
         with db() as conn:
-            actor = current_user(conn)
             node = conn.execute("SELECT * FROM nodes WHERE id = %s", (payload.source_node_id,)).fetchone()
             if not node:
                 raise HTTPException(status_code=404, detail="源节点不存在")
@@ -342,7 +341,7 @@ def register_storage_routes(app, deps: dict[str, Any]):
                     "base_name": base_name,
                 },
             )
-            audit(conn, "admin", "export", f"storage-image:{row['id']}", {"node": node["hostname"], "image_ref": image_ref})
+            audit(conn, actor["username"], "export", f"storage-image:{row['id']}", {"node": node["hostname"], "image_ref": image_ref})
             return {
                 "image": public_storage_image_file({**row, "source_node": node["hostname"], "source_node_status": node["status"], "owner": actor["username"]}),
                 "task": public_task(task),
@@ -350,9 +349,8 @@ def register_storage_routes(app, deps: dict[str, Any]):
 
     @app.delete("/api/storage/images/{image_file_id}", status_code=204)
     def remove_storage_image(image_file_id: int):
-        require_admin()
+        actor = require_user()
         with db() as conn:
-            actor = current_user(conn)
             image_file = conn.execute("SELECT * FROM storage_image_files WHERE id = %s", (image_file_id,)).fetchone()
             if not image_file:
                 raise HTTPException(status_code=404, detail="自建镜像不存在")
@@ -384,9 +382,8 @@ def register_storage_routes(app, deps: dict[str, Any]):
 
     @app.post("/api/storage/images/{image_file_id}/distribute", status_code=202)
     def distribute_storage_image(image_file_id: int, payload: StorageImageDistributeInput):
-        require_admin()
+        actor = require_user()
         with db() as conn:
-            current_user(conn)
             image_file = conn.execute("SELECT * FROM storage_image_files WHERE id = %s", (image_file_id,)).fetchone()
             if not image_file:
                 raise HTTPException(status_code=404, detail="仓库镜像不存在")
@@ -430,7 +427,7 @@ def register_storage_routes(app, deps: dict[str, Any]):
                     ),
                 )
                 tasks.append(public_task(task))
-            audit(conn, "admin", "distribute", f"storage-image:{image_file_id}", {"task_count": len(tasks)})
+            audit(conn, actor["username"], "distribute", f"storage-image:{image_file_id}", {"task_count": len(tasks)})
             return {"tasks": tasks}
 
     @app.get("/api/storage/resource-cache")
