@@ -777,11 +777,6 @@ func detectIncusContainersResult() ([]ContainerReport, error) {
 	return parseIncusContainers(output)
 }
 
-func detectIncusContainers() []ContainerReport {
-	containers, _ := detectIncusContainersResult()
-	return containers
-}
-
 func parseIncusImages(output string) ([]IncusImageReport, error) {
 	images := []IncusImageReport{}
 	if output == "" {
@@ -820,11 +815,6 @@ func detectIncusImagesResult() ([]IncusImageReport, error) {
 		return nil, err
 	}
 	return parseIncusImages(output)
-}
-
-func detectIncusImages() []IncusImageReport {
-	images, _ := detectIncusImagesResult()
-	return images
 }
 
 func detectIncusStoragePool() string {
@@ -982,11 +972,6 @@ func (collector *payloadCollector) buildPayload() NodeRegistration {
 	collector.cached.Capabilities = []string{"managed_nfs_mounts_v1", "typed_mounts_v1", "per_user_nfs_exports_v1", "managed_nfs_hot_mounts_v1"}
 	collector.cached.NFSHealth = detectNFSHealth()
 	return collector.cached
-}
-
-// buildPayload preserves one-shot behavior. Daemon mode reuses one collector.
-func buildPayload(args cliArgs) NodeRegistration {
-	return newPayloadCollector(args).buildPayload()
 }
 
 type networkCounters struct {
